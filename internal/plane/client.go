@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -42,6 +43,12 @@ type ConnectionStatus struct {
 	Connected bool   `json:"connected"`
 	ItemCount int    `json:"itemCount"`
 	Message   string `json:"message"`
+}
+
+type Project struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Identifier string `json:"identifier"`
 }
 
 type Client struct {
@@ -78,6 +85,10 @@ type listResponse struct {
 	NextPageResults bool       `json:"next_page_results"`
 	TotalResults    int        `json:"total_results"`
 	Results         []workItem `json:"results"`
+}
+
+type projectListResponse struct {
+	Results []Project `json:"results"`
 }
 
 func NormalizeBaseURL(raw string) (string, error) {
@@ -153,6 +164,104 @@ func (c *Client) workItemsURL(workspaceSlug string, projectID string) (*url.URL,
 	return &result, nil
 }
 
+func (c *Client) projectsURL(workspaceSlug string) (*url.URL, error) {
+	workspaceSlug = strings.TrimSpace(workspaceSlug)
+	if workspaceSlug == "" {
+		return nil, errors.New("请输入 Plane workspace slug")
+	}
+	result := *c.baseURL
+	result.Path = path.Join(
+		result.Path,
+		"api",
+		"v1",
+		"workspaces",
+		workspaceSlug,
+		"projects",
+	) + "/"
+	return &result, nil
+}
+
+func (c *Client) authorizedGET(
+	ctx context.Context,
+	endpoint *url.URL,
+) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("X-API-Key", c.token)
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("连接 Plane 失败: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("读取 Plane 响应失败: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if len(message) > 240 {
+			message = message[:240] + "…"
+		}
+		return nil, fmt.Errorf(
+			"Plane API 返回 %s: %s",
+			response.Status,
+			message,
+		)
+	}
+	return body, nil
+}
+
+func (c *Client) ListProjects(
+	ctx context.Context,
+	workspaceSlug string,
+) ([]Project, error) {
+	endpoint, err := c.projectsURL(workspaceSlug)
+	if err != nil {
+		return nil, err
+	}
+	query := endpoint.Query()
+	query.Set("per_page", "100")
+	query.Set("order_by", "name")
+	endpoint.RawQuery = query.Encode()
+
+	body, err := c.authorizedGET(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var envelope projectListResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		var projects []Project
+		if arrayErr := json.Unmarshal(body, &projects); arrayErr != nil {
+			return nil, fmt.Errorf("Plane 项目列表格式无法识别: %w", err)
+		}
+		envelope.Results = projects
+	}
+	projects := make([]Project, 0, len(envelope.Results))
+	seen := make(map[string]struct{})
+	for _, project := range envelope.Results {
+		project.ID = strings.TrimSpace(project.ID)
+		project.Name = strings.TrimSpace(project.Name)
+		project.Identifier = strings.TrimSpace(project.Identifier)
+		if project.ID == "" {
+			continue
+		}
+		if _, exists := seen[project.ID]; exists {
+			continue
+		}
+		seen[project.ID] = struct{}{}
+		projects = append(projects, project)
+	}
+	sort.SliceStable(projects, func(left int, right int) bool {
+		return strings.ToLower(projects[left].Name) <
+			strings.ToLower(projects[right].Name)
+	})
+	return projects, nil
+}
+
 func (c *Client) requestPage(
 	ctx context.Context,
 	workspaceSlug string,
@@ -172,32 +281,9 @@ func (c *Client) requestPage(
 	}
 	endpoint.RawQuery = query.Encode()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	body, err := c.authorizedGET(ctx, endpoint)
 	if err != nil {
 		return listResponse{}, err
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("X-API-Key", c.token)
-
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return listResponse{}, fmt.Errorf("连接 Plane 失败: %w", err)
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
-	if err != nil {
-		return listResponse{}, fmt.Errorf("读取 Plane 响应失败: %w", err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message := strings.TrimSpace(string(body))
-		if len(message) > 240 {
-			message = message[:240] + "…"
-		}
-		return listResponse{}, fmt.Errorf(
-			"Plane API 返回 %s: %s",
-			response.Status,
-			message,
-		)
 	}
 	var result listResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -230,6 +316,7 @@ func (c *Client) ListCandidates(
 	ctx context.Context,
 	workspaceSlug string,
 	projectID string,
+	projectIdentifier string,
 ) ([]Candidate, error) {
 	var candidates []Candidate
 	seen := make(map[string]struct{})
@@ -247,7 +334,10 @@ func (c *Client) ListCandidates(
 				continue
 			}
 			seen[item.ID] = struct{}{}
-			candidates = append(candidates, normalizeWorkItem(item))
+			candidates = append(
+				candidates,
+				normalizeWorkItem(item, projectIdentifier),
+			)
 		}
 		if !page.NextPageResults || page.NextCursor == "" {
 			return candidates, nil
@@ -257,7 +347,7 @@ func (c *Client) ListCandidates(
 	return nil, errors.New("Plane 工作项超过 5000 条，请缩小项目范围后重试")
 }
 
-func normalizeWorkItem(item workItem) Candidate {
+func normalizeWorkItem(item workItem, projectIdentifier string) Candidate {
 	description := rawDescription(item.Description)
 	if description == "" && item.DescriptionHTML != "" {
 		description = htmlToMarkdownText(item.DescriptionHTML)
@@ -269,9 +359,13 @@ func normalizeWorkItem(item workItem) Candidate {
 	assignees := entityNames(item.Assignees)
 	stateName := strings.TrimSpace(item.State.Name)
 	stateGroup := strings.TrimSpace(item.StateGroup)
+	projectIdentifier = fallback(
+		strings.TrimSpace(item.ProjectIdentifier),
+		strings.TrimSpace(projectIdentifier),
+	)
 	externalKey := fmt.Sprintf("#%d", item.SequenceID)
-	if item.ProjectIdentifier != "" {
-		externalKey = fmt.Sprintf("%s-%d", item.ProjectIdentifier, item.SequenceID)
+	if projectIdentifier != "" {
+		externalKey = fmt.Sprintf("%s-%d", projectIdentifier, item.SequenceID)
 	}
 
 	source := strings.Builder{}

@@ -31,11 +31,36 @@ import {
 export type StatusFilter = TaskStatus | "all";
 
 export const DEFAULT_PLANE_SETTINGS: PlaneSettings = {
-  baseUrl: "",
-  workspaceSlug: "",
-  projectId: "",
-  projectName: "",
+  baseUrl: "https://plane.fymyriad.com",
+  workspaceSlug: "myriad",
+  projectId: "d4074079-8ce3-4cf2-8cd5-7e0af8c67f57",
+  projectName: "myriad",
+  projectIdentifier: "MYRIA",
 };
+
+function migratePlaneSettings(
+  settings?: PlaneSettings,
+): PlaneSettings {
+  if (
+    !settings?.baseUrl?.trim() &&
+    !settings?.workspaceSlug?.trim() &&
+    !settings?.projectId?.trim()
+  ) {
+    return { ...DEFAULT_PLANE_SETTINGS };
+  }
+  const merged = {
+    ...DEFAULT_PLANE_SETTINGS,
+    ...settings,
+  };
+  if (
+    merged.projectId === DEFAULT_PLANE_SETTINGS.projectId &&
+    !merged.projectIdentifier?.trim()
+  ) {
+    merged.projectIdentifier =
+      DEFAULT_PLANE_SETTINGS.projectIdentifier;
+  }
+  return merged;
+}
 
 type EditableRequirementFields = Pick<
   Requirements,
@@ -714,17 +739,14 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "btaskassistant-workspace",
       storage: createJSONStorage(() => workspaceStorage),
-      version: 2,
+      version: 3,
       migrate: (persistedState) => {
         const state = persistedState as Partial<WorkspaceState>;
         return {
           ...state,
           tasks: state.tasks ?? [],
           collectionCandidates: state.collectionCandidates ?? [],
-          planeSettings: {
-            ...DEFAULT_PLANE_SETTINGS,
-            ...(state.planeSettings ?? {}),
-          },
+          planeSettings: migratePlaneSettings(state.planeSettings),
         } as WorkspaceState;
       },
       partialize: (state) => ({

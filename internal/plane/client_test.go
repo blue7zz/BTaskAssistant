@@ -58,7 +58,12 @@ func TestListCandidatesPaginatesAndPreservesSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	candidates, err := client.ListCandidates(context.Background(), "team", "project")
+	candidates, err := client.ListCandidates(
+		context.Background(),
+		"team",
+		"project",
+		"TEAM",
+	)
 	if err != nil {
 		t.Fatalf("list candidates: %v", err)
 	}
@@ -76,6 +81,45 @@ func TestListCandidatesPaginatesAndPreservesSource(t *testing.T) {
 	}
 	if !strings.Contains(candidates[1].DescriptionMarkdown, "```json") {
 		t.Fatalf("structured description was not preserved: %q", candidates[1].DescriptionMarkdown)
+	}
+	if candidates[1].ExternalKey != "TEAM-9" {
+		t.Fatalf("expected configured project identifier, got %q", candidates[1].ExternalKey)
+	}
+}
+
+func TestListProjectsNormalizesAndDeduplicates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("X-API-Key") != "plane_api_test" {
+			t.Fatalf("missing API key header")
+		}
+		if !strings.HasSuffix(request.URL.Path, "/api/v1/workspaces/team/projects/") {
+			t.Fatalf("unexpected request path %q", request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"results": []map[string]any{
+				{"id": "project-2", "name": " Zebra ", "identifier": "ZEBRA"},
+				{"id": "project-1", "name": "myriad", "identifier": "MYRIA"},
+				{"id": "project-1", "name": "duplicate", "identifier": "DUP"},
+				{"id": "", "name": "missing ID", "identifier": "NONE"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "plane_api_test")
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	projects, err := client.ListProjects(context.Background(), "team")
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("expected two unique projects, got %#v", projects)
+	}
+	if projects[0].ID != "project-1" || projects[0].Identifier != "MYRIA" {
+		t.Fatalf("expected projects sorted by name, got %#v", projects)
 	}
 }
 

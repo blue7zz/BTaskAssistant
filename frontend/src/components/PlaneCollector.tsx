@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   CloudDownload,
   EyeOff,
+  FolderKanban,
   KeyRound,
   Link2,
   LoaderCircle,
@@ -19,18 +20,25 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   CandidateDecision,
   CollectionCandidate,
+  PlaneProject,
 } from "../domain/collection";
 import {
   analyzePlaneCandidate,
   collectPlaneWorkItems,
   hasPlaneToken,
+  listPlaneProjects,
   savePlaneToken,
   testPlaneConnection,
 } from "../lib/bridge";
 import { useWorkspaceStore } from "../store/workspace";
 import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
 
-type BusyAction = "token" | "test" | "collect" | "analyze";
+type BusyAction =
+  | "token"
+  | "projects"
+  | "test"
+  | "collect"
+  | "analyze";
 
 const DECISION_LABELS: Record<CandidateDecision, string> = {
   pending: "待确认",
@@ -116,6 +124,7 @@ export function PlaneCollector({
   const [token, setToken] = useState("");
   const [tokenStored, setTokenStored] = useState(false);
   const [busy, setBusy] = useState<BusyAction>();
+  const [projects, setProjects] = useState<PlaneProject[]>([]);
   const [filter, setFilter] = useState<CandidateDecision>("pending");
   const [selectedID, setSelectedID] = useState<string>();
   const [connectionMessage, setConnectionMessage] = useState("");
@@ -127,6 +136,27 @@ export function PlaneCollector({
   const selected =
     filteredCandidates.find((candidate) => candidate.id === selectedID) ??
     filteredCandidates[0];
+  const projectOptions = useMemo(() => {
+    if (
+      !settings.projectId ||
+      projects.some((project) => project.id === settings.projectId)
+    ) {
+      return projects;
+    }
+    return [
+      {
+        id: settings.projectId,
+        name: settings.projectName || settings.projectId,
+        identifier: settings.projectIdentifier ?? "",
+      },
+      ...projects,
+    ];
+  }, [
+    projects,
+    settings.projectId,
+    settings.projectIdentifier,
+    settings.projectName,
+  ]);
 
   useEffect(() => {
     if (!settings.baseUrl || !settings.workspaceSlug) {
@@ -158,12 +188,48 @@ export function PlaneCollector({
     }
   };
 
+  const discoverProjects = async () => {
+    const discovered = await listPlaneProjects(settings);
+    if (discovered.length === 0) {
+      throw new Error("连接成功，但这个工作区中没有可访问的项目");
+    }
+    setProjects(discovered);
+    const current =
+      discovered.find((project) => project.id === settings.projectId) ??
+      discovered.find(
+        (project) =>
+          project.name.toLocaleLowerCase() ===
+          settings.projectName.trim().toLocaleLowerCase(),
+      ) ??
+      (discovered.length === 1 ? discovered[0] : undefined);
+    if (current) {
+      updateSettings({
+        projectId: current.id,
+        projectName: current.name,
+        projectIdentifier: current.identifier,
+      });
+    }
+    const message =
+      discovered.length === 1
+        ? `已发现项目 ${discovered[0].identifier || discovered[0].name}，已自动选中。`
+        : `已发现 ${discovered.length} 个项目，请选择要收集的项目。`;
+    setConnectionMessage(message);
+    return message;
+  };
+
   const saveToken = () =>
     run("token", async () => {
       await savePlaneToken(settings, token);
       setToken("");
       setTokenStored(true);
-      onSuccess("Plane 令牌已保存到系统凭据库");
+      const message = await discoverProjects();
+      onSuccess(`Plane 令牌已安全保存；${message}`);
+    });
+
+  const refreshProjects = () =>
+    run("projects", async () => {
+      const message = await discoverProjects();
+      onSuccess(message);
     });
 
   const testConnection = () =>
@@ -238,9 +304,16 @@ export function PlaneCollector({
             <span>服务地址</span>
             <input
               value={settings.baseUrl}
-              onChange={(event) =>
-                updateSettings({ baseUrl: event.target.value })
-              }
+              onChange={(event) => {
+                updateSettings({
+                  baseUrl: event.target.value,
+                  projectId: "",
+                  projectName: "",
+                  projectIdentifier: "",
+                });
+                setProjects([]);
+                setConnectionMessage("");
+              }}
               placeholder="https://plane.example.com"
             />
           </label>
@@ -248,33 +321,61 @@ export function PlaneCollector({
             <span>Workspace slug</span>
             <input
               value={settings.workspaceSlug}
-              onChange={(event) =>
-                updateSettings({ workspaceSlug: event.target.value })
-              }
+              onChange={(event) => {
+                updateSettings({
+                  workspaceSlug: event.target.value,
+                  projectId: "",
+                  projectName: "",
+                  projectIdentifier: "",
+                });
+                setProjects([]);
+                setConnectionMessage("");
+              }}
               placeholder="my-team"
             />
           </label>
           <label className="field">
-            <span>Project ID</span>
-            <input
+            <span>
+              项目
+              <small>保存令牌后自动发现</small>
+            </span>
+            <select
               value={settings.projectId}
-              onChange={(event) =>
-                updateSettings({ projectId: event.target.value })
-              }
-              placeholder="项目 UUID"
-            />
-          </label>
-          <label className="field">
-            <span>项目显示名</span>
-            <input
-              value={settings.projectName}
-              onChange={(event) =>
-                updateSettings({ projectName: event.target.value })
-              }
-              placeholder="例如：BTaskAssistant"
-            />
+              onChange={(event) => {
+                const project = projectOptions.find(
+                  (item) => item.id === event.target.value,
+                );
+                updateSettings({
+                  projectId: project?.id ?? "",
+                  projectName: project?.name ?? "",
+                  projectIdentifier: project?.identifier ?? "",
+                });
+                setConnectionMessage("");
+              }}
+            >
+              <option value="">请选择 Plane 项目</option>
+              {projectOptions.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.identifier
+                    ? `${project.identifier} · ${project.name}`
+                    : project.name}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
+        {settings.projectId && (
+          <div className="project-selection-meta">
+            <FolderKanban size={14} />
+            <span>
+              当前项目：
+              <strong>
+                {settings.projectIdentifier || settings.projectName}
+              </strong>
+            </span>
+            <code>{settings.projectId}</code>
+          </div>
+        )}
         <div className="token-row">
           <label className="field">
             <span>
@@ -303,12 +404,27 @@ export function PlaneCollector({
             ) : (
               <KeyRound size={16} />
             )}
-            安全保存
+            保存并发现项目
           </button>
           <button
             type="button"
             className="button secondary"
             disabled={Boolean(busy) || !tokenStored}
+            onClick={refreshProjects}
+          >
+            {busy === "projects" ? (
+              <LoaderCircle className="spin" size={16} />
+            ) : (
+              <RefreshCw size={16} />
+            )}
+            刷新项目
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={
+              Boolean(busy) || !tokenStored || !settings.projectId
+            }
             onClick={testConnection}
           >
             {busy === "test" ? (
@@ -321,7 +437,9 @@ export function PlaneCollector({
           <button
             type="button"
             className="button primary"
-            disabled={Boolean(busy) || !tokenStored}
+            disabled={
+              Boolean(busy) || !tokenStored || !settings.projectId
+            }
             onClick={collect}
           >
             {busy === "collect" ? (

@@ -192,10 +192,24 @@ func (a *App) TestPlaneConnection(
 	return client.Test(ctx, workspaceSlug, projectID)
 }
 
+func (a *App) ListPlaneProjects(
+	baseURL string,
+	workspaceSlug string,
+) ([]plane.Project, error) {
+	client, err := a.planeClient(baseURL, workspaceSlug)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(a.appContext(), 35*time.Second)
+	defer cancel()
+	return client.ListProjects(ctx, workspaceSlug)
+}
+
 func (a *App) CollectPlaneWorkItems(
 	baseURL string,
 	workspaceSlug string,
 	projectID string,
+	projectIdentifier string,
 ) ([]plane.Candidate, error) {
 	client, err := a.planeClient(baseURL, workspaceSlug)
 	if err != nil {
@@ -203,7 +217,12 @@ func (a *App) CollectPlaneWorkItems(
 	}
 	ctx, cancel := context.WithTimeout(a.appContext(), 2*time.Minute)
 	defer cancel()
-	return client.ListCandidates(ctx, workspaceSlug, projectID)
+	return client.ListCandidates(
+		ctx,
+		workspaceSlug,
+		projectID,
+		projectIdentifier,
+	)
 }
 
 func (a *App) AnalyzePlaneCandidate(

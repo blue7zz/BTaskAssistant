@@ -3,6 +3,7 @@ import type {
   CandidateAnalysis,
   PlaneCandidatePayload,
   PlaneConnectionStatus,
+  PlaneProject,
   PlaneSettings,
 } from "../domain/collection";
 import type { TaskStatus } from "../domain/task";
@@ -38,6 +39,10 @@ interface NativeApp {
     baseUrl: string,
     workspaceSlug: string,
   ): Promise<boolean>;
+  ListPlaneProjects(
+    baseUrl: string,
+    workspaceSlug: string,
+  ): Promise<PlaneProject[]>;
   TestPlaneConnection(
     baseUrl: string,
     workspaceSlug: string,
@@ -47,6 +52,7 @@ interface NativeApp {
     baseUrl: string,
     workspaceSlug: string,
     projectId: string,
+    projectIdentifier: string,
   ): Promise<PlaneCandidatePayload[]>;
   AnalyzePlaneCandidate(sourceMarkdown: string): Promise<CandidateAnalysis>;
 }
@@ -175,6 +181,15 @@ export async function testPlaneConnection(
   );
 }
 
+export async function listPlaneProjects(
+  settings: PlaneSettings,
+): Promise<PlaneProject[]> {
+  return requireNativeApp().ListPlaneProjects(
+    settings.baseUrl,
+    settings.workspaceSlug,
+  );
+}
+
 export async function collectPlaneWorkItems(
   settings: PlaneSettings,
 ): Promise<PlaneCandidatePayload[]> {
@@ -182,6 +197,7 @@ export async function collectPlaneWorkItems(
     settings.baseUrl,
     settings.workspaceSlug,
     settings.projectId,
+    settings.projectIdentifier ?? "",
   );
 }
 

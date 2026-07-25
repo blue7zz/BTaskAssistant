@@ -9,7 +9,14 @@ export interface PlaneSettings {
   workspaceSlug: string;
   projectId: string;
   projectName: string;
+  projectIdentifier?: string;
   lastCollectedAt?: string;
+}
+
+export interface PlaneProject {
+  id: string;
+  name: string;
+  identifier: string;
 }
 
 export interface PlaneCandidatePayload {
@@ -93,4 +100,3 @@ export function makePlaneCandidate(
         : baseAnalysis,
   };
 }
-

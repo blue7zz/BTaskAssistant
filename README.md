@@ -13,6 +13,7 @@ BTaskAssistant 是一个本地优先、人工把关的 AI 开发任务工作流�
   是持久化真相，可在富文本和源码模式间切换，并支持粘贴、拖放图片。
 - 通过 Personal Access Token 从 Plane 项目分页收集工作项；固定脚本负责去重和保留原文，
   PI 只生成可编辑候选，必须人工确认后才会创建正式任务。
+- 保存 Plane PAT 后自动发现工作区项目并以下拉框选择，不再要求手工查找或粘贴 Project UUID。
 - 为任务保存原始说明、聊天记录、项目现状和文件内容等需求来源。
 - 通过固定模板生成带 `[S1]` 来源标记的需求文档候选稿与开发提示词。
 - 明确目标、范围内、范围外、验收标准、风险和待确认问题。
@@ -114,5 +115,14 @@ Plane 收集阶段已经支持用本机 `omp` 的无工具、无规则、无扩�
 
 Plane PAT 不写入 SQLite、前端状态或日志，而是保存到 macOS Keychain、Windows Credential
 Manager 或 Linux Secret Service。远端 HTTP 地址会被拒绝，只有 HTTPS 和本机回环地址可以接收 PAT。
+
+`v0.2.1` 已为当前 myriad 部署预填以下非敏感配置：
+
+- 服务地址：`https://plane.fymyriad.com`
+- Workspace slug：`myriad`
+- 项目：`MYRIA · myriad`
+
+首次使用只需在 Plane 收集箱粘贴 PAT 并点击“保存并发现项目”。PAT 只会保存在运行客户端的这台
+电脑的系统凭据库；发布包和 Git 仓库不包含令牌。
 
 详见 [完整目标架构](docs/SOFTWARE_ARCHITECTURE.md)、[MVP 落地架构](docs/ARCHITECTURE.md) 和 [第一版范围](docs/MVP_SCOPE.md)。
