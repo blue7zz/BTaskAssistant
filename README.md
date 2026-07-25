@@ -2,7 +2,9 @@
 
 BTaskAssistant 是一个本地优先、人工把关的 AI 开发任务工作流助手。它负责把零散任务整理成可追溯、可确认、可执行、可审核的工作流，但不会替人做产品决策，也不会自动跳过任何阶段。
 
-> 当前仓库已完成第一版可运行 MVP。前端可以独立在浏览器中运行；安装 Go 与 Wails v2 后可作为桌面客户端运行。
+> 当前仓库已完成第一版可运行 MVP。可以直接从
+> [GitHub Releases](https://github.com/blue7zz/BTaskAssistant/releases)
+> 下载桌面版，也可以安装开发环境后从源码运行。
 
 ## 第一版包含什么
 
@@ -45,6 +47,13 @@ flowchart TD
 - AI 边界：`internal/engine.Adapter`
 
 ## 运行
+
+### 直接运行桌面版
+
+- macOS：下载 `BTaskAssistant-macOS-universal.zip`，解压后双击 `BTaskAssistant.app`。
+- Windows：下载 `BTaskAssistant-Windows-x64.zip`，解压后双击 `BTaskAssistant.exe`。
+
+当前 MVP 尚未使用 Apple Developer 或 Windows 代码签名证书，因此首次启动可能出现系统安全提示。macOS 请右键应用并选择“打开”；Windows 请在 SmartScreen 中选择“更多信息 → 仍要运行”。
 
 ### 只运行前端
 

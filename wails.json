@@ -8,5 +8,12 @@
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "blue7zz"
+  },
+  "info": {
+    "companyName": "blue7zz",
+    "productName": "BTaskAssistant",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 blue7zz",
+    "comments": "Local-first, human-controlled AI development task workflow."
   }
 }
