@@ -14,10 +14,14 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
-const maxPages = 50
+const (
+	maxPages           = 50
+	commentWorkerCount = 6
+)
 
 var (
 	htmlBreakPattern = regexp.MustCompile(`(?i)<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>`)
@@ -25,18 +29,35 @@ var (
 )
 
 type Candidate struct {
-	ExternalID          string   `json:"externalId"`
-	ExternalKey         string   `json:"externalKey"`
-	Title               string   `json:"title"`
-	DescriptionMarkdown string   `json:"descriptionMarkdown"`
-	SourceMarkdown      string   `json:"sourceMarkdown"`
-	Priority            string   `json:"priority"`
-	StateName           string   `json:"stateName"`
-	StateGroup          string   `json:"stateGroup"`
-	Labels              []string `json:"labels"`
-	Assignees           []string `json:"assignees"`
-	CreatedAt           string   `json:"createdAt,omitempty"`
-	UpdatedAt           string   `json:"updatedAt,omitempty"`
+	ExternalID          string    `json:"externalId"`
+	ExternalKey         string    `json:"externalKey"`
+	Title               string    `json:"title"`
+	DescriptionMarkdown string    `json:"descriptionMarkdown"`
+	SourceMarkdown      string    `json:"sourceMarkdown"`
+	Priority            string    `json:"priority"`
+	StateName           string    `json:"stateName"`
+	StateGroup          string    `json:"stateGroup"`
+	Labels              []string  `json:"labels"`
+	Assignees           []string  `json:"assignees"`
+	AssigneeDetails     []Person  `json:"assigneeDetails"`
+	Comments            []Comment `json:"comments"`
+	CommentsSyncError   string    `json:"commentsSyncError,omitempty"`
+	CreatedAt           string    `json:"createdAt,omitempty"`
+	UpdatedAt           string    `json:"updatedAt,omitempty"`
+}
+
+type Person struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Comment struct {
+	ID           string `json:"id"`
+	BodyMarkdown string `json:"bodyMarkdown"`
+	Actor        Person `json:"actor"`
+	CreatedAt    string `json:"createdAt,omitempty"`
+	UpdatedAt    string `json:"updatedAt,omitempty"`
+	EditedAt     string `json:"editedAt,omitempty"`
 }
 
 type ConnectionStatus struct {
@@ -86,11 +107,29 @@ type workItem struct {
 	UpdatedAt         string           `json:"updated_at"`
 }
 
+type workItemComment struct {
+	ID              string          `json:"id"`
+	CommentStripped string          `json:"comment_stripped"`
+	CommentHTML     string          `json:"comment_html"`
+	Actor           json.RawMessage `json:"actor"`
+	ActorDetail     workItemEntity  `json:"actor_detail"`
+	CreatedBy       string          `json:"created_by"`
+	CreatedAt       string          `json:"created_at"`
+	UpdatedAt       string          `json:"updated_at"`
+	EditedAt        string          `json:"edited_at"`
+}
+
 type listResponse struct {
 	NextCursor      string     `json:"next_cursor"`
 	NextPageResults bool       `json:"next_page_results"`
 	TotalResults    int        `json:"total_results"`
 	Results         []workItem `json:"results"`
+}
+
+type commentListResponse struct {
+	NextCursor      string            `json:"next_cursor"`
+	NextPageResults bool              `json:"next_page_results"`
+	Results         []workItemComment `json:"results"`
 }
 
 type projectListResponse struct {
@@ -208,6 +247,23 @@ func (c *Client) workItemsURL(workspaceSlug string, projectID string) (*url.URL,
 		"work-items",
 	) + "/"
 	return &result, nil
+}
+
+func (c *Client) commentsURL(
+	workspaceSlug string,
+	projectID string,
+	workItemID string,
+) (*url.URL, error) {
+	endpoint, err := c.workItemsURL(workspaceSlug, projectID)
+	if err != nil {
+		return nil, err
+	}
+	workItemID = strings.TrimSpace(workItemID)
+	if workItemID == "" {
+		return nil, errors.New("Plane 工作项 ID 不能为空")
+	}
+	endpoint.Path = path.Join(endpoint.Path, workItemID, "comments") + "/"
+	return endpoint, nil
 }
 
 func (c *Client) projectsURL(workspaceSlug string) (*url.URL, error) {
@@ -338,6 +394,85 @@ func (c *Client) requestPage(
 	return result, nil
 }
 
+func (c *Client) requestCommentsPage(
+	ctx context.Context,
+	workspaceSlug string,
+	projectID string,
+	workItemID string,
+	cursor string,
+) (commentListResponse, error) {
+	endpoint, err := c.commentsURL(workspaceSlug, projectID, workItemID)
+	if err != nil {
+		return commentListResponse{}, err
+	}
+	query := endpoint.Query()
+	query.Set("per_page", "100")
+	query.Set("order_by", "created_at")
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	endpoint.RawQuery = query.Encode()
+
+	body, err := c.authorizedGET(ctx, endpoint)
+	if err != nil {
+		return commentListResponse{}, err
+	}
+	var result commentListResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		var comments []workItemComment
+		if arrayErr := json.Unmarshal(body, &comments); arrayErr != nil {
+			return commentListResponse{}, fmt.Errorf(
+				"Plane 评论响应格式无法识别: %w",
+				err,
+			)
+		}
+		result.Results = comments
+	}
+	return result, nil
+}
+
+func (c *Client) listComments(
+	ctx context.Context,
+	workspaceSlug string,
+	projectID string,
+	workItemID string,
+) ([]Comment, error) {
+	comments := make([]Comment, 0)
+	seen := make(map[string]struct{})
+	cursor := ""
+	for pageNumber := 0; pageNumber < maxPages; pageNumber++ {
+		page, err := c.requestCommentsPage(
+			ctx,
+			workspaceSlug,
+			projectID,
+			workItemID,
+			cursor,
+		)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range page.Results {
+			if item.ID == "" {
+				continue
+			}
+			if _, exists := seen[item.ID]; exists {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+			comment := normalizeComment(item)
+			if comment.BodyMarkdown == "" {
+				continue
+			}
+			comments = append(comments, comment)
+		}
+		if !page.NextPageResults || page.NextCursor == "" {
+			return comments, nil
+		}
+		cursor = page.NextCursor
+	}
+	return nil, errors.New("Plane 单条工作项的评论超过 5000 条")
+}
+
 func (c *Client) Test(
 	ctx context.Context,
 	workspaceSlug string,
@@ -364,7 +499,7 @@ func (c *Client) ListCandidates(
 	projectID string,
 	projectIdentifier string,
 ) ([]Candidate, error) {
-	var candidates []Candidate
+	var items []workItem
 	seen := make(map[string]struct{})
 	cursor := ""
 	for pageNumber := 0; pageNumber < maxPages; pageNumber++ {
@@ -380,17 +515,73 @@ func (c *Client) ListCandidates(
 				continue
 			}
 			seen[item.ID] = struct{}{}
-			candidates = append(
-				candidates,
-				normalizeWorkItem(item, projectIdentifier),
-			)
+			items = append(items, item)
 		}
 		if !page.NextPageResults || page.NextCursor == "" {
-			return candidates, nil
+			return c.buildCandidatesWithComments(
+				ctx,
+				workspaceSlug,
+				projectID,
+				projectIdentifier,
+				items,
+			), nil
 		}
 		cursor = page.NextCursor
 	}
 	return nil, errors.New("Plane 工作项超过 5000 条，请缩小项目范围后重试")
+}
+
+func (c *Client) buildCandidatesWithComments(
+	ctx context.Context,
+	workspaceSlug string,
+	projectID string,
+	projectIdentifier string,
+	items []workItem,
+) []Candidate {
+	candidates := make([]Candidate, len(items))
+	for index, item := range items {
+		candidates[index] = normalizeWorkItem(item, projectIdentifier)
+	}
+	if len(candidates) == 0 {
+		return candidates
+	}
+
+	workerCount := commentWorkerCount
+	if len(candidates) < workerCount {
+		workerCount = len(candidates)
+	}
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				comments, err := c.listComments(
+					ctx,
+					workspaceSlug,
+					projectID,
+					candidates[index].ExternalID,
+				)
+				if err != nil {
+					candidates[index].CommentsSyncError = friendlyCommentError(err)
+				} else {
+					candidates[index].Comments = comments
+				}
+				candidates[index].SourceMarkdown = appendCommentsToSource(
+					candidates[index].SourceMarkdown,
+					candidates[index].Comments,
+					candidates[index].CommentsSyncError,
+				)
+			}
+		}()
+	}
+	for index := range candidates {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	return candidates
 }
 
 func normalizeWorkItem(item workItem, projectIdentifier string) Candidate {
@@ -402,7 +593,8 @@ func normalizeWorkItem(item workItem, projectIdentifier string) Candidate {
 		description = "（Plane 中未填写描述）"
 	}
 	labels := entityNames(item.Labels)
-	assignees := entityNames(item.Assignees)
+	assigneeDetails := entityPeople(item.Assignees)
+	assignees := personNames(assigneeDetails)
 	stateName := strings.TrimSpace(item.State.Name)
 	stateGroup := strings.TrimSpace(item.StateGroup)
 	projectIdentifier = fallback(
@@ -441,9 +633,73 @@ func normalizeWorkItem(item workItem, projectIdentifier string) Candidate {
 		StateGroup:          stateGroup,
 		Labels:              labels,
 		Assignees:           assignees,
+		AssigneeDetails:     assigneeDetails,
+		Comments:            []Comment{},
 		CreatedAt:           item.CreatedAt,
 		UpdatedAt:           item.UpdatedAt,
 	}
+}
+
+func normalizeComment(item workItemComment) Comment {
+	body := strings.TrimSpace(item.CommentStripped)
+	if body == "" {
+		body = htmlToMarkdownText(item.CommentHTML)
+	}
+	actor := entityPerson(item.ActorDetail)
+	if actor.Name == "" && len(item.Actor) > 0 {
+		var expanded workItemEntity
+		if json.Unmarshal(item.Actor, &expanded) == nil {
+			actor = entityPerson(expanded)
+		}
+	}
+	if actor.Name == "" {
+		actor = Person{
+			ID:   strings.TrimSpace(item.CreatedBy),
+			Name: "Plane 用户",
+		}
+	}
+	return Comment{
+		ID:           strings.TrimSpace(item.ID),
+		BodyMarkdown: body,
+		Actor:        actor,
+		CreatedAt:    item.CreatedAt,
+		UpdatedAt:    item.UpdatedAt,
+		EditedAt:     item.EditedAt,
+	}
+}
+
+func appendCommentsToSource(
+	source string,
+	comments []Comment,
+	syncError string,
+) string {
+	var result strings.Builder
+	result.WriteString(strings.TrimRight(source, "\n"))
+	result.WriteString("\n\n## Plane 评论\n\n")
+	if syncError != "" {
+		fmt.Fprintf(&result, "> %s\n", syncError)
+		return result.String()
+	}
+	if len(comments) == 0 {
+		result.WriteString("暂无评论。\n")
+		return result.String()
+	}
+	for _, comment := range comments {
+		actorName := fallback(comment.Actor.Name, "Plane 用户")
+		timestamp := fallback(comment.CreatedAt, "时间未知")
+		fmt.Fprintf(&result, "### %s · %s\n\n", actorName, timestamp)
+		result.WriteString(strings.TrimSpace(comment.BodyMarkdown))
+		result.WriteString("\n\n")
+	}
+	return strings.TrimRight(result.String(), "\n") + "\n"
+}
+
+func friendlyCommentError(err error) string {
+	message := strings.TrimSpace(err.Error())
+	if len(message) > 180 {
+		message = message[:180] + "…"
+	}
+	return "评论同步失败，可稍后重新收集：" + message
 }
 
 func rawDescription(raw json.RawMessage) string {
@@ -483,16 +739,38 @@ func htmlToMarkdownText(value string) string {
 }
 
 func entityNames(items []workItemEntity) []string {
+	return personNames(entityPeople(items))
+}
+
+func entityPeople(items []workItemEntity) []Person {
+	result := make([]Person, 0, len(items))
+	for _, item := range items {
+		person := entityPerson(item)
+		if person.Name != "" {
+			result = append(result, person)
+		}
+	}
+	return result
+}
+
+func entityPerson(item workItemEntity) Person {
+	name := fallback(
+		strings.TrimSpace(item.DisplayName),
+		strings.TrimSpace(item.Name),
+	)
+	name = fallback(name, strings.TrimSpace(item.Email))
+	name = fallback(name, strings.TrimSpace(item.ID))
+	return Person{
+		ID:   strings.TrimSpace(item.ID),
+		Name: name,
+	}
+}
+
+func personNames(items []Person) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {
-		name := fallback(
-			strings.TrimSpace(item.Name),
-			strings.TrimSpace(item.DisplayName),
-		)
-		name = fallback(name, strings.TrimSpace(item.Email))
-		name = fallback(name, strings.TrimSpace(item.ID))
-		if name != "" {
-			result = append(result, name)
+		if strings.TrimSpace(item.Name) != "" {
+			result = append(result, strings.TrimSpace(item.Name))
 		}
 	}
 	return result

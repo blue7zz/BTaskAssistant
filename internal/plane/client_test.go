@@ -6,51 +6,99 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
 func TestListCandidatesPaginatesAndPreservesSource(t *testing.T) {
-	var requests int
+	var workItemRequests atomic.Int32
+	var commentRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requests++
 		if request.Header.Get("X-API-Key") != "plane_api_test" {
 			t.Fatalf("missing API key header")
 		}
-		if !strings.HasSuffix(request.URL.Path, "/api/v1/workspaces/team/projects/project/work-items/") {
-			t.Fatalf("unexpected request path %q", request.URL.Path)
-		}
-		cursor := request.URL.Query().Get("cursor")
 		writer.Header().Set("Content-Type", "application/json")
-		if cursor == "" {
+		if strings.HasSuffix(
+			request.URL.Path,
+			"/api/v1/workspaces/team/projects/project/work-items/",
+		) {
+			workItemRequests.Add(1)
+			cursor := request.URL.Query().Get("cursor")
+			if cursor == "" {
+				_ = json.NewEncoder(writer).Encode(map[string]any{
+					"next_cursor":       "page-2",
+					"next_page_results": true,
+					"total_results":     2,
+					"results": []map[string]any{{
+						"id":                 "item-1",
+						"name":               "修复登录",
+						"description":        "<p>保留 <strong>原始</strong> 描述</p>",
+						"priority":           "high",
+						"sequence_id":        8,
+						"project_identifier": "APP",
+						"state":              map[string]any{"name": "进行中"},
+						"labels":             []map[string]any{{"name": "bug"}},
+						"assignees": []map[string]any{{
+							"id":           "user-alice",
+							"display_name": "Alice",
+						}},
+					}},
+				})
+				return
+			}
 			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"next_cursor":       "page-2",
-				"next_page_results": true,
-				"total_results":     2,
+				"next_page_results": false,
 				"results": []map[string]any{{
-					"id":                 "item-1",
-					"name":               "修复登录",
-					"description":        "<p>保留 <strong>原始</strong> 描述</p>",
-					"priority":           "high",
-					"sequence_id":        8,
-					"project_identifier": "APP",
-					"state":              map[string]any{"name": "进行中"},
-					"labels":             []map[string]any{{"name": "bug"}},
-					"assignees":          []map[string]any{{"display_name": "Alice"}},
+					"id":          "item-2",
+					"name":        "补充文档",
+					"description": map[string]any{"type": "doc"},
+					"priority":    "low",
+					"sequence_id": 9,
+					"state":       map[string]any{"name": "待办"},
 				}},
 			})
 			return
 		}
-		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"next_page_results": false,
-			"results": []map[string]any{{
-				"id":          "item-2",
-				"name":        "补充文档",
-				"description": map[string]any{"type": "doc"},
-				"priority":    "low",
-				"sequence_id": 9,
-				"state":       map[string]any{"name": "待办"},
-			}},
-		})
+		if strings.HasSuffix(request.URL.Path, "/work-items/item-1/comments/") {
+			commentRequests.Add(1)
+			if request.URL.Query().Get("cursor") == "" {
+				_ = json.NewEncoder(writer).Encode(map[string]any{
+					"next_cursor":       "comment-page-2",
+					"next_page_results": true,
+					"results": []map[string]any{{
+						"id":               "comment-1",
+						"comment_html":     "<p>请先覆盖登录失败路径。</p>",
+						"comment_stripped": "请先覆盖登录失败路径。",
+						"actor_detail": map[string]any{
+							"id":           "user-reviewer",
+							"display_name": "Reviewer",
+						},
+						"created_at": "2026-07-24T10:00:00Z",
+					}},
+				})
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"next_page_results": false,
+				"results": []map[string]any{{
+					"id":           "comment-2",
+					"comment_html": "<p>修复后我再复查。</p>",
+					"actor": map[string]any{
+						"id":           "user-alice",
+						"display_name": "Alice",
+					},
+					"created_at": "2026-07-24T11:00:00Z",
+					"edited_at":  "2026-07-24T11:05:00Z",
+				}},
+			})
+			return
+		}
+		if strings.HasSuffix(request.URL.Path, "/work-items/item-2/comments/") {
+			commentRequests.Add(1)
+			_ = json.NewEncoder(writer).Encode([]map[string]any{})
+			return
+		}
+		t.Fatalf("unexpected request path %q", request.URL.Path)
 	}))
 	defer server.Close()
 
@@ -67,8 +115,11 @@ func TestListCandidatesPaginatesAndPreservesSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list candidates: %v", err)
 	}
-	if requests != 2 {
-		t.Fatalf("expected two pages, got %d", requests)
+	if workItemRequests.Load() != 2 {
+		t.Fatalf("expected two work item pages, got %d", workItemRequests.Load())
+	}
+	if commentRequests.Load() != 3 {
+		t.Fatalf("expected three comment pages, got %d", commentRequests.Load())
 	}
 	if len(candidates) != 2 {
 		t.Fatalf("expected two candidates, got %d", len(candidates))
@@ -79,11 +130,69 @@ func TestListCandidatesPaginatesAndPreservesSource(t *testing.T) {
 	if !strings.Contains(candidates[0].SourceMarkdown, "保留 原始 描述") {
 		t.Fatalf("source did not preserve description: %q", candidates[0].SourceMarkdown)
 	}
+	if len(candidates[0].AssigneeDetails) != 1 ||
+		candidates[0].AssigneeDetails[0].ID != "user-alice" {
+		t.Fatalf("assignee details were not preserved: %#v", candidates[0].AssigneeDetails)
+	}
+	if len(candidates[0].Comments) != 2 ||
+		candidates[0].Comments[0].Actor.Name != "Reviewer" {
+		t.Fatalf("comments were not preserved: %#v", candidates[0].Comments)
+	}
+	if !strings.Contains(candidates[0].SourceMarkdown, "## Plane 评论") ||
+		!strings.Contains(candidates[0].SourceMarkdown, "请先覆盖登录失败路径") {
+		t.Fatalf("source did not include comments: %q", candidates[0].SourceMarkdown)
+	}
 	if !strings.Contains(candidates[1].DescriptionMarkdown, "```json") {
 		t.Fatalf("structured description was not preserved: %q", candidates[1].DescriptionMarkdown)
 	}
 	if candidates[1].ExternalKey != "TEAM-9" {
 		t.Fatalf("expected configured project identifier, got %q", candidates[1].ExternalKey)
+	}
+}
+
+func TestListCandidatesKeepsWorkItemWhenCommentSyncFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(request.URL.Path, "/work-items/") {
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"next_page_results": false,
+				"results": []map[string]any{{
+					"id":          "item-1",
+					"name":        "保留候选",
+					"sequence_id": 1,
+				}},
+			})
+			return
+		}
+		if strings.HasSuffix(request.URL.Path, "/work-items/item-1/comments/") {
+			http.Error(writer, `{"detail":"comments scope missing"}`, http.StatusForbidden)
+			return
+		}
+		t.Fatalf("unexpected request path %q", request.URL.Path)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "plane_api_test")
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	candidates, err := client.ListCandidates(
+		context.Background(),
+		"team",
+		"project",
+		"TEAM",
+	)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected the work item to remain available, got %#v", candidates)
+	}
+	if candidates[0].CommentsSyncError == "" {
+		t.Fatal("expected a visible comment sync error")
+	}
+	if !strings.Contains(candidates[0].SourceMarkdown, "评论同步失败") {
+		t.Fatalf("source did not preserve the warning: %q", candidates[0].SourceMarkdown)
 	}
 }
 

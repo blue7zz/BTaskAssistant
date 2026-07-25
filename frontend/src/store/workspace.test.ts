@@ -8,12 +8,21 @@ const planePayload: PlaneCandidatePayload = {
   title: "整理 Plane 收集流程",
   descriptionMarkdown: "只把候选交给用户确认。",
   sourceMarkdown:
-    "# 整理 Plane 收集流程\n\n- Plane ID: `plane-item-1`\n\n只把候选交给用户确认。",
+    "# 整理 Plane 收集流程\n\n- Plane ID: `plane-item-1`\n\n只把候选交给用户确认。\n\n## Plane 评论\n\n评论也必须作为原始来源保存。",
   priority: "high",
   stateName: "待办",
   stateGroup: "backlog",
   labels: ["workflow"],
-  assignees: [],
+  assignees: ["Alice"],
+  assigneeDetails: [{ id: "user-alice", name: "Alice" }],
+  comments: [
+    {
+      id: "comment-1",
+      bodyMarkdown: "评论也必须作为原始来源保存。",
+      actor: { id: "user-reviewer", name: "Reviewer" },
+      createdAt: "2026-07-24T09:30:00Z",
+    },
+  ],
   updatedAt: "2026-07-24T10:00:00Z",
 };
 
@@ -150,6 +159,7 @@ describe("workspace store", () => {
     expect(state.tasks[0].title).toBe("确认 Plane 候选任务");
     expect(state.tasks[0].evidence[0].type).toBe("plane");
     expect(state.tasks[0].evidence[0].content).toContain("Plane ID");
+    expect(state.tasks[0].evidence[0].content).toContain("评论");
     expect(() => state.acceptCandidate(candidate.id)).toThrow("已经处理");
   });
 });

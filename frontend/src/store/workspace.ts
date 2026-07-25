@@ -739,13 +739,19 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "btaskassistant-workspace",
       storage: createJSONStorage(() => workspaceStorage),
-      version: 3,
+      version: 4,
       migrate: (persistedState) => {
         const state = persistedState as Partial<WorkspaceState>;
         return {
           ...state,
           tasks: state.tasks ?? [],
-          collectionCandidates: state.collectionCandidates ?? [],
+          collectionCandidates: (state.collectionCandidates ?? []).map(
+            (candidate) => ({
+              ...candidate,
+              assigneeDetails: candidate.assigneeDetails ?? [],
+              comments: candidate.comments ?? [],
+            }),
+          ),
           planeSettings: migratePlaneSettings(state.planeSettings),
         } as WorkspaceState;
       },

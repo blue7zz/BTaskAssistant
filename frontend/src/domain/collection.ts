@@ -25,6 +25,20 @@ export interface PlaneConnectionSetup {
   projects: PlaneProject[];
 }
 
+export interface PlanePerson {
+  id: string;
+  name: string;
+}
+
+export interface PlaneComment {
+  id: string;
+  bodyMarkdown: string;
+  actor: PlanePerson;
+  createdAt?: string;
+  updatedAt?: string;
+  editedAt?: string;
+}
+
 export interface PlaneCandidatePayload {
   externalId: string;
   externalKey: string;
@@ -36,6 +50,9 @@ export interface PlaneCandidatePayload {
   stateGroup: string;
   labels: string[];
   assignees: string[];
+  assigneeDetails?: PlanePerson[];
+  comments?: PlaneComment[];
+  commentsSyncError?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -71,6 +88,7 @@ export function makePlaneCandidate(
   existing?: CollectionCandidate,
 ): CollectionCandidate {
   const fetchedAt = new Date().toISOString();
+  const comments = payload.comments ?? [];
   const preserveDecision =
     existing?.decision === "accepted" || existing?.decision === "ignored";
   const baseAnalysis: CandidateAnalysis = {
@@ -87,13 +105,18 @@ export function makePlaneCandidate(
       payload.assignees.length > 0
         ? `负责人：${payload.assignees.join("、")}`
         : "",
+      comments.length > 0 ? `Plane 评论：${comments.length} 条` : "",
     ].filter(Boolean),
-    openQuestions: [],
+    openQuestions: payload.commentsSyncError
+      ? ["Plane 评论没有完整同步，请重新收集后再确认。"]
+      : [],
     analyzedAt: fetchedAt,
   };
 
   return {
     ...payload,
+    assigneeDetails: payload.assigneeDetails ?? [],
+    comments,
     id: `plane:${payload.externalId}`,
     provider: "plane",
     projectName,

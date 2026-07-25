@@ -15,7 +15,7 @@ env:
   NODE_VERSION: "22"
   PNPM_VERSION: "11.7.0"
   WAILS_VERSION: "v2.13.0"
-  RELEASE_TAG: "v0.2.2"
+  RELEASE_TAG: "v0.2.3"
 
 jobs:
   macos:
@@ -112,7 +112,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" release/* \
               --target "$GITHUB_SHA" \
-              --title "BTaskAssistant v0.2.2 Simplified Plane Setup" \
-              --notes-file docs/RELEASE_NOTES_v0.2.2.md \
+              --title "BTaskAssistant v0.2.3 Plane Assignees and Comments" \
+              --notes-file docs/RELEASE_NOTES_v0.2.3.md \
               --prerelease
           fi

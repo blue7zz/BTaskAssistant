@@ -118,4 +118,84 @@ describe("PlaneCollector", () => {
     expect(useWorkspaceStore.getState().tasks).toHaveLength(0);
     expect(container.textContent).toContain("MYRIA");
   });
+
+  it("filters candidates by assignee and shows Plane comments", async () => {
+    useWorkspaceStore.setState({
+      planeSettings: {
+        baseUrl: "",
+        workspaceSlug: "",
+        projectId: "",
+        projectName: "myriad",
+        projectIdentifier: "MYRIA",
+      },
+    });
+    useWorkspaceStore.getState().ingestPlaneCandidates([
+      {
+        externalId: "item-alice",
+        externalKey: "MYRIA-1",
+        title: "Alice 的任务",
+        descriptionMarkdown: "需要 Alice 确认。",
+        sourceMarkdown: "# Alice 的任务",
+        priority: "medium",
+        stateName: "待办",
+        stateGroup: "backlog",
+        labels: [],
+        assignees: ["Alice"],
+        assigneeDetails: [{ id: "user-alice", name: "Alice" }],
+        comments: [
+          {
+            id: "comment-1",
+            bodyMarkdown: "请把这个边界条件补充到需求里。",
+            actor: { id: "reviewer", name: "Reviewer" },
+            createdAt: "2026-07-24T10:00:00Z",
+          },
+        ],
+      },
+      {
+        externalId: "item-bob",
+        externalKey: "MYRIA-2",
+        title: "Bob 的任务",
+        descriptionMarkdown: "需要 Bob 确认。",
+        sourceMarkdown: "# Bob 的任务",
+        priority: "low",
+        stateName: "进行中",
+        stateGroup: "started",
+        labels: [],
+        assignees: ["Bob"],
+        assigneeDetails: [{ id: "user-bob", name: "Bob" }],
+        comments: [],
+      },
+    ]);
+
+    await act(async () => {
+      root.render(
+        createElement(PlaneCollector, {
+          onSuccess: vi.fn(),
+          onError: vi.fn(),
+          onOpenTask: vi.fn(),
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll(".candidate-card")).toHaveLength(2);
+    expect(container.querySelector(".plane-comment")?.textContent).toContain(
+      "请把这个边界条件补充到需求里。",
+    );
+    expect(container.querySelector(".plane-comment")?.textContent).toContain(
+      "Reviewer",
+    );
+
+    const assigneeSelect = container.querySelector(
+      'select[aria-label="按负责人筛选"]',
+    ) as HTMLSelectElement;
+    await act(async () => {
+      assigneeSelect.value = "id:user-bob";
+      assigneeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const visibleCards = container.querySelectorAll(".candidate-card");
+    expect(visibleCards).toHaveLength(1);
+    expect(visibleCards[0].textContent).toContain("Bob 的任务");
+  });
 });
