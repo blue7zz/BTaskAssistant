@@ -1,0 +1,12 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "BTaskAssistant",
+  "outputfilename": "BTaskAssistant",
+  "frontend:install": "pnpm install --frozen-lockfile",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev -- --host 0.0.0.0",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "blue7zz"
+  }
+}
