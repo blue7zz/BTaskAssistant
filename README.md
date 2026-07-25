@@ -69,7 +69,7 @@ pnpm dev
 
 ### 运行 Wails 桌面客户端
 
-需要 Go 1.23.3+、Node.js 20+ 和 Wails v2。先按照 [Wails 官方安装说明](https://wails.io/docs/gettingstarted/installation) 配好对应平台的系统依赖，然后执行：
+需要 Go 1.25+、Node.js 20+ 和 Wails v2。先按照 [Wails 官方安装说明](https://wails.io/docs/gettingstarted/installation) 配好对应平台的系统依赖，然后执行：
 
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
