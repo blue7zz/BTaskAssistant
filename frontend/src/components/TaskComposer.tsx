@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FilePlus2, MessageSquareText, X } from "lucide-react";
 import type { TaskPriority } from "../domain/task";
 import { useWorkspaceStore } from "../store/workspace";
+import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
 
 export type ComposerMode = "task" | "chat";
 
@@ -143,15 +144,16 @@ export function TaskComposer({
 
           {mode === "task" ? (
             <>
-              <label>
+              <div className="composer-rich-field">
                 <span>原始任务说明</span>
-                <textarea
+                <LazyRichMarkdownEditor
                   value={summary}
-                  onChange={(event) => setSummary(event.target.value)}
                   placeholder="只写已经明确的信息；不确定的内容可留到需求整理阶段提问。"
-                  rows={6}
+                  compact
+                  onCommit={setSummary}
                 />
-              </label>
+                <small>支持 Markdown、表格，以及粘贴或拖入图片</small>
+              </div>
               <label>
                 <span>优先级</span>
                 <select
@@ -191,4 +193,3 @@ export function TaskComposer({
     </div>
   );
 }
-

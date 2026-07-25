@@ -6,6 +6,9 @@ export default defineConfig({
   build: {
     target: "es2022",
     outDir: "dist",
+    // The full Markdown editor is intentionally lazy-loaded as a separate
+    // feature chunk; keep the initial application bundle below this budget.
+    chunkSizeWarningLimit: 800,
   },
   server: {
     port: 34115,

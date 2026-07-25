@@ -38,6 +38,7 @@ import {
 import { copyText } from "../lib/clipboard";
 import type { EngineStatus } from "../lib/bridge";
 import { useWorkspaceStore } from "../store/workspace";
+import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
 
 interface TaskDetailProps {
   task: Task;
@@ -239,16 +240,6 @@ function BasicsPanel({
             run(() => updateTaskDetails(task.id, { projectName }))
           }
         />
-        <DraftInput
-          label="原始任务说明"
-          value={task.summary}
-          multiline
-          rows={5}
-          disabled={!editable}
-          onCommit={(summary) =>
-            run(() => updateTaskDetails(task.id, { summary }))
-          }
-        />
         <label className="field">
           <span>优先级</span>
           <select
@@ -267,6 +258,19 @@ function BasicsPanel({
             <option value="high">高</option>
           </select>
         </label>
+        <div className="field rich-summary-field">
+          <span>
+            任务正文
+            <small>富文本 / Markdown / 图文混排</small>
+          </span>
+          <LazyRichMarkdownEditor
+            value={task.summary}
+            disabled={!editable}
+            onCommit={(summary) =>
+              run(() => updateTaskDetails(task.id, { summary }))
+            }
+          />
+        </div>
       </div>
     </Panel>
   );
@@ -329,6 +333,7 @@ function EvidencePanel({
                 <option value="chat">聊天记录</option>
                 <option value="project">项目现状</option>
                 <option value="file">文档 / 文件</option>
+                <option value="plane">Plane 工作项</option>
               </select>
             </label>
             <label className="field">

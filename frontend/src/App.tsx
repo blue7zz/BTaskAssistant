@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardList,
+  CloudDownload,
   FilePlus2,
   Inbox,
   MessageSquareText,
@@ -18,6 +19,7 @@ import {
 import { TaskComposer, type ComposerMode } from "./components/TaskComposer";
 import { TaskDetail } from "./components/TaskDetail";
 import { TaskList } from "./components/TaskList";
+import { PlaneCollector } from "./components/PlaneCollector";
 import { STATUS_META, TASK_STATUSES, type TaskStatus } from "./domain/task";
 import { getEngineStatuses, type EngineStatus } from "./lib/bridge";
 import {
@@ -35,6 +37,7 @@ const NAV_ICONS: Record<TaskStatus, typeof Inbox> = {
 };
 
 type Notice = { kind: "success" | "error"; message: string };
+type WorkspaceView = "tasks" | "plane";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "操作失败，请重试";
@@ -42,6 +45,9 @@ function errorMessage(error: unknown): string {
 
 export default function App() {
   const tasks = useWorkspaceStore((state) => state.tasks);
+  const collectionCandidates = useWorkspaceStore(
+    (state) => state.collectionCandidates,
+  );
   const selectedTaskID = useWorkspaceStore((state) => state.selectedTaskId);
   const statusFilter = useWorkspaceStore((state) => state.statusFilter);
   const hydrated = useWorkspaceStore((state) => state.hydrated);
@@ -52,6 +58,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<Notice>();
   const [engines, setEngines] = useState<EngineStatus[]>([]);
+  const [activeView, setActiveView] = useState<WorkspaceView>("tasks");
 
   useEffect(() => {
     getEngineStatuses().then(setEngines).catch(() => setEngines([]));
@@ -86,6 +93,7 @@ export default function App() {
   }, [query, statusFilter, tasks]);
 
   const openComposer = (mode: ComposerMode) => {
+    setActiveView("tasks");
     setComposerMode(mode);
     setComposerOpen(true);
   };
@@ -132,8 +140,13 @@ export default function App() {
         <div className="nav-section">
           <span className="nav-label">工作流</span>
           <button
-            className={`nav-item ${statusFilter === "all" ? "active" : ""}`}
-            onClick={() => setStatusFilter("all")}
+            className={`nav-item ${
+              activeView === "tasks" && statusFilter === "all" ? "active" : ""
+            }`}
+            onClick={() => {
+              setActiveView("tasks");
+              setStatusFilter("all");
+            }}
           >
             <Archive size={16} />
             全部任务
@@ -145,8 +158,15 @@ export default function App() {
             return (
               <button
                 key={status}
-                className={`nav-item ${statusFilter === status ? "active" : ""}`}
-                onClick={() => setStatusFilter(status)}
+                className={`nav-item ${
+                  activeView === "tasks" && statusFilter === status
+                    ? "active"
+                    : ""
+                }`}
+                onClick={() => {
+                  setActiveView("tasks");
+                  setStatusFilter(status);
+                }}
               >
                 <Icon size={16} />
                 {STATUS_META[status].label}
@@ -154,6 +174,24 @@ export default function App() {
               </button>
             );
           })}
+        </div>
+
+        <div className="nav-section integrations-nav">
+          <span className="nav-label">任务来源</span>
+          <button
+            className={`nav-item ${activeView === "plane" ? "active" : ""}`}
+            onClick={() => setActiveView("plane")}
+          >
+            <CloudDownload size={16} />
+            Plane 收集箱
+            <span>
+              {
+                collectionCandidates.filter(
+                  (candidate) => candidate.decision === "pending",
+                ).length
+              }
+            </span>
+          </button>
         </div>
 
         <div className="engine-card">
@@ -177,12 +215,18 @@ export default function App() {
       </nav>
 
       <main className="main-shell">
-        <header className="topbar">
+        <header className={`topbar ${activeView === "plane" ? "collector-topbar" : ""}`}>
           <div>
-            <span className="eyebrow">本地任务工作台</span>
-            <h1>把需求确认权留在人手里</h1>
+            <span className="eyebrow">
+              {activeView === "plane" ? "收集与筛选" : "本地任务工作台"}
+            </span>
+            <h1>
+              {activeView === "plane"
+                ? "先生成候选，再由人决定"
+                : "把需求确认权留在人手里"}
+            </h1>
           </div>
-          <div className="topbar-actions">
+          {activeView === "tasks" && <div className="topbar-actions">
             <label className="search-box">
               <Search size={16} />
               <input
@@ -207,10 +251,20 @@ export default function App() {
               <FilePlus2 size={16} />
               添加任务
             </button>
-          </div>
+          </div>}
         </header>
 
-        {tasks.length === 0 ? (
+        {activeView === "plane" ? (
+          <PlaneCollector
+            onError={reportError}
+            onSuccess={reportSuccess}
+            onOpenTask={(taskID) => {
+              selectTask(taskID);
+              setStatusFilter("all");
+              setActiveView("tasks");
+            }}
+          />
+        ) : tasks.length === 0 ? (
           <section className="empty-workspace">
             <div className="empty-illustration">
               <ClipboardList size={34} />
@@ -290,4 +344,3 @@ export default function App() {
     </div>
   );
 }
-

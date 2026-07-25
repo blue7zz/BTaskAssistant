@@ -9,7 +9,7 @@ export const TASK_STATUSES = [
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type TaskPriority = "low" | "medium" | "high";
-export type EvidenceType = "manual" | "chat" | "project" | "file";
+export type EvidenceType = "manual" | "chat" | "project" | "file" | "plane";
 export type DevelopmentEngine = "codex" | "pi";
 export type DevelopmentState = "idle" | "delegated" | "completed";
 export type ReviewMode = "manual" | "template";
@@ -168,4 +168,3 @@ export function createEmptyReview(): ReviewRecord {
 export function statusIndex(status: TaskStatus): number {
   return TASK_STATUSES.indexOf(status);
 }
-

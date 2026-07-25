@@ -18,8 +18,9 @@ flowchart TD
     UI["React 工作台"] --> Store["Zustand 工作区"]
     Store --> Bridge["Wails Bridge"]
     Bridge --> Policy["Go 状态机"]
-    Bridge --> Storage["本地 JSON"]
-    Policy -. "后续接入" .-> Engines["PI / Codex 适配器"]
+    Bridge --> Storage["本地 SQLite"]
+    Bridge --> Plane["Plane REST API"]
+    Policy -. "受限接入" .-> Engines["PI / Codex 适配器"]
 ```
 
 | 层 | 位置 | 职责 |
@@ -31,6 +32,26 @@ flowchart TD
 | Go 领域 | `internal/workflow` | 桌面端最终状态转换校验 |
 | 存储 | `internal/storage` | SQLite 初始化、迁移与工作区快照 |
 | AI 边界 | `internal/engine` | PI / Codex 统一接口与配置状态 |
+| 外部收集 | `internal/plane` | HTTPS、PAT 鉴权、分页、去重前标准化 |
+| 凭据 | `internal/credentials` | 系统凭据库；令牌不进入 SQLite |
+
+## 富文本与 Markdown
+
+任务正文使用 MDXEditor。编辑器直接接收和输出 Markdown，不通过 HTML
+作为中间持久化格式；现有纯文本任务天然兼容。支持富文本、Markdown
+源码、表格、链接和图片，单张本地图片限制为 4 MB，并以 data URL
+随本地工作区保存。后续资料存储规范化时，再迁移到内容寻址文件目录。
+
+## Plane 收集箱
+
+Plane 集成按两层处理：
+
+1. Go 固定脚本使用 `X-API-Key` 调用 REST API，负责 HTTPS 校验、分页、去重、字段标准化和原文保留。
+2. 本机 OMP 仅在用户点击时，以无工具模式提炼标题、正文、关键信息和待确认问题。
+
+候选状态只有 `pending`、`accepted`、`ignored`。只有用户点击
+“人工确认并转为任务”才会创建正式任务；Plane 原始内容会作为独立、
+不可被 AI 覆盖的需求来源保存。
 
 ## 数据与确认规则
 
@@ -54,12 +75,13 @@ flowchart TD
 
 ## AI 适配器策略
 
-`internal/engine.Adapter` 是唯一允许接入 PI 或 Codex 的接口。第一版只公开引擎状态，不执行命令，因为以下信息尚未被明确：
+`internal/engine.Adapter` 是唯一允许接入 PI 或 Codex 的接口。收集阶段允许
+OMP 在无工具模式下做候选提炼；开发执行仍未启用，因为以下信息尚未完成：
 
-- PI / oh-my-pi 的稳定 CLI 参数与输入输出协议；
-- Codex 的具体委托方式；
+- 完整 OMP RPC 事件、工具审批与恢复协议；
+- Codex 的具体委托与恢复方式；
 - 项目工作目录、权限和环境变量边界；
 - 中断、超时、失败重试和进程恢复规则；
 - 输出如何映射为可信的开发结果或审核证据。
 
-这些内容确认前，工作台只提供“复制确认提示词”和“记录真实结果”。
+这些内容确认前，开发工作台只提供“复制确认提示词”和“记录真实结果”。

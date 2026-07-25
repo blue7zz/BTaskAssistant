@@ -9,6 +9,10 @@ BTaskAssistant 是一个本地优先、人工把关的 AI 开发任务工作流�
 ## 第一版包含什么
 
 - 手动创建任务，或粘贴聊天记录导入任务。
+- 使用接近 macOS 备忘录的富文本体验编辑任务正文；Markdown
+  是持久化真相，可在富文本和源码模式间切换，并支持粘贴、拖放图片。
+- 通过 Personal Access Token 从 Plane 项目分页收集工作项；固定脚本负责去重和保留原文，
+  PI 只生成可编辑候选，必须人工确认后才会创建正式任务。
 - 为任务保存原始说明、聊天记录、项目现状和文件内容等需求来源。
 - 通过固定模板生成带 `[S1]` 来源标记的需求文档候选稿与开发提示词。
 - 明确目标、范围内、范围外、验收标准、风险和待确认问题。
@@ -45,6 +49,8 @@ flowchart TD
 - 状态：Zustand
 - 本地数据：SQLite；浏览器模式回退到 `localStorage`
 - AI 边界：`internal/engine.Adapter`
+- 富文本：MDXEditor（Markdown 原生）
+- 外部来源：Plane REST API；PAT 保存在系统凭据库
 
 ## 运行
 
@@ -102,6 +108,11 @@ go test ./internal/...
 
 ## 当前边界
 
-第一版没有猜测 PI、oh-my-pi 或 Codex 的本机 CLI 协议，因此不会直接启动 AI 进程。当前做法是生成并复制已经人工确认的提示词，在外部完成委托后把真实结果记录回来。接口边界已经预留，后续只有在 CLI 调用协议、权限、工作目录和失败处理都确认后才会启用自动执行。
+Plane 收集阶段已经支持用本机 `omp` 的无工具、无规则、无扩展、无会话模式提炼候选信息；
+结果不能自动创建任务，也不能自动推进状态。开发阶段仍采用复制已确认提示词、在外部执行并记录真实结果的方式，
+直到 OMP RPC 的工具审批、会话恢复、工作目录和失败处理完成。
+
+Plane PAT 不写入 SQLite、前端状态或日志，而是保存到 macOS Keychain、Windows Credential
+Manager 或 Linux Secret Service。远端 HTTP 地址会被拒绝，只有 HTTPS 和本机回环地址可以接收 PAT。
 
 详见 [完整目标架构](docs/SOFTWARE_ARCHITECTURE.md)、[MVP 落地架构](docs/ARCHITECTURE.md) 和 [第一版范围](docs/MVP_SCOPE.md)。

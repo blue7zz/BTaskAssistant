@@ -1,5 +1,12 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import {
+  makePlaneCandidate,
+  type CandidateAnalysis,
+  type CollectionCandidate,
+  type PlaneCandidatePayload,
+  type PlaneSettings,
+} from "../domain/collection";
 import { buildRequirementDraft } from "../domain/templates";
 import {
   createEmptyDevelopment,
@@ -23,6 +30,13 @@ import {
 
 export type StatusFilter = TaskStatus | "all";
 
+export const DEFAULT_PLANE_SETTINGS: PlaneSettings = {
+  baseUrl: "",
+  workspaceSlug: "",
+  projectId: "",
+  projectName: "",
+};
+
 type EditableRequirementFields = Pick<
   Requirements,
   "objective" | "scope" | "outOfScope" | "acceptanceCriteria" | "risks"
@@ -30,6 +44,8 @@ type EditableRequirementFields = Pick<
 
 interface WorkspaceState {
   tasks: Task[];
+  collectionCandidates: CollectionCandidate[];
+  planeSettings: PlaneSettings;
   selectedTaskId?: string;
   statusFilter: StatusFilter;
   hydrated: boolean;
@@ -37,6 +53,18 @@ interface WorkspaceState {
   setHydrated(hydrated: boolean): void;
   setStatusFilter(status: StatusFilter): void;
   selectTask(taskID?: string): void;
+  updatePlaneSettings(patch: Partial<PlaneSettings>): void;
+  ingestPlaneCandidates(payloads: PlaneCandidatePayload[]): number;
+  applyCandidateAnalysis(
+    candidateID: string,
+    analysis: CandidateAnalysis,
+  ): void;
+  updateCandidateDraft(
+    candidateID: string,
+    patch: Pick<CandidateAnalysis, "title" | "summaryMarkdown">,
+  ): void;
+  acceptCandidate(candidateID: string): string;
+  setCandidateIgnored(candidateID: string, ignored: boolean): void;
   createTask(input: CreateTaskInput): string;
   importChat(input: {
     title?: string;
@@ -152,6 +180,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set, get) => ({
       tasks: [],
+      collectionCandidates: [],
+      planeSettings: DEFAULT_PLANE_SETTINGS,
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: false,
@@ -159,6 +189,128 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       setHydrated: (hydrated) => set({ hydrated }),
       setStatusFilter: (statusFilter) => set({ statusFilter }),
       selectTask: (selectedTaskId) => set({ selectedTaskId }),
+      updatePlaneSettings: (patch) =>
+        set((state) => ({
+          planeSettings: { ...state.planeSettings, ...patch },
+        })),
+      ingestPlaneCandidates: (payloads) => {
+        const state = get();
+        const existingByID = new Map(
+          state.collectionCandidates.map((candidate) => [
+            candidate.externalId,
+            candidate,
+          ]),
+        );
+        const projectName =
+          state.planeSettings.projectName.trim() ||
+          `Plane · ${state.planeSettings.projectId.trim()}`;
+        const incoming = payloads.map((payload) =>
+          makePlaneCandidate(
+            payload,
+            projectName,
+            existingByID.get(payload.externalId),
+          ),
+        );
+        const incomingIDs = new Set(incoming.map((item) => item.externalId));
+        const retained = state.collectionCandidates.filter(
+          (item) =>
+            !incomingIDs.has(item.externalId) &&
+            (item.decision === "accepted" || item.decision === "ignored"),
+        );
+        const lastCollectedAt = new Date().toISOString();
+        set({
+          collectionCandidates: [...incoming, ...retained],
+          planeSettings: {
+            ...state.planeSettings,
+            lastCollectedAt,
+          },
+        });
+        return incoming.filter((item) => item.decision === "pending").length;
+      },
+      applyCandidateAnalysis: (candidateID, analysis) =>
+        set((state) => ({
+          collectionCandidates: state.collectionCandidates.map((candidate) =>
+            candidate.id === candidateID
+              ? {
+                  ...candidate,
+                  analysis: {
+                    ...analysis,
+                    title: analysis.title.trim() || candidate.title,
+                    summaryMarkdown:
+                      analysis.summaryMarkdown.trim() ||
+                      candidate.descriptionMarkdown,
+                  },
+                }
+              : candidate,
+          ),
+        })),
+      updateCandidateDraft: (candidateID, patch) =>
+        set((state) => ({
+          collectionCandidates: state.collectionCandidates.map((candidate) =>
+            candidate.id === candidateID
+              ? {
+                  ...candidate,
+                  analysis: {
+                    ...candidate.analysis,
+                    title: patch.title,
+                    summaryMarkdown: patch.summaryMarkdown,
+                  },
+                }
+              : candidate,
+          ),
+        })),
+      acceptCandidate: (candidateID) => {
+        const candidate = get().collectionCandidates.find(
+          (item) => item.id === candidateID,
+        );
+        if (!candidate) throw new Error("没有找到这条收集候选");
+        if (candidate.decision !== "pending") {
+          throw new Error("这条候选已经处理");
+        }
+        if (!candidate.analysis.title.trim()) {
+          throw new Error("请先确认候选任务标题");
+        }
+        if (!candidate.analysis.summaryMarkdown.trim()) {
+          throw new Error("请先确认候选任务说明");
+        }
+
+        const taskID = get().createTask({
+          title: candidate.analysis.title,
+          summary: candidate.analysis.summaryMarkdown,
+          projectName: candidate.projectName,
+          priority: candidate.priority,
+          initialEvidence: {
+            type: "plane",
+            title: `Plane 原始工作项 ${candidate.externalKey}`,
+            content: candidate.sourceMarkdown,
+          },
+        });
+        set((state) => ({
+          collectionCandidates: state.collectionCandidates.map((item) =>
+            item.id === candidateID
+              ? {
+                  ...item,
+                  decision: "accepted",
+                  acceptedTaskId: taskID,
+                }
+              : item,
+          ),
+        }));
+        return taskID;
+      },
+      setCandidateIgnored: (candidateID, ignored) =>
+        set((state) => ({
+          collectionCandidates: state.collectionCandidates.map((candidate) => {
+            if (candidate.id !== candidateID) return candidate;
+            if (candidate.decision === "accepted") {
+              throw new Error("已转换成正式任务的候选不能忽略");
+            }
+            return {
+              ...candidate,
+              decision: ignored ? "ignored" : "pending",
+            };
+          }),
+        })),
 
       createTask: (input) => {
         const timestamp = now();
@@ -562,9 +714,23 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "btaskassistant-workspace",
       storage: createJSONStorage(() => workspaceStorage),
-      version: 1,
+      version: 2,
+      migrate: (persistedState) => {
+        const state = persistedState as Partial<WorkspaceState>;
+        return {
+          ...state,
+          tasks: state.tasks ?? [],
+          collectionCandidates: state.collectionCandidates ?? [],
+          planeSettings: {
+            ...DEFAULT_PLANE_SETTINGS,
+            ...(state.planeSettings ?? {}),
+          },
+        } as WorkspaceState;
+      },
       partialize: (state) => ({
         tasks: state.tasks,
+        collectionCandidates: state.collectionCandidates,
+        planeSettings: state.planeSettings,
         selectedTaskId: state.selectedTaskId,
         statusFilter: state.statusFilter,
       }),

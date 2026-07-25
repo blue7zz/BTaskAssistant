@@ -1,11 +1,34 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { PlaneCandidatePayload } from "../domain/collection";
 import { useWorkspaceStore } from "./workspace";
+
+const planePayload: PlaneCandidatePayload = {
+  externalId: "plane-item-1",
+  externalKey: "BT-18",
+  title: "整理 Plane 收集流程",
+  descriptionMarkdown: "只把候选交给用户确认。",
+  sourceMarkdown:
+    "# 整理 Plane 收集流程\n\n- Plane ID: `plane-item-1`\n\n只把候选交给用户确认。",
+  priority: "high",
+  stateName: "待办",
+  stateGroup: "backlog",
+  labels: ["workflow"],
+  assignees: [],
+  updatedAt: "2026-07-24T10:00:00Z",
+};
 
 describe("workspace store", () => {
   beforeEach(() => {
     window.localStorage.clear();
     useWorkspaceStore.setState({
       tasks: [],
+      collectionCandidates: [],
+      planeSettings: {
+        baseUrl: "",
+        workspaceSlug: "",
+        projectId: "",
+        projectName: "",
+      },
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: true,
@@ -88,5 +111,45 @@ describe("workspace store", () => {
     expect(() =>
       useWorkspaceStore.getState().confirmRequirements(taskID),
     ).toThrow("项目");
+  });
+
+  it("deduplicates Plane items and creates a task only after human acceptance", () => {
+    useWorkspaceStore.getState().updatePlaneSettings({
+      baseUrl: "https://plane.example.com",
+      workspaceSlug: "team",
+      projectId: "project-1",
+      projectName: "BTaskAssistant",
+    });
+
+    expect(
+      useWorkspaceStore.getState().ingestPlaneCandidates([planePayload]),
+    ).toBe(1);
+    useWorkspaceStore.getState().ingestPlaneCandidates([planePayload]);
+
+    let state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates).toHaveLength(1);
+    expect(state.tasks).toHaveLength(0);
+    const candidate = state.collectionCandidates[0];
+
+    state.applyCandidateAnalysis(candidate.id, {
+      mode: "pi",
+      title: "确认 Plane 候选任务",
+      summaryMarkdown: "保留来源，等待人工确认。",
+      keyPoints: ["不得自动创建正式任务"],
+      openQuestions: [],
+      analyzedAt: "2026-07-24T10:01:00Z",
+    });
+    const taskID = useWorkspaceStore
+      .getState()
+      .acceptCandidate(candidate.id);
+
+    state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates[0].decision).toBe("accepted");
+    expect(state.collectionCandidates[0].acceptedTaskId).toBe(taskID);
+    expect(state.tasks).toHaveLength(1);
+    expect(state.tasks[0].title).toBe("确认 Plane 候选任务");
+    expect(state.tasks[0].evidence[0].type).toBe("plane");
+    expect(state.tasks[0].evidence[0].content).toContain("Plane ID");
+    expect(() => state.acceptCandidate(candidate.id)).toThrow("已经处理");
   });
 });

@@ -1,0 +1,89 @@
+package plane
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestListCandidatesPaginatesAndPreservesSource(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Header.Get("X-API-Key") != "plane_api_test" {
+			t.Fatalf("missing API key header")
+		}
+		if !strings.HasSuffix(request.URL.Path, "/api/v1/workspaces/team/projects/project/work-items/") {
+			t.Fatalf("unexpected request path %q", request.URL.Path)
+		}
+		cursor := request.URL.Query().Get("cursor")
+		writer.Header().Set("Content-Type", "application/json")
+		if cursor == "" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"next_cursor":       "page-2",
+				"next_page_results": true,
+				"total_results":     2,
+				"results": []map[string]any{{
+					"id":                 "item-1",
+					"name":               "修复登录",
+					"description":        "<p>保留 <strong>原始</strong> 描述</p>",
+					"priority":           "high",
+					"sequence_id":        8,
+					"project_identifier": "APP",
+					"state":              map[string]any{"name": "进行中"},
+					"labels":             []map[string]any{{"name": "bug"}},
+					"assignees":          []map[string]any{{"display_name": "Alice"}},
+				}},
+			})
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"next_page_results": false,
+			"results": []map[string]any{{
+				"id":          "item-2",
+				"name":        "补充文档",
+				"description": map[string]any{"type": "doc"},
+				"priority":    "low",
+				"sequence_id": 9,
+				"state":       map[string]any{"name": "待办"},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "plane_api_test")
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	candidates, err := client.ListCandidates(context.Background(), "team", "project")
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two pages, got %d", requests)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected two candidates, got %d", len(candidates))
+	}
+	if candidates[0].ExternalKey != "APP-8" || candidates[0].Priority != "high" {
+		t.Fatalf("unexpected first candidate: %#v", candidates[0])
+	}
+	if !strings.Contains(candidates[0].SourceMarkdown, "保留 原始 描述") {
+		t.Fatalf("source did not preserve description: %q", candidates[0].SourceMarkdown)
+	}
+	if !strings.Contains(candidates[1].DescriptionMarkdown, "```json") {
+		t.Fatalf("structured description was not preserved: %q", candidates[1].DescriptionMarkdown)
+	}
+}
+
+func TestNormalizeBaseURLRejectsInsecureRemoteHTTP(t *testing.T) {
+	if _, err := NormalizeBaseURL("http://plane.example.com"); err == nil {
+		t.Fatal("expected insecure remote HTTP to be rejected")
+	}
+	if value, err := NormalizeBaseURL("http://127.0.0.1:8080/"); err != nil || value == "" {
+		t.Fatalf("expected loopback HTTP to be allowed, got %q and %v", value, err)
+	}
+}

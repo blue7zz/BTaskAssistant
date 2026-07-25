@@ -15,6 +15,13 @@ describe("App smoke test", () => {
     window.localStorage.clear();
     useWorkspaceStore.setState({
       tasks: [],
+      collectionCandidates: [],
+      planeSettings: {
+        baseUrl: "",
+        workspaceSlug: "",
+        projectId: "",
+        projectName: "",
+      },
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: true,

@@ -1,4 +1,10 @@
 import type { StateStorage } from "zustand/middleware";
+import type {
+  CandidateAnalysis,
+  PlaneCandidatePayload,
+  PlaneConnectionStatus,
+  PlaneSettings,
+} from "../domain/collection";
 import type { TaskStatus } from "../domain/task";
 import type { TransitionGates } from "../domain/workflow";
 import { validateTransition as validateInBrowser } from "../domain/workflow";
@@ -22,6 +28,27 @@ interface NativeApp {
     reviewApproved: boolean,
   ): Promise<string>;
   EngineStatuses(): Promise<EngineStatus[]>;
+  SavePlaneToken(
+    baseUrl: string,
+    workspaceSlug: string,
+    token: string,
+  ): Promise<void>;
+  DeletePlaneToken(baseUrl: string, workspaceSlug: string): Promise<void>;
+  HasPlaneToken(
+    baseUrl: string,
+    workspaceSlug: string,
+  ): Promise<boolean>;
+  TestPlaneConnection(
+    baseUrl: string,
+    workspaceSlug: string,
+    projectId: string,
+  ): Promise<PlaneConnectionStatus>;
+  CollectPlaneWorkItems(
+    baseUrl: string,
+    workspaceSlug: string,
+    projectId: string,
+  ): Promise<PlaneCandidatePayload[]>;
+  AnalyzePlaneCandidate(sourceMarkdown: string): Promise<CandidateAnalysis>;
 }
 
 declare global {
@@ -101,3 +128,65 @@ export async function getEngineStatuses(): Promise<EngineStatus[]> {
   ];
 }
 
+function requireNativeApp(): NativeApp {
+  const app = nativeApp();
+  if (!app) {
+    throw new Error("Plane 和 PI 集成只能在 Wails 桌面客户端中使用");
+  }
+  return app;
+}
+
+export async function savePlaneToken(
+  settings: PlaneSettings,
+  token: string,
+): Promise<void> {
+  if (!token.trim()) throw new Error("请输入 Plane Personal Access Token");
+  await requireNativeApp().SavePlaneToken(
+    settings.baseUrl,
+    settings.workspaceSlug,
+    token.trim(),
+  );
+}
+
+export async function deletePlaneToken(
+  settings: PlaneSettings,
+): Promise<void> {
+  await requireNativeApp().DeletePlaneToken(
+    settings.baseUrl,
+    settings.workspaceSlug,
+  );
+}
+
+export async function hasPlaneToken(
+  settings: PlaneSettings,
+): Promise<boolean> {
+  const app = nativeApp();
+  if (!app) return false;
+  return app.HasPlaneToken(settings.baseUrl, settings.workspaceSlug);
+}
+
+export async function testPlaneConnection(
+  settings: PlaneSettings,
+): Promise<PlaneConnectionStatus> {
+  return requireNativeApp().TestPlaneConnection(
+    settings.baseUrl,
+    settings.workspaceSlug,
+    settings.projectId,
+  );
+}
+
+export async function collectPlaneWorkItems(
+  settings: PlaneSettings,
+): Promise<PlaneCandidatePayload[]> {
+  return requireNativeApp().CollectPlaneWorkItems(
+    settings.baseUrl,
+    settings.workspaceSlug,
+    settings.projectId,
+  );
+}
+
+export async function analyzePlaneCandidate(
+  sourceMarkdown: string,
+): Promise<CandidateAnalysis> {
+  return requireNativeApp().AnalyzePlaneCandidate(sourceMarkdown);
+}
