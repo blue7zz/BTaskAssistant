@@ -37,11 +37,14 @@ BTaskAssistant 需要同时满足：
 
 - 只允许 HTTPS；HTTP 仅允许 localhost/回环地址。
 - 通过 `X-API-Key` 发送 PAT。
+- 从用户粘贴的 Plane 工作区页面 URL 解析 workspace slug，项目由连接后的
+  API 结果下拉选择，不暴露 slug、Project ID 等手填字段。
 - 最多每页 100 条，按 cursor 拉取，设置 5000 条安全上限。
 - 保留 Plane ID、编号、状态、优先级、标签、负责人、时间和原始描述。
 - 以 Plane 工作项 ID 去重。
 
-PAT 使用 `go-keyring` 存入系统凭据库，不进入 Zustand、SQLite 或日志。
+PAT 使用 `go-keyring` 按 Plane 实例存入系统凭据库，不进入 Zustand、SQLite
+或日志。读取时兼容 v0.2.1 按“实例 + 工作区”保存的旧凭据并自动迁移。
 
 ### 3. OMP 使用受限的外部进程适配器
 

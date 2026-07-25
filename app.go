@@ -97,7 +97,19 @@ func (a *App) appContext() context.Context {
 	return context.Background()
 }
 
-func planeCredentialAccount(baseURL string, workspaceSlug string) (string, error) {
+func planeCredentialAccount(baseURL string) (string, error) {
+	normalized, err := plane.NormalizeBaseURL(baseURL)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return fmt.Sprintf("plane-pat-%x", sum[:16]), nil
+}
+
+func legacyPlaneCredentialAccount(
+	baseURL string,
+	workspaceSlug string,
+) (string, error) {
 	normalized, err := plane.NormalizeBaseURL(baseURL)
 	if err != nil {
 		return "", err
@@ -110,14 +122,51 @@ func planeCredentialAccount(baseURL string, workspaceSlug string) (string, error
 	return fmt.Sprintf("plane-pat-%x", sum[:16]), nil
 }
 
+func (a *App) readPlaneToken(
+	baseURL string,
+	workspaceSlug string,
+) (string, error) {
+	account, err := planeCredentialAccount(baseURL)
+	if err != nil {
+		return "", err
+	}
+	token, err := a.credentials.Get(account)
+	if err == nil {
+		return strings.TrimSpace(token), nil
+	}
+	if !errors.Is(err, credentials.ErrNotFound) {
+		return "", fmt.Errorf("读取系统凭据库失败: %w", err)
+	}
+
+	// v0.2.1 keyed PATs by both instance and workspace. Keep reading that
+	// account and copy it forward so upgrades do not require re-entering the
+	// secret.
+	legacyAccount, legacyErr := legacyPlaneCredentialAccount(
+		baseURL,
+		workspaceSlug,
+	)
+	if legacyErr != nil {
+		return "", credentials.ErrNotFound
+	}
+	token, err = a.credentials.Get(legacyAccount)
+	if err != nil {
+		return "", err
+	}
+	token = strings.TrimSpace(token)
+	if token != "" {
+		_ = a.credentials.Set(account, token)
+	}
+	return token, nil
+}
+
 // SavePlaneToken writes the PAT directly to the platform credential store. It
 // is never included in the persisted Zustand/SQLite workspace snapshot.
 func (a *App) SavePlaneToken(
 	baseURL string,
-	workspaceSlug string,
+	_ string,
 	token string,
 ) error {
-	account, err := planeCredentialAccount(baseURL, workspaceSlug)
+	account, err := planeCredentialAccount(baseURL)
 	if err != nil {
 		return err
 	}
@@ -132,12 +181,20 @@ func (a *App) SavePlaneToken(
 }
 
 func (a *App) DeletePlaneToken(baseURL string, workspaceSlug string) error {
-	account, err := planeCredentialAccount(baseURL, workspaceSlug)
+	account, err := planeCredentialAccount(baseURL)
 	if err != nil {
 		return err
 	}
 	if err := a.credentials.Delete(account); err != nil {
 		return fmt.Errorf("从系统凭据库删除令牌失败: %w", err)
+	}
+	if legacyAccount, legacyErr := legacyPlaneCredentialAccount(
+		baseURL,
+		workspaceSlug,
+	); legacyErr == nil {
+		if err := a.credentials.Delete(legacyAccount); err != nil {
+			return fmt.Errorf("从系统凭据库删除旧令牌失败: %w", err)
+		}
 	}
 	return nil
 }
@@ -146,11 +203,7 @@ func (a *App) HasPlaneToken(
 	baseURL string,
 	workspaceSlug string,
 ) (bool, error) {
-	account, err := planeCredentialAccount(baseURL, workspaceSlug)
-	if err != nil {
-		return false, err
-	}
-	token, err := a.credentials.Get(account)
+	token, err := a.readPlaneToken(baseURL, workspaceSlug)
 	if errors.Is(err, credentials.ErrNotFound) {
 		return false, nil
 	}
@@ -164,11 +217,7 @@ func (a *App) planeClient(
 	baseURL string,
 	workspaceSlug string,
 ) (*plane.Client, error) {
-	account, err := planeCredentialAccount(baseURL, workspaceSlug)
-	if err != nil {
-		return nil, err
-	}
-	token, err := a.credentials.Get(account)
+	token, err := a.readPlaneToken(baseURL, workspaceSlug)
 	if errors.Is(err, credentials.ErrNotFound) {
 		return nil, errors.New("Plane PAT 尚未保存")
 	}
@@ -176,6 +225,59 @@ func (a *App) planeClient(
 		return nil, fmt.Errorf("读取系统凭据库失败: %w", err)
 	}
 	return plane.NewClient(baseURL, token)
+}
+
+// SetupPlaneConnection is the simplified first-run path. The user supplies
+// only a Plane workspace URL and PAT; the backend validates both, stores the
+// secret only after authentication succeeds, and returns selectable projects.
+func (a *App) SetupPlaneConnection(
+	serviceAddress string,
+	token string,
+) (plane.ConnectionSetup, error) {
+	setup, err := plane.ResolveWorkspaceURL(serviceAddress)
+	if err != nil {
+		return plane.ConnectionSetup{}, err
+	}
+
+	token = strings.TrimSpace(token)
+	if token == "" {
+		token, err = a.readPlaneToken(setup.BaseURL, setup.WorkspaceSlug)
+		if errors.Is(err, credentials.ErrNotFound) {
+			return plane.ConnectionSetup{}, errors.New(
+				"请输入 Plane Personal Access Token",
+			)
+		}
+		if err != nil {
+			return plane.ConnectionSetup{}, err
+		}
+	}
+	client, err := plane.NewClient(setup.BaseURL, token)
+	if err != nil {
+		return plane.ConnectionSetup{}, err
+	}
+	ctx, cancel := context.WithTimeout(a.appContext(), 35*time.Second)
+	defer cancel()
+	setup.Projects, err = client.ListProjects(ctx, setup.WorkspaceSlug)
+	if err != nil {
+		return plane.ConnectionSetup{}, err
+	}
+	if len(setup.Projects) == 0 {
+		return plane.ConnectionSetup{}, errors.New(
+			"连接成功，但这个工作区中没有可访问的项目",
+		)
+	}
+
+	account, err := planeCredentialAccount(setup.BaseURL)
+	if err != nil {
+		return plane.ConnectionSetup{}, err
+	}
+	if err := a.credentials.Set(account, token); err != nil {
+		return plane.ConnectionSetup{}, fmt.Errorf(
+			"连接成功，但保存到系统凭据库失败: %w",
+			err,
+		)
+	}
+	return setup, nil
 }
 
 func (a *App) TestPlaneConnection(

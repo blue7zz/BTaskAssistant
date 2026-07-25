@@ -19,6 +19,12 @@ export interface PlaneProject {
   identifier: string;
 }
 
+export interface PlaneConnectionSetup {
+  baseUrl: string;
+  workspaceSlug: string;
+  projects: PlaneProject[];
+}
+
 export interface PlaneCandidatePayload {
   externalId: string;
   externalKey: string;

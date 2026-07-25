@@ -51,6 +51,12 @@ type Project struct {
 	Identifier string `json:"identifier"`
 }
 
+type ConnectionSetup struct {
+	BaseURL       string    `json:"baseUrl"`
+	WorkspaceSlug string    `json:"workspaceSlug"`
+	Projects      []Project `json:"projects"`
+}
+
 type Client struct {
 	baseURL    *url.URL
 	token      string
@@ -118,6 +124,46 @@ func NormalizeBaseURL(raw string) (string, error) {
 	parsed.Fragment = ""
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String(), nil
+}
+
+// ResolveWorkspaceURL accepts a URL copied from the Plane web app, such as
+// https://plane.example.com/my-team/ or a deeper project URL. Plane's public
+// REST API cannot enumerate workspaces from a PAT, so the workspace slug is
+// deliberately derived from the visible web URL instead of asking the user to
+// type an internal slug field.
+func ResolveWorkspaceURL(raw string) (ConnectionSetup, error) {
+	normalized, err := NormalizeBaseURL(raw)
+	if err != nil {
+		return ConnectionSetup{}, err
+	}
+	parsed, _ := url.Parse(normalized)
+	segments := strings.FieldsFunc(parsed.Path, func(r rune) bool {
+		return r == '/'
+	})
+	if len(segments) == 0 {
+		return ConnectionSetup{}, errors.New(
+			"请粘贴 Plane 工作区地址，例如 https://plane.example.com/my-team/",
+		)
+	}
+	workspaceSlug := strings.TrimSpace(segments[0])
+	switch strings.ToLower(workspaceSlug) {
+	case "api", "auth", "god-mode", "profile", "settings":
+		return ConnectionSetup{}, errors.New(
+			"服务地址中没有识别到工作区，请粘贴浏览器里的 Plane 工作区页面地址",
+		)
+	}
+
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	if strings.EqualFold(parsed.Hostname(), "app.plane.so") {
+		parsed.Host = "api.plane.so"
+	}
+	return ConnectionSetup{
+		BaseURL:       strings.TrimRight(parsed.String(), "/"),
+		WorkspaceSlug: workspaceSlug,
+	}, nil
 }
 
 func NewClient(baseURL string, token string) (*Client, error) {

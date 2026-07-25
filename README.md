@@ -116,13 +116,15 @@ Plane 收集阶段已经支持用本机 `omp` 的无工具、无规则、无扩�
 Plane PAT 不写入 SQLite、前端状态或日志，而是保存到 macOS Keychain、Windows Credential
 Manager 或 Linux Secret Service。远端 HTTP 地址会被拒绝，只有 HTTPS 和本机回环地址可以接收 PAT。
 
-`v0.2.1` 已为当前 myriad 部署预填以下非敏感配置：
+Plane 收集箱只要求两项连接信息：
 
-- 服务地址：`https://plane.fymyriad.com`
-- Workspace slug：`myriad`
-- 项目：`MYRIA · myriad`
+- 服务地址：直接粘贴浏览器中的工作区地址，例如
+  `https://plane.fymyriad.com/myriad/`
+- Access Token：`plane_api_...`
 
-首次使用只需在 Plane 收集箱粘贴 PAT 并点击“保存并发现项目”。PAT 只会保存在运行客户端的这台
-电脑的系统凭据库；发布包和 Git 仓库不包含令牌。
+连接成功后，客户端会自动识别工作区并列出可访问项目；用户只需从下拉框选择，
+不再填写 Workspace slug、Project ID 或项目标识。Plane 的公开 PAT API
+目前不能从实例根地址枚举工作区，因此服务地址需要包含工作区路径。PAT 只会
+保存在运行客户端的这台电脑的系统凭据库；发布包和 Git 仓库不包含令牌。
 
 详见 [完整目标架构](docs/SOFTWARE_ARCHITECTURE.md)、[MVP 落地架构](docs/ARCHITECTURE.md) 和 [第一版范围](docs/MVP_SCOPE.md)。

@@ -38,22 +38,24 @@ describe("PlaneCollector", () => {
     delete window.go;
   });
 
-  it("saves the PAT and automatically selects the only discovered project", async () => {
-    const savePlaneToken = vi.fn().mockResolvedValue(undefined);
-    const listPlaneProjects = vi.fn().mockResolvedValue([
-      {
-        id: "d4074079-8ce3-4cf2-8cd5-7e0af8c67f57",
-        name: "myriad",
-        identifier: "MYRIA",
-      },
-    ]);
+  it("connects with only the workspace URL and PAT, then selects the discovered project", async () => {
+    const setupPlaneConnection = vi.fn().mockResolvedValue({
+      baseUrl: "https://plane.fymyriad.com",
+      workspaceSlug: "myriad",
+      projects: [
+        {
+          id: "d4074079-8ce3-4cf2-8cd5-7e0af8c67f57",
+          name: "myriad",
+          identifier: "MYRIA",
+        },
+      ],
+    });
     window.go = {
       main: {
         App: {
           SaveState: vi.fn().mockResolvedValue(undefined),
           HasPlaneToken: vi.fn().mockResolvedValue(false),
-          SavePlaneToken: savePlaneToken,
-          ListPlaneProjects: listPlaneProjects,
+          SetupPlaneConnection: setupPlaneConnection,
         },
       },
     } as unknown as typeof window.go;
@@ -69,6 +71,15 @@ describe("PlaneCollector", () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).not.toContain("Workspace slug");
+    expect(container.textContent).not.toContain("Project ID");
+    const serviceInput = container.querySelector(
+      'input:not([type="password"])',
+    ) as HTMLInputElement;
+    expect(serviceInput.value).toBe(
+      "https://plane.fymyriad.com/myriad/",
+    );
+
     const tokenInput = container.querySelector(
       'input[type="password"]',
     ) as HTMLInputElement;
@@ -82,7 +93,7 @@ describe("PlaneCollector", () => {
     });
     const saveButton = Array.from(
       container.querySelectorAll("button"),
-    ).find((button) => button.textContent?.includes("保存并发现项目"));
+    ).find((button) => button.textContent?.includes("连接并加载选项"));
     expect(saveButton).toBeTruthy();
 
     await act(async () => {
@@ -93,16 +104,13 @@ describe("PlaneCollector", () => {
       await Promise.resolve();
     });
 
-    expect(savePlaneToken).toHaveBeenCalledWith(
-      "https://plane.fymyriad.com",
-      "myriad",
+    expect(setupPlaneConnection).toHaveBeenCalledWith(
+      "https://plane.fymyriad.com/myriad/",
       "plane_api_test",
     );
-    expect(listPlaneProjects).toHaveBeenCalledWith(
-      "https://plane.fymyriad.com",
-      "myriad",
-    );
     expect(useWorkspaceStore.getState().planeSettings).toMatchObject({
+      baseUrl: "https://plane.fymyriad.com",
+      workspaceSlug: "myriad",
       projectId: "d4074079-8ce3-4cf2-8cd5-7e0af8c67f57",
       projectName: "myriad",
       projectIdentifier: "MYRIA",

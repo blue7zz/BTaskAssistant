@@ -131,3 +131,39 @@ func TestNormalizeBaseURLRejectsInsecureRemoteHTTP(t *testing.T) {
 		t.Fatalf("expected loopback HTTP to be allowed, got %q and %v", value, err)
 	}
 }
+
+func TestResolveWorkspaceURLExtractsSlugFromPlanePage(t *testing.T) {
+	setup, err := ResolveWorkspaceURL(
+		"https://plane.example.com/my-team/projects/project-id/issues/",
+	)
+	if err != nil {
+		t.Fatalf("resolve workspace URL: %v", err)
+	}
+	if setup.BaseURL != "https://plane.example.com" {
+		t.Fatalf("unexpected base URL %q", setup.BaseURL)
+	}
+	if setup.WorkspaceSlug != "my-team" {
+		t.Fatalf("unexpected workspace slug %q", setup.WorkspaceSlug)
+	}
+}
+
+func TestResolveWorkspaceURLRequiresWorkspacePage(t *testing.T) {
+	if _, err := ResolveWorkspaceURL("https://plane.example.com/"); err == nil {
+		t.Fatal("expected root URL without workspace slug to be rejected")
+	}
+	if _, err := ResolveWorkspaceURL(
+		"https://plane.example.com/api/v1/",
+	); err == nil {
+		t.Fatal("expected API URL without workspace slug to be rejected")
+	}
+}
+
+func TestResolveWorkspaceURLMapsPlaneCloudWebHostToAPIHost(t *testing.T) {
+	setup, err := ResolveWorkspaceURL("https://app.plane.so/my-team/")
+	if err != nil {
+		t.Fatalf("resolve Plane Cloud URL: %v", err)
+	}
+	if setup.BaseURL != "https://api.plane.so" {
+		t.Fatalf("unexpected Plane Cloud API URL %q", setup.BaseURL)
+	}
+}

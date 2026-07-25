@@ -2,6 +2,7 @@ import type { StateStorage } from "zustand/middleware";
 import type {
   CandidateAnalysis,
   PlaneCandidatePayload,
+  PlaneConnectionSetup,
   PlaneConnectionStatus,
   PlaneProject,
   PlaneSettings,
@@ -29,6 +30,10 @@ interface NativeApp {
     reviewApproved: boolean,
   ): Promise<string>;
   EngineStatuses(): Promise<EngineStatus[]>;
+  SetupPlaneConnection(
+    serviceAddress: string,
+    token: string,
+  ): Promise<PlaneConnectionSetup>;
   SavePlaneToken(
     baseUrl: string,
     workspaceSlug: string,
@@ -150,6 +155,17 @@ export async function savePlaneToken(
   await requireNativeApp().SavePlaneToken(
     settings.baseUrl,
     settings.workspaceSlug,
+    token.trim(),
+  );
+}
+
+export async function setupPlaneConnection(
+  serviceAddress: string,
+  token: string,
+): Promise<PlaneConnectionSetup> {
+  if (!serviceAddress.trim()) throw new Error("请输入 Plane 服务地址");
+  return requireNativeApp().SetupPlaneConnection(
+    serviceAddress.trim(),
     token.trim(),
   );
 }
