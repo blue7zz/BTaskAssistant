@@ -10,6 +10,8 @@ import {
   MDXEditor,
   type MDXEditorMethods,
   UndoRedo,
+  codeBlockPlugin,
+  codeMirrorPlugin,
   headingsPlugin,
   imagePlugin,
   linkDialogPlugin,
@@ -78,6 +80,13 @@ export function RichMarkdownEditor({
       tablePlugin(),
       thematicBreakPlugin(),
       imagePlugin({ imageUploadHandler: readImageAsDataURL }),
+      codeBlockPlugin(),
+      codeMirrorPlugin({
+        codeBlockLanguages: {
+          "": "纯文本",
+          markdown: "Markdown",
+        },
+      }),
       markdownShortcutPlugin(),
       toolbarPlugin({
         toolbarClassName: "rich-editor-toolbar",

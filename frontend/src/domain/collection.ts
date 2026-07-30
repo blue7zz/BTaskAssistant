@@ -9,6 +9,7 @@ export interface PlaneSettings {
   workspaceSlug: string;
   projectId: string;
   projectName: string;
+  showInTaskSources: boolean;
   projectIdentifier?: string;
   lastCollectedAt?: string;
 }
@@ -39,6 +40,12 @@ export interface PlaneComment {
   editedAt?: string;
 }
 
+export interface PlaneWorkItemReference {
+  externalId: string;
+  externalKey: string;
+  title: string;
+}
+
 export interface PlaneCandidatePayload {
   externalId: string;
   externalKey: string;
@@ -53,6 +60,8 @@ export interface PlaneCandidatePayload {
   assigneeDetails?: PlanePerson[];
   comments?: PlaneComment[];
   commentsSyncError?: string;
+  parent?: PlaneWorkItemReference;
+  detailsLoaded?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -67,6 +76,9 @@ export interface CandidateAnalysis {
 }
 
 export interface CollectionCandidate extends PlaneCandidatePayload {
+  detailsLoaded: boolean;
+  draftEdited: boolean;
+  collectionRevision: string;
   id: string;
   provider: CollectionProvider;
   projectName: string;
@@ -86,46 +98,103 @@ export function makePlaneCandidate(
   payload: PlaneCandidatePayload,
   projectName: string,
   existing?: CollectionCandidate,
+  collectionRevision?: string,
 ): CollectionCandidate {
   const fetchedAt = new Date().toISOString();
-  const comments = payload.comments ?? [];
+  const reuseLoadedDetails = Boolean(
+    payload.detailsLoaded === false &&
+      existing?.detailsLoaded &&
+      (!payload.updatedAt ||
+        !existing.updatedAt ||
+        existing.updatedAt === payload.updatedAt),
+  );
+  const candidatePayload: PlaneCandidatePayload =
+    reuseLoadedDetails && existing
+      ? {
+          ...payload,
+          descriptionMarkdown: existing.descriptionMarkdown,
+          sourceMarkdown: existing.sourceMarkdown,
+          comments: existing.comments,
+          commentsSyncError: existing.commentsSyncError,
+          parent: existing.parent,
+          detailsLoaded: true,
+        }
+      : payload;
+  const comments = candidatePayload.comments ?? [];
+  const detailsLoaded = candidatePayload.detailsLoaded ?? true;
   const preserveDecision =
     existing?.decision === "accepted" || existing?.decision === "ignored";
   const baseAnalysis: CandidateAnalysis = {
     mode: "script",
-    title: payload.title,
+    title: candidatePayload.title,
     summaryMarkdown:
-      payload.descriptionMarkdown ||
-      `来自 Plane 的工作项 ${payload.externalKey}，原始描述为空。`,
+      candidatePayload.descriptionMarkdown ||
+      `来自 Plane 的工作项 ${candidatePayload.externalKey}，详情尚未加载。`,
     keyPoints: [
-      payload.stateName ? `当前状态：${payload.stateName}` : "",
-      payload.labels.length > 0
-        ? `标签：${payload.labels.join("、")}`
+      candidatePayload.stateName
+        ? `当前状态：${candidatePayload.stateName}`
         : "",
-      payload.assignees.length > 0
-        ? `负责人：${payload.assignees.join("、")}`
+      candidatePayload.labels.length > 0
+        ? `标签：${candidatePayload.labels.join("、")}`
+        : "",
+      candidatePayload.assignees.length > 0
+        ? `负责人：${candidatePayload.assignees.join("、")}`
         : "",
       comments.length > 0 ? `Plane 评论：${comments.length} 条` : "",
     ].filter(Boolean),
-    openQuestions: payload.commentsSyncError
-      ? ["Plane 评论没有完整同步，请重新收集后再确认。"]
+    openQuestions: candidatePayload.commentsSyncError
+      ? ["Plane 评论没有完整同步，请点击重试后再确认。"]
       : [],
     analyzedAt: fetchedAt,
   };
+  let analysis = baseAnalysis;
+  if (existing && (reuseLoadedDetails || existing.draftEdited)) {
+    analysis = existing.analysis;
+  } else if (
+    existing?.analysis.mode === "pi" &&
+    existing.updatedAt === candidatePayload.updatedAt
+  ) {
+    analysis = existing.analysis;
+  }
 
   return {
-    ...payload,
-    assigneeDetails: payload.assigneeDetails ?? [],
+    ...candidatePayload,
+    assigneeDetails: candidatePayload.assigneeDetails ?? [],
     comments,
-    id: `plane:${payload.externalId}`,
+    detailsLoaded,
+    draftEdited: existing?.draftEdited ?? false,
+    collectionRevision:
+      collectionRevision ?? existing?.collectionRevision ?? fetchedAt,
+    id: `plane:${candidatePayload.externalId}`,
     provider: "plane",
     projectName,
     decision: preserveDecision ? existing.decision : "pending",
     acceptedTaskId: preserveDecision ? existing.acceptedTaskId : undefined,
     fetchedAt,
-    analysis:
-      existing?.analysis.mode === "pi" && existing.updatedAt === payload.updatedAt
-        ? existing.analysis
-        : baseAnalysis,
+    analysis,
   };
+}
+
+export function planeWorkspaceAddress(settings: PlaneSettings): string {
+  const baseUrl = settings.baseUrl.trim().replace(/\/+$/, "");
+  const workspaceSlug = settings.workspaceSlug.trim();
+  if (!baseUrl || !workspaceSlug) return baseUrl;
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.hostname === "api.plane.so") {
+      parsed.hostname = "app.plane.so";
+    }
+    return `${parsed.origin}/${encodeURIComponent(workspaceSlug)}/`;
+  } catch {
+    return `${baseUrl}/${encodeURIComponent(workspaceSlug)}/`;
+  }
+}
+
+export function planeWorkItemURL(
+  settings: PlaneSettings,
+  externalKey: string,
+): string {
+  return `${planeWorkspaceAddress(settings)}browse/${encodeURIComponent(
+    externalKey.trim(),
+  )}`;
 }

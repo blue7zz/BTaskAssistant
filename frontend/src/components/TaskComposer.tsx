@@ -148,7 +148,7 @@ export function TaskComposer({
                 <span>原始任务说明</span>
                 <LazyRichMarkdownEditor
                   value={summary}
-                  placeholder="只写已经明确的信息；不确定的内容可留到需求整理阶段提问。"
+                  placeholder="填写任务说明、当前进展或后续待办，之后可以随时补充。"
                   compact
                   onCommit={setSummary}
                 />

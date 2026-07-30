@@ -10,8 +10,4 @@ export default defineConfig({
     // feature chunk; keep the initial application bundle below this budget.
     chunkSizeWarningLimit: 800,
   },
-  server: {
-    port: 34115,
-    strictPort: true,
-  },
 });

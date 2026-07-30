@@ -4,7 +4,7 @@
   "outputfilename": "BTaskAssistant",
   "frontend:install": "pnpm install --frozen-lockfile",
   "frontend:build": "pnpm build",
-  "frontend:dev:watcher": "pnpm dev -- --host 0.0.0.0",
+  "frontend:dev:watcher": "sh ../scripts/wails-frontend-dev.sh",
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "blue7zz"

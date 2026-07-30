@@ -9,6 +9,20 @@ import {
 } from "../domain/collection";
 import { buildRequirementDraft } from "../domain/templates";
 import {
+  DEFAULT_PI_SETTINGS,
+  normalizePISettings,
+  type PISettings,
+} from "../domain/engine";
+import {
+  buildRequirementAnalysisInput,
+  isApprovalBlockingQuestion,
+  mergeUnique,
+  normalizeRequirements,
+  unresolvedQuestions,
+  type RequirementAnalysisResult,
+  type RunRequirementAnalysisOptions,
+} from "../domain/requirements";
+import {
   createEmptyDevelopment,
   createEmptyRequirements,
   createEmptyReview,
@@ -16,30 +30,45 @@ import {
   type DevelopmentEngine,
   type Evidence,
   type EvidenceType,
+  type ForceProceedDecision,
+  type RequirementAnalyst,
   type Requirements,
   type ReviewMode,
   type Task,
   type TaskPriority,
   type TaskStatus,
+  type TrashedTask,
 } from "../domain/task";
 import { createID } from "../lib/id";
 import {
+  analyzeRequirements,
   validateTransition,
   workspaceStorage,
 } from "../lib/bridge";
 
 export type StatusFilter = TaskStatus | "all";
 
+export interface PlaneCandidateFilters {
+  state: string;
+  assignees: string[];
+}
+
+export const DEFAULT_PLANE_CANDIDATE_FILTERS: PlaneCandidateFilters = {
+  state: "all",
+  assignees: [],
+};
+
 export const DEFAULT_PLANE_SETTINGS: PlaneSettings = {
   baseUrl: "https://plane.fymyriad.com",
   workspaceSlug: "myriad",
   projectId: "d4074079-8ce3-4cf2-8cd5-7e0af8c67f57",
   projectName: "myriad",
+  showInTaskSources: true,
   projectIdentifier: "MYRIA",
 };
 
 function migratePlaneSettings(
-  settings?: PlaneSettings,
+  settings?: Partial<PlaneSettings>,
 ): PlaneSettings {
   if (
     !settings?.baseUrl?.trim() &&
@@ -62,6 +91,35 @@ function migratePlaneSettings(
   return merged;
 }
 
+function normalizePlaneCandidateFilters(
+  filters?: Partial<PlaneCandidateFilters>,
+): PlaneCandidateFilters {
+  const state = filters?.state?.trim() || DEFAULT_PLANE_CANDIDATE_FILTERS.state;
+  const assignees = Array.isArray(filters?.assignees)
+    ? Array.from(
+        new Set(filters.assignees.map((value) => value.trim()).filter(Boolean)),
+      )
+    : [];
+  return { state, assignees };
+}
+
+function migrateCandidateDraftEdited(
+  candidate: Partial<CollectionCandidate>,
+): boolean {
+  if (typeof candidate.draftEdited === "boolean") {
+    return candidate.draftEdited;
+  }
+  if (!candidate.analysis) return false;
+  const defaultSummary =
+    candidate.descriptionMarkdown ||
+    `来自 Plane 的工作项 ${candidate.externalKey ?? ""}，详情尚未加载。`;
+  return (
+    candidate.analysis.mode === "pi" ||
+    candidate.analysis.title !== (candidate.title ?? "") ||
+    candidate.analysis.summaryMarkdown !== defaultSummary
+  );
+}
+
 type EditableRequirementFields = Pick<
   Requirements,
   "objective" | "scope" | "outOfScope" | "acceptanceCriteria" | "risks"
@@ -69,8 +127,11 @@ type EditableRequirementFields = Pick<
 
 interface WorkspaceState {
   tasks: Task[];
+  trashedTasks: TrashedTask[];
   collectionCandidates: CollectionCandidate[];
   planeSettings: PlaneSettings;
+  planeCandidateFilters: PlaneCandidateFilters;
+  piSettings: PISettings;
   selectedTaskId?: string;
   statusFilter: StatusFilter;
   hydrated: boolean;
@@ -79,7 +140,17 @@ interface WorkspaceState {
   setStatusFilter(status: StatusFilter): void;
   selectTask(taskID?: string): void;
   updatePlaneSettings(patch: Partial<PlaneSettings>): void;
+  updatePlaneCandidateFilters(patch: Partial<PlaneCandidateFilters>): void;
+  updatePISettings(patch: Partial<PISettings>): void;
   ingestPlaneCandidates(payloads: PlaneCandidatePayload[]): number;
+  hydratePlaneCandidate(
+    payload: PlaneCandidatePayload,
+    expected: {
+      candidateID: string;
+      collectionRevision: string;
+      projectID: string;
+    },
+  ): boolean;
   applyCandidateAnalysis(
     candidateID: string,
     analysis: CandidateAnalysis,
@@ -99,20 +170,57 @@ interface WorkspaceState {
   updateTaskDetails(
     taskID: string,
     patch: Partial<
-      Pick<Task, "title" | "summary" | "projectName" | "priority">
+      Pick<
+        Task,
+        "title" | "summary" | "projectName" | "projectPath" | "priority"
+      >
     >,
   ): void;
+  updateTaskRecord(
+    taskID: string,
+    patch: Partial<
+      Pick<Task, "title" | "summary" | "projectName" | "priority" | "status">
+    >,
+  ): void;
+  moveTaskToTrash(taskID: string): void;
+  restoreTask(taskID: string): void;
+  deleteTaskPermanently(taskID: string): void;
+  setTaskStatus(taskID: string, status: TaskStatus): void;
   addEvidence(
     taskID: string,
     input: { type: EvidenceType; title: string; content: string },
   ): void;
   removeEvidence(taskID: string, evidenceID: string): void;
+  toggleEvidenceForAnalysis(taskID: string, evidenceID: string): void;
   patchRequirements(
     taskID: string,
     patch: Partial<EditableRequirementFields>,
   ): void;
   generateDraft(taskID: string): void;
   answerQuestion(taskID: string, questionID: string, answer: string): void;
+  answerQuestions(
+    taskID: string,
+    answers: Array<{ questionId: string; answer: string }>,
+  ): void;
+  confirmExistingBehavior(
+    taskID: string,
+    questionID: string,
+    snapshot: string,
+  ): void;
+  skipQuestion(taskID: string, questionID: string): void;
+  markQuestionOutOfScope(taskID: string, questionID: string): void;
+  setRequirementAnalyst(taskID: string, analyst: RequirementAnalyst): void;
+  runRequirementAnalysis(
+    taskID: string,
+    options?: RunRequirementAnalysisOptions,
+  ): Promise<void>;
+  acceptSuggestedDraft(taskID: string): void;
+  requestForceProceed(taskID: string): void;
+  cancelForceProceed(taskID: string): void;
+  confirmForceProceed(
+    taskID: string,
+    decisions: ForceProceedDecision[],
+  ): void;
   confirmRequirements(taskID: string): void;
   revokeRequirements(taskID: string): void;
   transitionTask(taskID: string, to: TaskStatus): Promise<void>;
@@ -141,6 +249,7 @@ function makeEvidence(input: {
     title: input.title.trim(),
     content: input.content.trim(),
     createdAt: now(),
+    selectedForAnalysis: true,
   };
 }
 
@@ -152,6 +261,14 @@ function invalidateDraft(requirements: Requirements): Requirements {
     generatedAt: undefined,
     confirmedAt: undefined,
     confirmedRevision: undefined,
+    interview: {
+      ...requirements.interview,
+      status:
+        requirements.interview.round > 0
+          ? "waiting_user_answer"
+          : "preparing",
+      forceProceed: undefined,
+    },
   };
 }
 
@@ -201,12 +318,171 @@ function firstLine(content: string): string {
   );
 }
 
+function analysisInterviewStatus(
+  status: RequirementAnalysisResult["analysisStatus"],
+) {
+  if (status === "NEEDS_USER_INPUT") return "waiting_user_answer" as const;
+  if (status === "NO_BLOCKING_QUESTIONS" || status === "READY_FOR_DRAFT") {
+    return "ai_suggested_ready" as const;
+  }
+  return "blocked" as const;
+}
+
+function questionKey(value: string): string {
+  return value.replace(/[\s，。？！、,.?!:：;；]/g, "").toLocaleLowerCase();
+}
+
+function mergeAnalysisResult(
+  task: Task,
+  result: RequirementAnalysisResult,
+  analyst: RequirementAnalyst,
+  mode: "analyze" | "review",
+  focus: string,
+): Task {
+  const questionIds: string[] = [];
+  const questions = [...task.requirements.questions];
+  for (const candidate of result.questions) {
+    const existing = questions.find(
+      (question) => questionKey(question.question) === questionKey(candidate.question),
+    );
+    if (existing) {
+      questionIds.push(existing.id);
+      continue;
+    }
+    const id = createID("question");
+    questionIds.push(id);
+    questions.push({
+      id,
+      round: result.round,
+      category: candidate.category,
+      severity: candidate.severity,
+      question: candidate.question,
+      reason: candidate.reason,
+      sourceIds: candidate.sourceFragmentIds,
+      projectEvidence: candidate.projectEvidence,
+      answerType: candidate.answerType,
+      options: candidate.options,
+      allowCustomAnswer: candidate.allowCustomAnswer,
+      status: "OPEN",
+      answer: "",
+    });
+  }
+
+  const facts = [...task.requirements.facts];
+  for (const candidate of result.confirmedFacts) {
+    if (
+      facts.some(
+        (fact) =>
+          questionKey(fact.statement) === questionKey(candidate.content),
+      )
+    ) {
+      continue;
+    }
+    facts.push({
+      id: candidate.id || createID("fact"),
+      statement: candidate.content,
+      sourceId: candidate.sourceFragmentIds[0],
+      sourceIds: candidate.sourceFragmentIds,
+    });
+  }
+
+  const projectObservations = [
+    ...task.requirements.interview.projectObservations,
+  ];
+  for (const observation of result.projectObservations) {
+    if (
+      projectObservations.some(
+        (existing) =>
+          existing.filePath === observation.filePath &&
+          questionKey(existing.content) === questionKey(observation.content),
+      )
+    ) {
+      continue;
+    }
+    projectObservations.push(observation);
+  }
+
+  const conflicts = [...task.requirements.interview.conflicts];
+  for (const conflict of result.conflicts) {
+    if (
+      conflicts.some(
+        (existing) =>
+          questionKey(existing.description) === questionKey(conflict.description),
+      )
+    ) {
+      continue;
+    }
+    conflicts.push(conflict);
+  }
+
+  return {
+    ...task,
+    requirements: {
+      ...task.requirements,
+      facts,
+      questions,
+      interview: {
+        ...task.requirements.interview,
+        status: analysisInterviewStatus(result.analysisStatus),
+        round: result.round,
+        analyses: [
+          ...task.requirements.interview.analyses,
+          {
+            id: result.analysisId,
+            round: result.round,
+            analyst,
+            mode,
+            status: result.analysisStatus,
+            reason: result.reason,
+            questionIds,
+            createdAt: result.analyzedAt,
+          },
+        ],
+        projectObservations,
+        conflicts,
+        suggestedDraft: {
+          objective:
+            result.draftUpdates.objective?.trim() ||
+            task.requirements.interview.suggestedDraft.objective,
+          scope: mergeUnique(
+            task.requirements.interview.suggestedDraft.scope,
+            result.draftUpdates.scope,
+          ),
+          outOfScope: mergeUnique(
+            task.requirements.interview.suggestedDraft.outOfScope,
+            result.draftUpdates.outOfScope,
+          ),
+          acceptanceCriteria: mergeUnique(
+            task.requirements.interview.suggestedDraft.acceptanceCriteria,
+            result.draftUpdates.acceptanceCriteria,
+          ),
+          constraints: mergeUnique(
+            task.requirements.interview.suggestedDraft.constraints,
+            result.draftUpdates.constraints,
+          ),
+        },
+        lastAnalysisStatus: result.analysisStatus,
+        lastReason: result.reason,
+        lastFocus: focus,
+        forceProceed: undefined,
+        blockedReason:
+          analysisInterviewStatus(result.analysisStatus) === "blocked"
+            ? result.reason
+            : undefined,
+      },
+    },
+  };
+}
+
 export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set, get) => ({
       tasks: [],
+      trashedTasks: [],
       collectionCandidates: [],
       planeSettings: DEFAULT_PLANE_SETTINGS,
+      planeCandidateFilters: DEFAULT_PLANE_CANDIDATE_FILTERS,
+      piSettings: DEFAULT_PI_SETTINGS,
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: false,
@@ -217,6 +493,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       updatePlaneSettings: (patch) =>
         set((state) => ({
           planeSettings: { ...state.planeSettings, ...patch },
+        })),
+      updatePlaneCandidateFilters: (patch) =>
+        set((state) => ({
+          planeCandidateFilters: normalizePlaneCandidateFilters({
+            ...state.planeCandidateFilters,
+            ...patch,
+          }),
+        })),
+      updatePISettings: (patch) =>
+        set((state) => ({
+          piSettings: normalizePISettings({ ...state.piSettings, ...patch }),
         })),
       ingestPlaneCandidates: (payloads) => {
         const state = get();
@@ -229,11 +516,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const projectName =
           state.planeSettings.projectName.trim() ||
           `Plane · ${state.planeSettings.projectId.trim()}`;
+        const collectionRevision = createID("plane-collection");
         const incoming = payloads.map((payload) =>
           makePlaneCandidate(
             payload,
             projectName,
             existingByID.get(payload.externalId),
+            collectionRevision,
           ),
         );
         const incomingIDs = new Set(incoming.map((item) => item.externalId));
@@ -251,6 +540,31 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           },
         });
         return incoming.filter((item) => item.decision === "pending").length;
+      },
+      hydratePlaneCandidate: (payload, expected) => {
+        const state = get();
+        const existing = state.collectionCandidates.find(
+          (candidate) => candidate.externalId === payload.externalId,
+        );
+        if (
+          !existing ||
+          existing.id !== expected.candidateID ||
+          existing.collectionRevision !== expected.collectionRevision ||
+          state.planeSettings.projectId !== expected.projectID
+        ) {
+          return false;
+        }
+        const hydrated = makePlaneCandidate(
+          { ...payload, detailsLoaded: true },
+          existing.projectName,
+          existing,
+        );
+        set({
+          collectionCandidates: state.collectionCandidates.map((candidate) =>
+            candidate.id === existing.id ? hydrated : candidate,
+          ),
+        });
+        return true;
       },
       applyCandidateAnalysis: (candidateID, analysis) =>
         set((state) => ({
@@ -280,6 +594,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                     title: patch.title,
                     summaryMarkdown: patch.summaryMarkdown,
                   },
+                  draftEdited: true,
                 }
               : candidate,
           ),
@@ -292,16 +607,22 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         if (candidate.decision !== "pending") {
           throw new Error("这条候选已经处理");
         }
-        if (!candidate.analysis.title.trim()) {
+        if (!candidate.detailsLoaded) {
+          throw new Error("请先加载 Plane 详情和评论再确认");
+        }
+        if (candidate.commentsSyncError) {
+          throw new Error("Plane 评论尚未完整同步，请重试后再确认");
+        }
+        if (!candidate.title.trim()) {
           throw new Error("请先确认候选任务标题");
         }
-        if (!candidate.analysis.summaryMarkdown.trim()) {
+        if (!candidate.descriptionMarkdown.trim()) {
           throw new Error("请先确认候选任务说明");
         }
 
         const taskID = get().createTask({
-          title: candidate.analysis.title,
-          summary: candidate.analysis.summaryMarkdown,
+          title: candidate.title,
+          summary: candidate.descriptionMarkdown,
           projectName: candidate.projectName,
           priority: candidate.priority,
           initialEvidence: {
@@ -348,6 +669,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           title: input.title.trim(),
           summary: input.summary.trim(),
           projectName: input.projectName?.trim() ?? "",
+          projectPath: input.projectPath?.trim() ?? "",
           priority: input.priority ?? "medium",
           status: "inbox",
           evidence,
@@ -405,6 +727,94 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           }),
         })),
 
+      updateTaskRecord: (taskID, patch) => {
+        if (patch.title !== undefined && !patch.title.trim()) {
+          throw new Error("任务标题不能为空");
+        }
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => ({
+            ...task,
+            ...patch,
+            title: patch.title?.trim() ?? task.title,
+            projectName: patch.projectName?.trim() ?? task.projectName,
+          })),
+        }));
+      },
+
+      moveTaskToTrash: (taskID) =>
+        set((state) => {
+          const task = state.tasks.find((candidate) => candidate.id === taskID);
+          if (!task) throw new Error("没有找到这个任务");
+          const trashedAt = now();
+          return {
+            tasks: state.tasks.filter((candidate) => candidate.id !== taskID),
+            trashedTasks: [
+              {
+                ...task,
+                revision: task.revision + 1,
+                updatedAt: trashedAt,
+                trashedAt,
+              },
+              ...state.trashedTasks,
+            ],
+            selectedTaskId:
+              state.selectedTaskId === taskID ? undefined : state.selectedTaskId,
+          };
+        }),
+
+      restoreTask: (taskID) =>
+        set((state) => {
+          const task = state.trashedTasks.find(
+            (candidate) => candidate.id === taskID,
+          );
+          if (!task) throw new Error("回收站中没有这个任务");
+          const { trashedAt: _trashedAt, ...restoredTask } = task;
+          return {
+            tasks: [
+              {
+                ...restoredTask,
+                revision: task.revision + 1,
+                updatedAt: now(),
+              },
+              ...state.tasks,
+            ],
+            trashedTasks: state.trashedTasks.filter(
+              (candidate) => candidate.id !== taskID,
+            ),
+            selectedTaskId: taskID,
+            statusFilter: "all",
+          };
+        }),
+
+      deleteTaskPermanently: (taskID) =>
+        set((state) => {
+          if (!state.trashedTasks.some((task) => task.id === taskID)) {
+            throw new Error("回收站中没有这个任务");
+          }
+          return {
+            trashedTasks: state.trashedTasks.filter(
+              (task) => task.id !== taskID,
+            ),
+            collectionCandidates: state.collectionCandidates.map((candidate) =>
+              candidate.acceptedTaskId === taskID
+                ? {
+                    ...candidate,
+                    decision: "pending",
+                    acceptedTaskId: undefined,
+                  }
+                : candidate,
+            ),
+          };
+        }),
+
+      setTaskStatus: (taskID, status) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => ({
+            ...task,
+            status,
+          })),
+        })),
+
       addEvidence: (taskID, input) => {
         if (!input.title.trim() || !input.content.trim()) {
           throw new Error("来源标题和内容都不能为空");
@@ -456,6 +866,25 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           }),
         })),
 
+      toggleEvidenceForAnalysis: (taskID, evidenceID) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              evidence: task.evidence.map((source) =>
+                source.id === evidenceID
+                  ? {
+                      ...source,
+                      selectedForAnalysis: source.selectedForAnalysis === false,
+                    }
+                  : source,
+              ),
+              requirements: invalidateDraft(task.requirements),
+            };
+          }),
+        })),
+
       patchRequirements: (taskID, patch) =>
         set((state) => ({
           tasks: updateTask(state.tasks, taskID, (task) => {
@@ -474,9 +903,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set((state) => ({
           tasks: updateTask(state.tasks, taskID, (task) => {
             ensureRequirementEditable(task);
+            const requirements = buildRequirementDraft(task);
             return {
               ...task,
-              requirements: buildRequirementDraft(task),
+              requirements: {
+                ...requirements,
+                interview: {
+                  ...requirements.interview,
+                  status: "draft_ready",
+                },
+              },
             };
           }),
         })),
@@ -494,11 +930,429 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                     ? {
                         ...question,
                         answer,
+                        status: answer.trim() ? "ANSWERED" : "OPEN",
+                        answerSource: answer.trim() ? "user" : undefined,
                         resolvedAt: answer.trim() ? now() : undefined,
+                        forceDecision: undefined,
+                        forceDecisionNote: undefined,
                       }
                     : question,
                 ),
               }),
+            };
+          }),
+        })),
+
+      answerQuestions: (taskID, answers) => {
+        const answerByQuestion = new Map(
+          answers
+            .filter((answer) => answer.answer.trim())
+            .map((answer) => [answer.questionId, answer.answer]),
+        );
+        if (answerByQuestion.size === 0) {
+          throw new Error("请至少填写一个问题答案");
+        }
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              requirements: invalidateDraft({
+                ...task.requirements,
+                questions: task.requirements.questions.map((question) => {
+                  const answer = answerByQuestion.get(question.id);
+                  return answer === undefined
+                    ? question
+                    : {
+                        ...question,
+                        answer,
+                        status: "ANSWERED",
+                        answerSource: "user",
+                        resolvedAt: now(),
+                        forceDecision: undefined,
+                        forceDecisionNote: undefined,
+                      };
+                }),
+              }),
+            };
+          }),
+        }));
+      },
+
+      confirmExistingBehavior: (taskID, questionID, snapshot) => {
+        if (!snapshot.trim()) {
+          throw new Error("请先记录当前行为快照或项目证据");
+        }
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              requirements: invalidateDraft({
+                ...task.requirements,
+                questions: task.requirements.questions.map((question) =>
+                  question.id === questionID
+                    ? {
+                        ...question,
+                        answer: snapshot,
+                        status: "ANSWERED",
+                        answerSource: "project_snapshot",
+                        resolvedAt: now(),
+                        forceDecision: undefined,
+                        forceDecisionNote: undefined,
+                      }
+                    : question,
+                ),
+              }),
+            };
+          }),
+        }));
+      },
+
+      skipQuestion: (taskID, questionID) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              requirements: invalidateDraft({
+                ...task.requirements,
+                questions: task.requirements.questions.map((question) =>
+                  question.id === questionID
+                    ? {
+                        ...question,
+                        status: "SKIPPED",
+                        answer: "",
+                        resolvedAt: undefined,
+                      }
+                    : question,
+                ),
+              }),
+            };
+          }),
+        })),
+
+      markQuestionOutOfScope: (taskID, questionID) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              requirements: invalidateDraft({
+                ...task.requirements,
+                questions: task.requirements.questions.map((question) =>
+                  question.id === questionID
+                    ? {
+                        ...question,
+                        status: "OUT_OF_SCOPE",
+                        answer: "用户明确标记为本次不需要考虑",
+                        answerSource: "user",
+                        resolvedAt: now(),
+                      }
+                    : question,
+                ),
+              }),
+            };
+          }),
+        })),
+
+      setRequirementAnalyst: (taskID, analyst) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              requirements: {
+                ...task.requirements,
+                interview: {
+                  ...task.requirements.interview,
+                  analyst,
+                },
+              },
+            };
+          }),
+        })),
+
+      runRequirementAnalysis: async (taskID, options = {}) => {
+        const task = get().tasks.find((candidate) => candidate.id === taskID);
+        if (!task) throw new Error("没有找到这个任务");
+        ensureRequirementEditable(task);
+        if (
+          task.requirements.interview.status === "analyzing" ||
+          task.requirements.interview.status === "reanalyzing"
+        ) {
+          throw new Error("需求分析正在进行，请等待本轮完成");
+        }
+        if (!task.projectName.trim()) {
+          throw new Error("请先绑定项目");
+        }
+        if (
+          !task.summary.trim() &&
+          !task.evidence.some((source) => source.selectedForAnalysis !== false)
+        ) {
+          throw new Error("至少需要任务说明或一条参与分析的资料");
+        }
+        const analyst = options.analyst ?? task.requirements.interview.analyst;
+        const mode = options.mode ?? "analyze";
+        const focus = options.focus?.trim() ?? "";
+        const input = buildRequirementAnalysisInput(task, {
+          analyst,
+          mode,
+          focus,
+        });
+
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (current) => ({
+            ...current,
+            requirements: {
+              ...current.requirements,
+              interview: {
+                ...current.requirements.interview,
+                status:
+                  current.requirements.interview.round === 0
+                    ? "analyzing"
+                    : "reanalyzing",
+                round: input.round,
+                blockedReason: undefined,
+              },
+            },
+          })),
+        }));
+
+        try {
+          const result = await analyzeRequirements(input, get().piSettings);
+          const latest = get().tasks.find(
+            (candidate) => candidate.id === taskID,
+          );
+          if (
+            !latest ||
+            latest.status !== "requirements" ||
+            latest.requirements.confirmedAt ||
+            latest.requirements.interview.round !== input.round
+          ) {
+            throw new Error("任务状态已变化，本轮分析结果未保存");
+          }
+          set((state) => ({
+            tasks: updateTask(state.tasks, taskID, (current) =>
+              mergeAnalysisResult(current, result, analyst, mode, focus),
+            ),
+          }));
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "需求分析执行失败";
+          const latest = get().tasks.find(
+            (candidate) => candidate.id === taskID,
+          );
+          if (
+            latest?.status === "requirements" &&
+            latest.requirements.interview.round === input.round
+          ) {
+            set((state) => ({
+              tasks: updateTask(state.tasks, taskID, (current) => ({
+                ...current,
+                requirements: {
+                  ...current.requirements,
+                  interview: {
+                    ...current.requirements.interview,
+                    status: "blocked",
+                    lastAnalysisStatus: "ANALYSIS_FAILED",
+                    blockedReason: message,
+                  },
+                },
+              })),
+            }));
+          }
+          throw error;
+        }
+      },
+
+      acceptSuggestedDraft: (taskID) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            const suggested = task.requirements.interview.suggestedDraft;
+            const requirements = invalidateDraft({
+              ...task.requirements,
+              objective:
+                suggested.objective?.trim() || task.requirements.objective,
+              scope: mergeUnique(task.requirements.scope, suggested.scope),
+              outOfScope: mergeUnique(
+                task.requirements.outOfScope,
+                suggested.outOfScope,
+              ),
+              acceptanceCriteria: mergeUnique(
+                task.requirements.acceptanceCriteria,
+                suggested.acceptanceCriteria,
+              ),
+              risks: mergeUnique(
+                task.requirements.risks,
+                suggested.constraints,
+              ),
+            });
+            return {
+              ...task,
+              requirements: {
+                ...requirements,
+                interview: {
+                  ...requirements.interview,
+                  status: "ai_suggested_ready",
+                  suggestedDraft: {
+                    scope: [],
+                    outOfScope: [],
+                    acceptanceCriteria: [],
+                    constraints: [],
+                  },
+                },
+              },
+            };
+          }),
+        })),
+
+      requestForceProceed: (taskID) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            if (unresolvedQuestions(task.requirements).length === 0) {
+              throw new Error("当前没有未解决问题，无需强制推进");
+            }
+            return {
+              ...task,
+              requirements: {
+                ...task.requirements,
+                interview: {
+                  ...task.requirements.interview,
+                  status: "force_proceed_confirmation",
+                  forceProceed: {
+                    requestedAt: now(),
+                    decisions: [],
+                  },
+                },
+              },
+            };
+          }),
+        })),
+
+      cancelForceProceed: (taskID) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            return {
+              ...task,
+              requirements: {
+                ...task.requirements,
+                interview: {
+                  ...task.requirements.interview,
+                  status: "waiting_user_answer",
+                  forceProceed: undefined,
+                },
+              },
+            };
+          }),
+        })),
+
+      confirmForceProceed: (taskID, decisions) =>
+        set((state) => ({
+          tasks: updateTask(state.tasks, taskID, (task) => {
+            ensureRequirementEditable(task);
+            const unresolved = unresolvedQuestions(task.requirements);
+            const decisionByQuestion = new Map(
+              decisions.map((decision) => [decision.questionId, decision]),
+            );
+            if (
+              unresolved.some(
+                (question) => !decisionByQuestion.has(question.id),
+              )
+            ) {
+              throw new Error("请为每个未解决问题选择处理策略");
+            }
+            const questions = task.requirements.questions.map((question) => {
+              const decision = decisionByQuestion.get(question.id);
+              if (!decision) return question;
+              const detail = decision.detail?.trim() ?? "";
+              if (
+                (decision.strategy === "KEEP_EXISTING" ||
+                  decision.strategy === "TEMPORARY_DECISION") &&
+                !detail
+              ) {
+                throw new Error(
+                  decision.strategy === "KEEP_EXISTING"
+                    ? "沿用现有行为时必须填写当前行为快照"
+                    : "临时决策不能为空",
+                );
+              }
+              if (decision.strategy === "KEEP_EXISTING") {
+                return {
+                  ...question,
+                  status: "ANSWERED" as const,
+                  answer: detail,
+                  answerSource: "project_snapshot" as const,
+                  resolvedAt: now(),
+                  forceDecision: decision.strategy,
+                  forceDecisionNote: detail,
+                };
+              }
+              if (decision.strategy === "TEMPORARY_DECISION") {
+                return {
+                  ...question,
+                  status: "ANSWERED" as const,
+                  answer: detail,
+                  answerSource: "force_proceed" as const,
+                  resolvedAt: now(),
+                  forceDecision: decision.strategy,
+                  forceDecisionNote: detail,
+                };
+              }
+              if (decision.strategy === "EXCLUDE_SCOPE") {
+                return {
+                  ...question,
+                  status: "OUT_OF_SCOPE" as const,
+                  answer: "依赖该问题的内容排除在本次开发范围外",
+                  answerSource: "force_proceed" as const,
+                  resolvedAt: now(),
+                  forceDecision: decision.strategy,
+                  forceDecisionNote: detail,
+                };
+              }
+              return {
+                ...question,
+                status: "OPEN" as const,
+                answer: "",
+                resolvedAt: undefined,
+                forceDecision: decision.strategy,
+                forceDecisionNote: detail,
+              };
+            });
+            const confirmedAt = now();
+            const forceProceed = {
+              requestedAt:
+                task.requirements.interview.forceProceed?.requestedAt ??
+                confirmedAt,
+              confirmedAt,
+              decisions,
+            };
+            const workingTask: Task = {
+              ...task,
+              requirements: {
+                ...task.requirements,
+                questions,
+                interview: {
+                  ...task.requirements.interview,
+                  status: "draft_ready",
+                  forceProceed,
+                },
+              },
+            };
+            const requirements = buildRequirementDraft(workingTask);
+            return {
+              ...workingTask,
+              requirements: {
+                ...requirements,
+                interview: {
+                  ...requirements.interview,
+                  status: "draft_ready",
+                  forceProceed,
+                },
+              },
             };
           }),
         })),
@@ -508,7 +1362,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           tasks: updateTask(state.tasks, taskID, (task) => {
             ensureRequirementEditable(task);
             const requirements = task.requirements;
-            if (task.evidence.length === 0) {
+            if (
+              !task.evidence.some(
+                (source) => source.selectedForAnalysis !== false,
+              )
+            ) {
               throw new Error("至少需要一条真实需求来源");
             }
             if (!task.projectName.trim()) {
@@ -520,13 +1378,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             if (requirements.acceptanceCriteria.length === 0) {
               throw new Error("至少需要一条可验证的验收标准");
             }
+            const forceDecisions =
+              requirements.interview.forceProceed?.confirmedAt
+                ? requirements.interview.forceProceed.decisions
+                : [];
             if (
-              requirements.questions.some(
-                (question) =>
-                  !question.resolvedAt || !question.answer.trim(),
+              requirements.questions.some((question) =>
+                isApprovalBlockingQuestion(question, forceDecisions),
               )
             ) {
-              throw new Error("仍有待确认问题，不能确认需求");
+              throw new Error("仍有未处理的阻塞问题，不能确认需求");
             }
             if (
               !requirements.generatedAt ||
@@ -535,12 +1396,28 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             ) {
               throw new Error("内容有变化，请重新生成结构化草稿");
             }
+            const confirmedAt = now();
+            const confirmedRevision =
+              (requirements.approvedRevisions.at(-1)?.version ?? 0) + 1;
             return {
               ...task,
               requirements: {
                 ...requirements,
-                confirmedAt: now(),
-                confirmedRevision: task.revision + 1,
+                confirmedAt,
+                confirmedRevision,
+                approvedRevisions: [
+                  ...requirements.approvedRevisions,
+                  {
+                    version: confirmedRevision,
+                    document: requirements.document,
+                    executionPrompt: requirements.executionPrompt,
+                    confirmedAt,
+                  },
+                ],
+                interview: {
+                  ...requirements.interview,
+                  status: "approved",
+                },
               },
             };
           }),
@@ -558,6 +1435,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 ...task.requirements,
                 confirmedAt: undefined,
                 confirmedRevision: undefined,
+                interview: {
+                  ...task.requirements.interview,
+                  status: "draft_ready",
+                },
               },
             };
           }),
@@ -566,6 +1447,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       transitionTask: async (taskID, to) => {
         const task = get().tasks.find((candidate) => candidate.id === taskID);
         if (!task) throw new Error("没有找到这个任务");
+        if (
+          task.status === "requirements" &&
+          (task.requirements.interview.status === "analyzing" ||
+            task.requirements.interview.status === "reanalyzing")
+        ) {
+          throw new Error("需求分析正在进行，不能切换任务阶段");
+        }
         await validateTransition(task.status, to, taskGates(task));
         set((state) => ({
           tasks: updateTask(state.tasks, taskID, (current) => {
@@ -739,26 +1627,54 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "btaskassistant-workspace",
       storage: createJSONStorage(() => workspaceStorage),
-      version: 4,
+      version: 10,
       migrate: (persistedState) => {
         const state = persistedState as Partial<WorkspaceState>;
         return {
           ...state,
-          tasks: state.tasks ?? [],
+          tasks: (state.tasks ?? []).map((task) => ({
+            ...task,
+            projectPath: task.projectPath ?? "",
+            evidence: (task.evidence ?? []).map((source) => ({
+              ...source,
+              selectedForAnalysis: source.selectedForAnalysis !== false,
+            })),
+            requirements: normalizeRequirements(task.requirements),
+          })),
+          trashedTasks: (state.trashedTasks ?? []).map((task) => ({
+            ...task,
+            projectPath: task.projectPath ?? "",
+            evidence: (task.evidence ?? []).map((source) => ({
+              ...source,
+              selectedForAnalysis: source.selectedForAnalysis !== false,
+            })),
+            requirements: normalizeRequirements(task.requirements),
+          })),
           collectionCandidates: (state.collectionCandidates ?? []).map(
             (candidate) => ({
               ...candidate,
               assigneeDetails: candidate.assigneeDetails ?? [],
               comments: candidate.comments ?? [],
+              detailsLoaded: candidate.detailsLoaded ?? true,
+              draftEdited: migrateCandidateDraftEdited(candidate),
+              collectionRevision:
+                candidate.collectionRevision ?? createID("plane-collection"),
             }),
           ),
           planeSettings: migratePlaneSettings(state.planeSettings),
+          planeCandidateFilters: normalizePlaneCandidateFilters(
+            state.planeCandidateFilters,
+          ),
+          piSettings: normalizePISettings(state.piSettings),
         } as WorkspaceState;
       },
       partialize: (state) => ({
         tasks: state.tasks,
+        trashedTasks: state.trashedTasks,
         collectionCandidates: state.collectionCandidates,
         planeSettings: state.planeSettings,
+        planeCandidateFilters: state.planeCandidateFilters,
+        piSettings: state.piSettings,
         selectedTaskId: state.selectedTaskId,
         statusFilter: state.statusFilter,
       }),

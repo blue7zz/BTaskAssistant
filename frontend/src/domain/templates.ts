@@ -5,6 +5,7 @@ import type {
   Requirements,
   Task,
 } from "./task";
+import { questionStatus } from "./task";
 
 const cleanLines = (values: string[]) =>
   values.map((value) => value.trim()).filter(Boolean);
@@ -25,7 +26,17 @@ function addQuestionIfMissing(
   if (questions.some((item) => item.question === question)) return;
   questions.push({
     id: createID("question"),
+    round: 0,
+    category: "OTHER",
+    severity: "BLOCKING",
     question,
+    reason: "缺少这项信息会影响需求范围或验收结果。",
+    sourceIds: [],
+    projectEvidence: [],
+    answerType: "TEXT",
+    options: [],
+    allowCustomAnswer: true,
+    status: "OPEN",
     answer: "",
   });
 }
@@ -39,6 +50,9 @@ export function buildRequirementDraft(task: Task): Requirements {
   const now = new Date().toISOString();
   const requirements = task.requirements;
   const questions = requirements.questions.map((question) => ({ ...question }));
+  const analysisSources = task.evidence.filter(
+    (source) => source.selectedForAnalysis !== false,
+  );
 
   if (!task.projectName.trim()) {
     addQuestionIfMissing(questions, "这项任务对应哪个项目或代码仓库？");
@@ -46,24 +60,22 @@ export function buildRequirementDraft(task: Task): Requirements {
   if (cleanLines(requirements.acceptanceCriteria).length === 0) {
     addQuestionIfMissing(questions, "如何客观判定这项任务已经完成？");
   }
-  if (task.evidence.length === 0) {
+  if (analysisSources.length === 0) {
     addQuestionIfMissing(questions, "当前没有需求来源，真实需求依据是什么？");
   }
 
-  const evidenceFacts: ConfirmedFact[] = task.evidence.map((source) => ({
-    id: createID("fact"),
-    statement: firstMeaningfulLine(source.content),
-    sourceId: source.id,
-  }));
-  const existingManualFacts = requirements.facts.filter((fact) =>
-    task.evidence.some((source) => source.id === fact.sourceId),
+  const facts: ConfirmedFact[] = requirements.facts.filter((fact) =>
+    analysisSources.some((source) => source.id === fact.sourceId),
   );
-  const facts = evidenceFacts.map((fact) => {
-    const existing = existingManualFacts.find(
-      (candidate) => candidate.sourceId === fact.sourceId,
-    );
-    return existing ?? fact;
-  });
+  for (const source of analysisSources) {
+    if (facts.some((fact) => fact.sourceId === source.id)) continue;
+    facts.push({
+      id: createID("fact"),
+      statement: firstMeaningfulLine(source.content),
+      sourceId: source.id,
+      sourceIds: [source.id],
+    });
+  }
 
   const objective = requirements.objective.trim() || task.summary.trim();
   const scope = cleanLines(requirements.scope);
@@ -73,46 +85,92 @@ export function buildRequirementDraft(task: Task): Requirements {
 
   const sourceLines = task.evidence.map(
     (source, index) =>
-      `- [S${index + 1}] ${source.title}（${source.type}）\n  ${firstMeaningfulLine(source.content)}`,
+      `- [S${index + 1}] ${source.title}（${source.type}${
+        source.selectedForAnalysis === false ? "，未参与本轮分析" : ""
+      }）\n  ${firstMeaningfulLine(source.content)}`,
   );
   const factLines = facts.map((fact) => {
     const sourceIndex = task.evidence.findIndex(
       (source) => source.id === fact.sourceId,
     );
-    return `- ${fact.statement} [S${sourceIndex + 1}]`;
+    return sourceIndex >= 0
+      ? `- ${fact.statement} [S${sourceIndex + 1}]`
+      : `- ${fact.statement}`;
   });
-  const questionLines = questions.map((question) =>
-    question.resolvedAt
-      ? `- ${question.question}\n  - 已确认答案：${question.answer}`
-      : `- [待确认] ${question.question}`,
+  const answeredQuestions = questions.filter((question) => {
+    const status = questionStatus(question);
+    return status === "ANSWERED" || status === "OUT_OF_SCOPE";
+  });
+  const unresolved = questions.filter((question) => {
+    const status = questionStatus(question);
+    return status === "OPEN" || status === "SKIPPED";
+  });
+  const answerLines = answeredQuestions.map(
+    (question) =>
+      `- ${question.question}\n  - 用户确认：${question.answer}`,
+  );
+  const unresolvedLines = unresolved.map((question) => {
+    const decision = question.forceDecision
+      ? `\n  - 强制推进策略：${question.forceDecision}`
+      : "";
+    const note = question.forceDecisionNote
+      ? `\n  - 处理说明：${question.forceDecisionNote}`
+      : "";
+    return `- ${question.id} ${question.question}\n  - 状态：未确认\n  - 级别：${question.severity ?? "BLOCKING"}${decision}${note}`;
+  });
+  const observationLines = requirements.interview.projectObservations.map(
+    (observation) =>
+      `- ${observation.content}\n  - 项目位置：${observation.filePath}${
+        observation.lineRange ? `:${observation.lineRange}` : ""
+      }\n  - 类型：PROJECT_OBSERVATION`,
+  );
+  const conflictLines = requirements.interview.conflicts.map(
+    (conflict) =>
+      `- ${conflict.description}（${conflict.sourceA} ↔ ${conflict.sourceB}）`,
   );
 
   const document = [
     `# ${task.title} — 需求说明`,
     "",
-    "## 目标",
+    "## 1. 背景",
+    task.summary.trim() || "[等待人工确认]",
+    "",
+    "### 来源索引",
+    sourceLines.join("\n") || "- [缺少来源]",
+    "",
+    "## 2. 当前问题",
     objective || "[等待人工确认]",
     "",
-    "## 已确认事实",
+    "## 3. 已确认需求",
     factLines.join("\n") || "- [等待添加有来源的事实]",
     "",
-    "## 范围内",
+    "## 4. 修改范围",
     renderList(scope),
     "",
-    "## 范围外",
+    "## 5. 明确不做",
     renderList(outOfScope, "尚未明确"),
     "",
-    "## 验收标准",
-    renderList(acceptanceCriteria),
+    "## 6. 交互和业务规则",
+    answerLines.join("\n") || "- [尚无用户确认记录]",
     "",
-    "## 待确认问题",
-    questionLines.join("\n") || "- 无",
-    "",
-    "## 风险与约束",
+    "## 7. 技术约束",
     renderList(risks, "尚未记录"),
     "",
-    "## 来源",
-    sourceLines.join("\n") || "- [缺少来源]",
+    "## 8. 验收标准",
+    renderList(acceptanceCriteria),
+    "",
+    "## 9. 项目证据",
+    observationLines.join("\n") || "- [尚无只读项目观察]",
+    "",
+    "## 10. 用户确认记录",
+    answerLines.join("\n") || "- [尚无逐项回答]",
+    "",
+    "## 11. 未确认事项",
+    unresolvedLines.join("\n") || "- 无",
+    "",
+    "## 12. 风险",
+    [...risks.map((risk) => `- ${risk}`), ...conflictLines].join("\n") ||
+      "- [尚未记录]",
   ].join("\n");
 
   const executionPrompt = [
@@ -123,6 +181,7 @@ export function buildRequirementDraft(task: Task): Requirements {
     "2. 如发现任何歧义、缺失、冲突或无法验证的信息，立即停止并提出问题。",
     "3. 先检查现状和影响范围，再给出最小实现；不得自动进入下一工作阶段。",
     "4. 完成后列出修改文件、验证命令、实际结果和仍需人工确认的事项。",
+    "5. “未确认事项”中的内容不得自行决定；若实现触及 KEEP_UNCONFIRMED 项，必须停止并请求确认。",
     "",
     "以下为待人工确认的需求文档：",
     "",
@@ -145,4 +204,3 @@ export function buildRequirementDraft(task: Task): Requirements {
     confirmedRevision: undefined,
   };
 }
-

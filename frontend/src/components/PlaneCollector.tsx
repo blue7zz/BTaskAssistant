@@ -1,47 +1,35 @@
 import {
   ArrowRight,
   AlertTriangle,
-  Bot,
   Check,
   CheckCircle2,
   CloudDownload,
   EyeOff,
-  FolderKanban,
-  KeyRound,
-  Link2,
+  ExternalLink,
+  ListFilter,
   LoaderCircle,
   MessageSquareText,
   RefreshCw,
   RotateCcw,
-  SearchCheck,
-  Server,
   ShieldCheck,
-  Sparkles,
   UserRound,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CandidateDecision,
   CollectionCandidate,
   PlanePerson,
-  PlaneProject,
-  PlaneSettings,
 } from "../domain/collection";
+import { planeWorkItemURL } from "../domain/collection";
 import {
-  analyzePlaneCandidate,
   collectPlaneWorkItems,
-  hasPlaneToken,
-  setupPlaneConnection,
-  testPlaneConnection,
+  loadPlaneWorkItemDetails,
+  openExternalURL,
 } from "../lib/bridge";
 import { useWorkspaceStore } from "../store/workspace";
 import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
 
-type BusyAction =
-  | "connect"
-  | "test"
-  | "collect"
-  | "analyze";
+type BusyAction = "collect";
 
 const DECISION_LABELS: Record<CandidateDecision, string> = {
   pending: "待确认",
@@ -49,8 +37,11 @@ const DECISION_LABELS: Record<CandidateDecision, string> = {
   ignored: "已忽略",
 };
 
-const ALL_ASSIGNEES = "all";
+const ALL_STATES = "all";
+const NO_STATE = "state:none";
 const UNASSIGNED = "unassigned";
+const MAX_CONCURRENT_DETAIL_REQUESTS = 3;
+const ignoreReadonlyCommit = () => undefined;
 
 function formatDate(value?: string): string {
   if (!value) return "尚未同步";
@@ -96,22 +87,13 @@ function candidateAssignees(candidate: CollectionCandidate): PlanePerson[] {
   return candidate.assignees.map((name) => ({ id: "", name }));
 }
 
-function workspaceAddress(settings: PlaneSettings): string {
-  const baseUrl = settings.baseUrl.trim().replace(/\/+$/, "");
-  const workspaceSlug = settings.workspaceSlug.trim();
-  if (!baseUrl || !workspaceSlug) return baseUrl;
-  try {
-    const parsed = new URL(baseUrl);
-    const firstSegment = parsed.pathname.split("/").filter(Boolean)[0];
-    if (firstSegment === workspaceSlug) return `${baseUrl}/`;
-    if (parsed.hostname === "api.plane.so") {
-      parsed.hostname = "app.plane.so";
-      return `${parsed.origin}/${workspaceSlug}/`;
-    }
-  } catch {
-    // The backend will return the authoritative validation error on connect.
-  }
-  return `${baseUrl}/${workspaceSlug}/`;
+function candidateStateKey(candidate: CollectionCandidate): string {
+  const stateName = candidate.stateName.trim();
+  return stateName ? `state:${stateName}` : NO_STATE;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function CandidateCard({
@@ -136,7 +118,11 @@ function CandidateCard({
         <small>{candidate.stateName || "未设置状态"}</small>
       </div>
       <strong>{candidate.title}</strong>
-      <p>{candidate.descriptionMarkdown || "Plane 中没有填写描述"}</p>
+      <p>
+        {candidate.detailsLoaded
+          ? candidate.descriptionMarkdown || "Plane 中没有填写描述"
+          : "点击后加载最新详情和评论"}
+      </p>
       <div className="candidate-card-context">
         <span title={assignees.map((person) => person.name).join("、")}>
           <UserRound size={11} />
@@ -146,26 +132,32 @@ function CandidateCard({
         </span>
         <span>
           <MessageSquareText size={11} />
-          {candidate.commentsSyncError ? "同步失败" : comments.length}
+          {candidate.detailsLoaded
+            ? candidate.commentsSyncError
+              ? "同步失败"
+              : comments.length
+            : "按需"}
         </span>
       </div>
       <div className="candidate-card-meta">
         <span className={`priority priority-${candidate.priority}`}>
           {candidate.priority}
         </span>
-        <span>{candidate.analysis.mode === "pi" ? "PI 已提炼" : "规则整理"}</span>
+        <span>只读预览</span>
       </div>
     </button>
   );
 }
 
 interface PlaneCollectorProps {
+  connected: boolean;
   onSuccess(message: string): void;
   onError(error: unknown): void;
   onOpenTask(taskID: string): void;
 }
 
 export function PlaneCollector({
+  connected,
   onSuccess,
   onError,
   onOpenTask,
@@ -174,17 +166,11 @@ export function PlaneCollector({
   const candidates = useWorkspaceStore(
     (state) => state.collectionCandidates,
   );
-  const updateSettings = useWorkspaceStore(
-    (state) => state.updatePlaneSettings,
-  );
   const ingestCandidates = useWorkspaceStore(
     (state) => state.ingestPlaneCandidates,
   );
-  const applyAnalysis = useWorkspaceStore(
-    (state) => state.applyCandidateAnalysis,
-  );
-  const updateDraft = useWorkspaceStore(
-    (state) => state.updateCandidateDraft,
+  const hydrateCandidate = useWorkspaceStore(
+    (state) => state.hydratePlaneCandidate,
   );
   const acceptCandidate = useWorkspaceStore(
     (state) => state.acceptCandidate,
@@ -192,32 +178,48 @@ export function PlaneCollector({
   const setIgnored = useWorkspaceStore(
     (state) => state.setCandidateIgnored,
   );
+  const candidateFilters = useWorkspaceStore(
+    (state) => state.planeCandidateFilters,
+  );
+  const updateCandidateFilters = useWorkspaceStore(
+    (state) => state.updatePlaneCandidateFilters,
+  );
 
-  const [token, setToken] = useState("");
-  const [tokenStored, setTokenStored] = useState(false);
   const [busy, setBusy] = useState<BusyAction>();
-  const [projects, setProjects] = useState<PlaneProject[]>([]);
-  const [serviceAddress, setServiceAddress] = useState(() =>
-    workspaceAddress(settings),
-  );
-  const [connectionReady, setConnectionReady] = useState(
-    Boolean(settings.baseUrl && settings.workspaceSlug),
-  );
   const [filter, setFilter] = useState<CandidateDecision>("pending");
-  const [assigneeFilter, setAssigneeFilter] = useState(ALL_ASSIGNEES);
+  const stateFilter = candidateFilters.state;
+  const assigneeFilters = candidateFilters.assignees;
   const [selectedID, setSelectedID] = useState<string>();
-  const [connectionMessage, setConnectionMessage] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
+  const [loadingDetailIDs, setLoadingDetailIDs] = useState<string[]>([]);
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const detailRequests = useRef(new Set<string>());
+  const assigneeFilterRef = useRef<HTMLDetailsElement>(null);
 
-  const decisionCandidates = useMemo(
-    () => candidates.filter((candidate) => candidate.decision === filter),
-    [candidates, filter],
-  );
+  const stateOptions = useMemo(() => {
+    const options = new Map<
+      string,
+      { value: string; name: string; count: number }
+    >();
+    for (const candidate of candidates) {
+      const value = candidateStateKey(candidate);
+      const existing = options.get(value);
+      options.set(value, {
+        value,
+        name: candidate.stateName.trim() || "未设置状态",
+        count: (existing?.count ?? 0) + 1,
+      });
+    }
+    return Array.from(options.values()).sort((left, right) =>
+      left.name.localeCompare(right.name, "zh-CN"),
+    );
+  }, [candidates]);
   const assigneeOptions = useMemo(() => {
     const options = new Map<
       string,
       { value: string; name: string; count: number }
     >();
-    for (const candidate of decisionCandidates) {
+    for (const candidate of candidates) {
       const seen = new Set<string>();
       for (const person of candidateAssignees(candidate)) {
         const value = assigneeKey(person);
@@ -234,83 +236,91 @@ export function PlaneCollector({
     return Array.from(options.values()).sort((left, right) =>
       left.name.localeCompare(right.name, "zh-CN"),
     );
-  }, [decisionCandidates]);
+  }, [candidates]);
   const unassignedCount = useMemo(
     () =>
-      decisionCandidates.filter(
+      candidates.filter(
         (candidate) => candidateAssignees(candidate).length === 0,
       ).length,
-    [decisionCandidates],
+    [candidates],
+  );
+  const selectionFilteredCandidates = useMemo(
+    () =>
+      candidates.filter((candidate) => {
+        if (
+          stateFilter !== ALL_STATES &&
+          candidateStateKey(candidate) !== stateFilter
+        ) {
+          return false;
+        }
+        if (assigneeFilters.length === 0) return true;
+        const assignees = candidateAssignees(candidate);
+        return assigneeFilters.some(
+          (value) =>
+            (value === UNASSIGNED && assignees.length === 0) ||
+            assignees.some((person) => assigneeKey(person) === value),
+        );
+      }),
+    [assigneeFilters, candidates, stateFilter],
+  );
+  const decisionCounts = useMemo(
+    () =>
+      selectionFilteredCandidates.reduce<Record<CandidateDecision, number>>(
+        (counts, candidate) => {
+          counts[candidate.decision] += 1;
+          return counts;
+        },
+        { pending: 0, accepted: 0, ignored: 0 },
+      ),
+    [selectionFilteredCandidates],
   );
   const filteredCandidates = useMemo(
     () =>
-      decisionCandidates.filter((candidate) => {
-        if (assigneeFilter === ALL_ASSIGNEES) return true;
-        const assignees = candidateAssignees(candidate);
-        if (assigneeFilter === UNASSIGNED) return assignees.length === 0;
-        return assignees.some(
-          (person) => assigneeKey(person) === assigneeFilter,
-        );
-      }),
-    [assigneeFilter, decisionCandidates],
+      selectionFilteredCandidates.filter(
+        (candidate) => candidate.decision === filter,
+      ),
+    [filter, selectionFilteredCandidates],
   );
-  const selected =
-    filteredCandidates.find((candidate) => candidate.id === selectedID) ??
-    filteredCandidates[0];
-  const canUseStoredToken =
-    tokenStored &&
-    serviceAddress.trim().replace(/\/+$/, "") ===
-      workspaceAddress(settings).replace(/\/+$/, "");
-  const projectOptions = useMemo(() => {
-    if (
-      !settings.projectId ||
-      projects.some((project) => project.id === settings.projectId)
-    ) {
-      return projects;
+  const selected = filteredCandidates.find(
+    (candidate) => candidate.id === selectedID,
+  );
+  const assigneeFilterLabel = useMemo(() => {
+    if (assigneeFilters.length === 0) {
+      return `全部负责人（${candidates.length}）`;
     }
-    return [
-      {
-        id: settings.projectId,
-        name: settings.projectName || settings.projectId,
-        identifier: settings.projectIdentifier ?? "",
-      },
-      ...projects,
-    ];
-  }, [
-    projects,
-    settings.projectId,
-    settings.projectIdentifier,
-    settings.projectName,
-  ]);
+    if (assigneeFilters.length > 1) {
+      return `已选 ${assigneeFilters.length} 项`;
+    }
+    if (assigneeFilters[0] === UNASSIGNED) {
+      return `未分配（${unassignedCount}）`;
+    }
+    const option = assigneeOptions.find(
+      (candidate) => candidate.value === assigneeFilters[0],
+    );
+    return option ? `${option.name}（${option.count}）` : "已选 1 项";
+  }, [assigneeFilters, assigneeOptions, candidates, unassignedCount]);
+  const hasActiveFilters =
+    stateFilter !== ALL_STATES || assigneeFilters.length > 0;
+  const configured = Boolean(
+    settings.baseUrl.trim() &&
+      settings.workspaceSlug.trim() &&
+      settings.projectId.trim(),
+  );
 
   useEffect(() => {
-    if (!settings.baseUrl || !settings.workspaceSlug) {
-      setTokenStored(false);
-      return;
-    }
-    hasPlaneToken(settings)
-      .then(setTokenStored)
-      .catch(() => setTokenStored(false));
-  }, [settings.baseUrl, settings.workspaceSlug]);
-
-  useEffect(() => {
-    if (selected && selected.id !== selectedID) {
-      setSelectedID(selected.id);
-    }
-  }, [selected, selectedID]);
-
-  useEffect(() => {
-    if (
-      assigneeFilter !== ALL_ASSIGNEES &&
-      assigneeFilter !== UNASSIGNED &&
-      !assigneeOptions.some((option) => option.value === assigneeFilter)
-    ) {
-      setAssigneeFilter(ALL_ASSIGNEES);
-    }
-    if (assigneeFilter === UNASSIGNED && unassignedCount === 0) {
-      setAssigneeFilter(ALL_ASSIGNEES);
-    }
-  }, [assigneeFilter, assigneeOptions, unassignedCount]);
+    const closeAssigneeFilter = (event: MouseEvent) => {
+      const element = assigneeFilterRef.current;
+      if (
+        element?.open &&
+        event.target instanceof Node &&
+        !element.contains(event.target)
+      ) {
+        element.open = false;
+      }
+    };
+    document.addEventListener("mousedown", closeAssigneeFilter);
+    return () => document.removeEventListener("mousedown", closeAssigneeFilter);
+  }, []);
 
   const run = async (
     action: BusyAction,
@@ -326,92 +336,79 @@ export function PlaneCollector({
     }
   };
 
-  const connect = () =>
-    run("connect", async () => {
-      const setup = await setupPlaneConnection(serviceAddress, token);
-      const discovered = setup.projects;
-      if (discovered.length === 0) {
-        throw new Error("连接成功，但这个工作区中没有可访问的项目");
-      }
-      setProjects(discovered);
-      const sameConnection =
-        setup.baseUrl === settings.baseUrl &&
-        setup.workspaceSlug === settings.workspaceSlug;
-      const selected =
-        (sameConnection
-          ? discovered.find(
-              (project) => project.id === settings.projectId,
-            ) ??
-            discovered.find(
-              (project) =>
-                project.name.toLocaleLowerCase() ===
-                settings.projectName.trim().toLocaleLowerCase(),
-            )
-          : undefined) ??
-        (discovered.length === 1 ? discovered[0] : undefined);
-      updateSettings({
-        baseUrl: setup.baseUrl,
-        workspaceSlug: setup.workspaceSlug,
-        projectId: selected?.id ?? "",
-        projectName: selected?.name ?? "",
-        projectIdentifier: selected?.identifier ?? "",
-      });
-      setServiceAddress(
-        workspaceAddress({
-          ...settings,
-          baseUrl: setup.baseUrl,
-          workspaceSlug: setup.workspaceSlug,
-        }),
-      );
-      setToken("");
-      setTokenStored(true);
-      setConnectionReady(true);
-      const message =
-        discovered.length === 1
-          ? `已发现项目 ${discovered[0].identifier || discovered[0].name}，已自动选中。`
-          : `已连接工作区 ${setup.workspaceSlug}，发现 ${discovered.length} 个项目，请选择。`;
-      setConnectionMessage(message);
-      onSuccess(`Plane 已连接；${message}`);
-    });
-
-  const testConnection = () =>
-    run("test", async () => {
-      const result = await testPlaneConnection(settings);
-      setConnectionMessage(result.message);
-      onSuccess(result.message);
-    });
-
   const collect = () =>
     run("collect", async () => {
       const payloads = await collectPlaneWorkItems(settings);
       const pendingCount = ingestCandidates(payloads);
-      const commentCount = payloads.reduce(
-        (total, payload) => total + (payload.comments?.length ?? 0),
-        0,
-      );
-      const commentErrorCount = payloads.filter(
-        (payload) => payload.commentsSyncError,
-      ).length;
       setFilter("pending");
-      setAssigneeFilter(ALL_ASSIGNEES);
-      setConnectionMessage(
-        `已读取 ${payloads.length} 条工作项和 ${commentCount} 条评论，${pendingCount} 条待确认${
-          commentErrorCount > 0
-            ? `；${commentErrorCount} 条工作项的评论需重试`
-            : ""
-        }。`,
+      setSelectedID(undefined);
+      setSyncMessage(
+        `已读取 ${payloads.length} 条工作项摘要，${pendingCount} 条待确认；详情和评论将在点击任务后读取。`,
       );
-      onSuccess("Plane 收集完成；没有自动创建正式任务");
+      onSuccess("Plane 摘要收集完成；没有自动创建正式任务");
     });
 
-  const analyze = (candidate: CollectionCandidate) =>
-    run("analyze", async () => {
-      const analysis = await analyzePlaneCandidate(
-        candidate.sourceMarkdown,
-      );
-      applyAnalysis(candidate.id, analysis);
-      onSuccess("PI 已生成提炼候选；仍需你确认后才能创建任务");
+  const toggleAssigneeFilter = (value: string) => {
+    updateCandidateFilters({
+      assignees: assigneeFilters.includes(value)
+        ? assigneeFilters.filter((candidate) => candidate !== value)
+        : [...assigneeFilters, value],
     });
+    setSelectedID(undefined);
+  };
+
+  const selectCandidate = async (candidate: CollectionCandidate) => {
+    setSelectedID(candidate.id);
+    if (
+      (candidate.detailsLoaded && !candidate.commentsSyncError) ||
+      detailRequests.current.has(candidate.id)
+    ) {
+      return;
+    }
+    if (detailRequests.current.size >= MAX_CONCURRENT_DETAIL_REQUESTS) {
+      setDetailErrors((current) => ({
+        ...current,
+        [candidate.id]: "已有 3 条任务正在加载，请稍后重试。",
+      }));
+      return;
+    }
+
+    detailRequests.current.add(candidate.id);
+    setLoadingDetailIDs((current) => [...current, candidate.id]);
+    setDetailErrors((current) => {
+      const next = { ...current };
+      delete next[candidate.id];
+      return next;
+    });
+    try {
+      const payload = await loadPlaneWorkItemDetails(
+        settings,
+        candidate.externalId,
+      );
+      const applied = hydrateCandidate(payload, {
+        candidateID: candidate.id,
+        collectionRevision: candidate.collectionRevision,
+        projectID: settings.projectId,
+      });
+      if (!applied) {
+        setDetailErrors((current) => ({
+          ...current,
+          [candidate.id]: "Plane 摘要已更新，请重新点击任务读取最新详情。",
+        }));
+      }
+    } catch (error) {
+      setDetailErrors((current) => ({
+        ...current,
+        [candidate.id]: errorMessage(error),
+      }));
+      onError(error);
+    } finally {
+      detailRequests.current.delete(candidate.id);
+      setLoadingDetailIDs((current) =>
+        current.filter((candidateID) => candidateID !== candidate.id),
+      );
+    }
+  };
 
   const accept = (candidate: CollectionCandidate) => {
     try {
@@ -430,8 +427,8 @@ export function PlaneCollector({
           <span className="eyebrow">外部任务入口</span>
           <h2>Plane 收集箱</h2>
           <p>
-            固定脚本负责读取、分页、去重和保留原文；PI
-            只生成提炼候选。只有你点击确认，候选才会进入正式任务池。
+            固定脚本只同步列表摘要；点击任务后再读取详情和评论。父任务、标题与正文只读展示，
+            只有点击确认后才会进入正式任务池。
           </p>
         </div>
         <div className="collector-trust">
@@ -443,157 +440,103 @@ export function PlaneCollector({
         </div>
       </header>
 
-      <div className="collector-settings">
-        <div className="settings-heading">
-          <div className="settings-icon">
-            <Server size={18} />
-          </div>
-          <div>
-            <strong>Plane 连接</strong>
-            <span>支持 Plane Cloud 和启用 HTTPS 的自托管实例</span>
-          </div>
-        </div>
-        <div className="collector-settings-grid">
-          <label className="field">
-            <span>
-              服务地址
-              <small>粘贴浏览器里的工作区地址</small>
-            </span>
-            <input
-              value={serviceAddress}
+      <div className="collector-sync-bar">
+        <div className="candidate-filters">
+          <label className="candidate-filter status-filter">
+            <ListFilter size={14} />
+            <span>状态</span>
+            <select
+              aria-label="按任务状态筛选"
+              value={stateFilter}
               onChange={(event) => {
-                setServiceAddress(event.target.value);
-                setConnectionReady(false);
-                setProjects([]);
-                setConnectionMessage("");
+                updateCandidateFilters({ state: event.target.value });
+                setSelectedID(undefined);
               }}
-              placeholder="https://plane.example.com/my-team/"
-            />
+            >
+              <option value={ALL_STATES}>
+                全部状态（{candidates.length}）
+              </option>
+              {stateOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.name}（{option.count}）
+                </option>
+              ))}
+            </select>
           </label>
-          <label className="field">
-            <span>
-              Access Token
-              <small>
-                {canUseStoredToken
-                  ? "系统凭据库中已有令牌，可留空"
-                  : "连接成功后保存到系统凭据库"}
-              </small>
-            </span>
-            <div className="credential-input">
-              <KeyRound size={16} />
-              <input
-                type="password"
-                value={token}
-                autoComplete="off"
-                onChange={(event) => setToken(event.target.value)}
-                placeholder={
-                  canUseStoredToken
-                    ? "已有令牌，需要替换时再输入"
-                    : "plane_api_…"
-                }
-              />
-            </div>
-          </label>
-        </div>
-        <div className="connection-action-row">
-          <span>
-            工作区会从地址自动识别，项目会在连接成功后列出；无需填写 slug 或 UUID。
-          </span>
-          <button
-            type="button"
-            className="button secondary"
-            disabled={
-              Boolean(busy) ||
-              !serviceAddress.trim() ||
-              (!token.trim() && !canUseStoredToken)
-            }
-            onClick={connect}
+
+          <details
+            ref={assigneeFilterRef}
+            className="candidate-filter assignee-filter"
           >
-            {busy === "connect" ? (
-              <LoaderCircle className="spin" size={16} />
-            ) : (
-              <Link2 size={16} />
-            )}
-            {connectionReady ? "重新连接并加载选项" : "连接并加载选项"}
-          </button>
-        </div>
-        {connectionReady && (
-          <div className="connection-options">
-            <div className="workspace-option">
-              <FolderKanban size={17} />
-              <div>
-                <span>已识别工作区</span>
-                <strong>{settings.workspaceSlug}</strong>
-              </div>
-            </div>
-            <label className="field">
-              <span>
-                收集项目
-                <small>从可访问项目中选择</small>
-              </span>
-              <select
-                value={settings.projectId}
-                onChange={(event) => {
-                  const project = projectOptions.find(
-                    (item) => item.id === event.target.value,
-                  );
-                  updateSettings({
-                    projectId: project?.id ?? "",
-                    projectName: project?.name ?? "",
-                    projectIdentifier: project?.identifier ?? "",
-                  });
-                  setConnectionMessage("");
+            <summary aria-label="按负责人筛选">
+              <UserRound size={14} />
+              <span>负责人</span>
+              <strong>{assigneeFilterLabel}</strong>
+            </summary>
+            <div className="candidate-filter-menu">
+              <button
+                type="button"
+                className={assigneeFilters.length === 0 ? "selected" : ""}
+                onClick={() => {
+                  updateCandidateFilters({ assignees: [] });
+                  setSelectedID(undefined);
                 }}
               >
-                <option value="">请选择 Plane 项目</option>
-                {projectOptions.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.identifier
-                      ? `${project.identifier} · ${project.name}`
-                      : project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={
-                Boolean(busy) || !tokenStored || !settings.projectId
-              }
-              onClick={testConnection}
-            >
-              {busy === "test" ? (
-                <LoaderCircle className="spin" size={16} />
-              ) : (
-                <SearchCheck size={16} />
+                <span>全部负责人</span>
+                <small>{candidates.length}</small>
+              </button>
+              {unassignedCount > 0 && (
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label="筛选负责人 未分配"
+                    checked={assigneeFilters.includes(UNASSIGNED)}
+                    onChange={() => toggleAssigneeFilter(UNASSIGNED)}
+                  />
+                  <span>未分配</span>
+                  <small>{unassignedCount}</small>
+                </label>
               )}
-              测试连接
-            </button>
-            <button
-              type="button"
-              className="button primary"
-              disabled={
-                Boolean(busy) || !tokenStored || !settings.projectId
-              }
-              onClick={collect}
-            >
-              {busy === "collect" ? (
-                <LoaderCircle className="spin" size={16} />
-              ) : (
-                <CloudDownload size={16} />
-              )}
-              从 Plane 收集
-            </button>
-          </div>
-        )}
-        <div className="sync-caption">
+              {assigneeOptions.map((option) => (
+                <label key={option.value}>
+                  <input
+                    type="checkbox"
+                    aria-label={`筛选负责人 ${option.name}`}
+                    checked={assigneeFilters.includes(option.value)}
+                    onChange={() => toggleAssigneeFilter(option.value)}
+                  />
+                  <span>{option.name}</span>
+                  <small>{option.count}</small>
+                </label>
+              ))}
+            </div>
+          </details>
+        </div>
+        <div className="collector-sync-status">
           <span>
             <RefreshCw size={13} />
             上次同步：{formatDate(settings.lastCollectedAt)}
           </span>
-          {connectionMessage && <strong>{connectionMessage}</strong>}
+          {syncMessage && <strong>{syncMessage}</strong>}
         </div>
+        <button
+          type="button"
+          className="button primary"
+          disabled={
+            Boolean(busy) ||
+            loadingDetailIDs.length > 0 ||
+            !configured ||
+            !connected
+          }
+          onClick={collect}
+        >
+          {busy === "collect" ? (
+            <LoaderCircle className="spin" size={16} />
+          ) : (
+            <CloudDownload size={16} />
+          )}
+          从 Plane 收集
+        </button>
       </div>
 
       <div className="candidate-toolbar">
@@ -610,58 +553,28 @@ export function PlaneCollector({
                 }}
               >
                 {DECISION_LABELS[decision]}
-                <span>
-                  {
-                    candidates.filter(
-                      (candidate) => candidate.decision === decision,
-                    ).length
-                  }
-                </span>
+                <span>{decisionCounts[decision]}</span>
               </button>
             ),
           )}
         </div>
-        <label className="assignee-filter">
-          <UserRound size={14} />
-          <span>负责人</span>
-          <select
-            aria-label="按负责人筛选"
-            value={assigneeFilter}
-            onChange={(event) => {
-              setAssigneeFilter(event.target.value);
-              setSelectedID(undefined);
-            }}
-          >
-            <option value={ALL_ASSIGNEES}>
-              全部负责人（{decisionCandidates.length}）
-            </option>
-            {unassignedCount > 0 && (
-              <option value={UNASSIGNED}>
-                未分配（{unassignedCount}）
-              </option>
-            )}
-            {assigneeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.name}（{option.count}）
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       {filteredCandidates.length === 0 ? (
         <div className="collector-empty">
           <CloudDownload size={30} />
           <strong>
-            {filter === "pending"
-              ? assigneeFilter === ALL_ASSIGNEES
+            {hasActiveFilters
+              ? "当前筛选条件下没有候选"
+              : filter === "pending"
                 ? "还没有待确认候选"
-                : "这个负责人没有待确认候选"
               : `没有${DECISION_LABELS[filter]}的候选`}
           </strong>
           <p>
             {filter === "pending"
-              ? "配置 Plane 后点击“从 Plane 收集”。脚本不会自动创建任务。"
+              ? configured
+                ? "点击“从 Plane 收集”读取候选；脚本不会自动创建任务。"
+                : "请先前往设置完成 Plane 连接并选择收集项目。"
               : "切换上方分类查看其他候选。"}
           </p>
         </div>
@@ -673,36 +586,68 @@ export function PlaneCollector({
                 key={candidate.id}
                 candidate={candidate}
                 selected={candidate.id === selected?.id}
-                onSelect={() => setSelectedID(candidate.id)}
+                onSelect={() => void selectCandidate(candidate)}
               />
             ))}
           </aside>
 
-          {selected && (
+          {selected?.detailsLoaded ? (
             <article className="candidate-detail">
-              <header>
-                <div>
-                  <span className="eyebrow">
-                    {selected.externalKey} · {selected.stateName}
-                  </span>
-                  <h3>候选任务确认</h3>
-                </div>
-                <span className={`analysis-badge ${selected.analysis.mode}`}>
-                  {selected.analysis.mode === "pi" ? (
-                    <Bot size={14} />
-                  ) : (
-                    <Sparkles size={14} />
+              {selected.parent && (
+                <a
+                  className="plane-parent-link"
+                  href={planeWorkItemURL(
+                    settings,
+                    selected.parent.externalKey,
                   )}
-                  {selected.analysis.mode === "pi" ? "PI 候选" : "规则整理"}
-                </span>
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openExternalURL(
+                      planeWorkItemURL(
+                        settings,
+                        selected.parent?.externalKey ?? "",
+                      ),
+                    );
+                  }}
+                >
+                  <span className="plane-parent-dot" aria-hidden="true" />
+                  <strong>{selected.parent.externalKey}</strong>
+                  <span>{selected.parent.title}</span>
+                  <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              )}
+
+              <header className="plane-preview-header">
+                <span>{selected.externalKey}</span>
+                <a
+                  href={planeWorkItemURL(settings, selected.externalKey)}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openExternalURL(
+                      planeWorkItemURL(settings, selected.externalKey),
+                    );
+                  }}
+                >
+                  <h3>{selected.title}</h3>
+                  <ExternalLink size={15} aria-hidden="true" />
+                </a>
               </header>
 
-              <div className="candidate-source-strip">
-                <Link2 size={15} />
-                <span>
-                  原始 Plane 数据会作为独立来源保留，下面的标题和正文只是待确认草稿。
-                </span>
-              </div>
+              <section
+                className="plane-description-preview"
+                aria-label="Plane 工作项正文只读预览"
+              >
+                <LazyRichMarkdownEditor
+                  key={selected.id}
+                  value={selected.descriptionMarkdown}
+                  disabled
+                  onCommit={ignoreReadonlyCommit}
+                />
+              </section>
 
               <section className="plane-context-panel">
                 <header>
@@ -713,7 +658,7 @@ export function PlaneCollector({
                     <div>
                       <strong>Plane 评论</strong>
                       <small>
-                        与描述一起保留，PI 提炼时也会读取这些上下文
+                        与正文一起保留并只读展示
                       </small>
                     </div>
                   </div>
@@ -744,6 +689,19 @@ export function PlaneCollector({
                       <strong>评论没有完整同步</strong>
                       <span>{selected.commentsSyncError}</span>
                     </div>
+                    <button
+                      type="button"
+                      className="button secondary comment-retry-button"
+                      disabled={loadingDetailIDs.includes(selected.id)}
+                      onClick={() => void selectCandidate(selected)}
+                    >
+                      {loadingDetailIDs.includes(selected.id) ? (
+                        <LoaderCircle className="spin" size={13} />
+                      ) : (
+                        <RefreshCw size={13} />
+                      )}
+                      重试
+                    </button>
                   </div>
                 ) : (selected.comments ?? []).length === 0 ? (
                   <div className="comments-empty">
@@ -773,69 +731,6 @@ export function PlaneCollector({
                 )}
               </section>
 
-              <label className="field">
-                <span>正式任务标题</span>
-                <input
-                  value={selected.analysis.title}
-                  disabled={selected.decision !== "pending"}
-                  onChange={(event) =>
-                    updateDraft(selected.id, {
-                      title: event.target.value,
-                      summaryMarkdown: selected.analysis.summaryMarkdown,
-                    })
-                  }
-                />
-              </label>
-
-              <div className="field">
-                <span>
-                  正式任务正文
-                  <small>你可以继续编辑，支持 Markdown 和图片</small>
-                </span>
-                <LazyRichMarkdownEditor
-                  key={selected.id}
-                  value={selected.analysis.summaryMarkdown}
-                  disabled={selected.decision !== "pending"}
-                  onCommit={(summaryMarkdown) =>
-                    updateDraft(selected.id, {
-                      title: selected.analysis.title,
-                      summaryMarkdown,
-                    })
-                  }
-                />
-              </div>
-
-              {(selected.analysis.keyPoints.length > 0 ||
-                selected.analysis.openQuestions.length > 0) && (
-                <div className="analysis-grid">
-                  <div>
-                    <strong>提取到的关键信息</strong>
-                    <ul>
-                      {selected.analysis.keyPoints.map((point) => (
-                        <li key={point}>{point}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <strong>仍需人工判断</strong>
-                    {selected.analysis.openQuestions.length > 0 ? (
-                      <ul>
-                        {selected.analysis.openQuestions.map((question) => (
-                          <li key={question}>{question}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p>PI 没有提出额外问题；仍需你核对全部内容。</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <details className="raw-source">
-                <summary>查看脚本保留的 Plane 原始来源</summary>
-                <pre>{selected.sourceMarkdown}</pre>
-              </details>
-
               <footer className="candidate-actions">
                 {selected.decision === "pending" ? (
                   <>
@@ -850,21 +745,15 @@ export function PlaneCollector({
                     </button>
                     <button
                       type="button"
-                      className="button secondary"
-                      disabled={Boolean(busy)}
-                      onClick={() => analyze(selected)}
-                    >
-                      {busy === "analyze" ? (
-                        <LoaderCircle className="spin" size={16} />
-                      ) : (
-                        <Bot size={16} />
-                      )}
-                      用 PI 提炼关键信息
-                    </button>
-                    <button
-                      type="button"
                       className="button primary"
-                      disabled={Boolean(busy)}
+                      disabled={
+                        Boolean(busy) || Boolean(selected.commentsSyncError)
+                      }
+                      title={
+                        selected.commentsSyncError
+                          ? "请先重试并完整同步 Plane 评论"
+                          : undefined
+                      }
                       onClick={() => accept(selected)}
                     >
                       <Check size={16} />
@@ -896,6 +785,40 @@ export function PlaneCollector({
                 )}
               </footer>
             </article>
+          ) : (
+            <section className="candidate-detail-placeholder">
+              {selected && loadingDetailIDs.includes(selected.id) ? (
+                <LoaderCircle className="spin" size={28} />
+              ) : selected && detailErrors[selected.id] ? (
+                <AlertTriangle size={28} />
+              ) : (
+                <MessageSquareText size={28} />
+              )}
+              <strong>
+                {selected && loadingDetailIDs.includes(selected.id)
+                  ? "正在读取这条任务的详情和评论"
+                  : selected && detailErrors[selected.id]
+                    ? "详情加载失败"
+                    : "选择候选任务后再加载详情"}
+              </strong>
+              <p>
+                {selected && detailErrors[selected.id]
+                  ? detailErrors[selected.id]
+                  : "批量收集只同步 Plane 列表摘要，不会遍历全部任务的详情和评论。"}
+              </p>
+              {selected && !loadingDetailIDs.includes(selected.id) && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => void selectCandidate(selected)}
+                >
+                  <RefreshCw size={15} />
+                  {detailErrors[selected.id]
+                    ? "重试加载详情和评论"
+                    : "加载详情和评论"}
+                </button>
+              )}
+            </section>
           )}
         </div>
       )}

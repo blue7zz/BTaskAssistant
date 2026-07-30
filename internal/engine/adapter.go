@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"strings"
 )
 
 var ErrNotConfigured = errors.New("AI 引擎尚未配置")
@@ -27,26 +29,58 @@ type Adapter interface {
 }
 
 type Status struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Configured  bool   `json:"configured"`
-	Description string `json:"description"`
+	ID                  string `json:"id"`
+	Label               string `json:"label"`
+	Configured          bool   `json:"configured"`
+	RequirementAnalysis bool   `json:"requirementAnalysis"`
+	Development         bool   `json:"development"`
+	Description         string `json:"description"`
+	CommandPath         string `json:"commandPath"`
+	Version             string `json:"version"`
 }
 
 func Statuses() []Status {
+	piPath, piVersion, piErr := commandDetails("omp")
+	codexPath, codexVersion, codexErr := commandDetails("codex")
 	return []Status{
 		{
-			ID:          "pi",
-			Label:       "PI / oh-my-pi",
-			Configured:  false,
-			Description: "适配器边界已预留；需确认本机 CLI 调用协议后启用。",
+			ID:                  "pi",
+			Label:               "PI / oh-my-pi",
+			Configured:          piErr == nil,
+			RequirementAnalysis: piErr == nil,
+			Development:         false,
+			Description:         requirementEngineDescription("PI", piErr),
+			CommandPath:         piPath,
+			Version:             piVersion,
 		},
 		{
-			ID:          "codex",
-			Label:       "Codex",
-			Configured:  false,
-			Description: "当前可复制已确认提示词，自动执行接口待配置。",
+			ID:                  "codex",
+			Label:               "Codex",
+			Configured:          codexErr == nil,
+			RequirementAnalysis: codexErr == nil,
+			Development:         false,
+			Description:         requirementEngineDescription("Codex", codexErr),
+			CommandPath:         codexPath,
+			Version:             codexVersion,
 		},
 	}
 }
 
+func commandDetails(name string) (string, string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", "", err
+	}
+	output, err := exec.Command(path, "--version").Output()
+	if err != nil {
+		return path, "", nil
+	}
+	return path, strings.TrimSpace(string(output)), nil
+}
+
+func requirementEngineDescription(label string, err error) string {
+	if err != nil {
+		return label + " CLI 未安装；仍可人工整理需求。"
+	}
+	return label + " 可用于只读需求分析；开发执行仍采用外部委托。"
+}

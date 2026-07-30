@@ -1,6 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaneCandidatePayload } from "../domain/collection";
-import { useWorkspaceStore } from "./workspace";
+import { DEFAULT_PI_SETTINGS } from "../domain/engine";
+import {
+  DEFAULT_PLANE_CANDIDATE_FILTERS,
+  DEFAULT_PLANE_SETTINGS,
+  useWorkspaceStore,
+} from "./workspace";
 
 const planePayload: PlaneCandidatePayload = {
   externalId: "plane-item-1",
@@ -23,25 +28,180 @@ const planePayload: PlaneCandidatePayload = {
       createdAt: "2026-07-24T09:30:00Z",
     },
   ],
+  detailsLoaded: true,
   updatedAt: "2026-07-24T10:00:00Z",
 };
 
 describe("workspace store", () => {
   beforeEach(() => {
+    window.go = undefined;
     window.localStorage.clear();
     useWorkspaceStore.setState({
       tasks: [],
+      trashedTasks: [],
       collectionCandidates: [],
       planeSettings: {
         baseUrl: "",
         workspaceSlug: "",
         projectId: "",
         projectName: "",
+        showInTaskSources: true,
       },
+      planeCandidateFilters: { ...DEFAULT_PLANE_CANDIDATE_FILTERS },
+      piSettings: { ...DEFAULT_PI_SETTINGS },
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: true,
     });
+  });
+
+  it("defaults legacy Plane settings to a visible task source", async () => {
+    expect(DEFAULT_PLANE_SETTINGS.showInTaskSources).toBe(true);
+    window.localStorage.setItem(
+      "btaskassistant-workspace",
+      JSON.stringify({
+        version: 7,
+        state: {
+          tasks: [],
+          trashedTasks: [],
+          collectionCandidates: [],
+          planeSettings: {
+            baseUrl: "https://plane.example.com",
+            workspaceSlug: "team",
+            projectId: "project-1",
+            projectName: "Team Plane",
+          },
+          piSettings: DEFAULT_PI_SETTINGS,
+          statusFilter: "all",
+        },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    expect(useWorkspaceStore.getState().planeSettings).toMatchObject({
+      baseUrl: "https://plane.example.com",
+      workspaceSlug: "team",
+      projectId: "project-1",
+      projectName: "Team Plane",
+      showInTaskSources: true,
+    });
+    expect(useWorkspaceStore.getState().planeCandidateFilters).toEqual(
+      DEFAULT_PLANE_CANDIDATE_FILTERS,
+    );
+
+    useWorkspaceStore.getState().updatePlaneSettings({
+      showInTaskSources: false,
+    });
+    expect(
+      useWorkspaceStore.getState().planeSettings.showInTaskSources,
+    ).toBe(false);
+  });
+
+  it("persists Plane candidate filters and restores them after refresh", async () => {
+    window.localStorage.setItem(
+      "btaskassistant-workspace",
+      JSON.stringify({
+        version: 10,
+        state: {
+          tasks: [],
+          trashedTasks: [],
+          collectionCandidates: [],
+          planeSettings: DEFAULT_PLANE_SETTINGS,
+          planeCandidateFilters: {
+            state: "state:开发中",
+            assignees: ["id:user-alice"],
+          },
+          piSettings: DEFAULT_PI_SETTINGS,
+          statusFilter: "all",
+        },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    expect(useWorkspaceStore.getState().planeCandidateFilters).toEqual({
+      state: "state:开发中",
+      assignees: ["id:user-alice"],
+    });
+
+    useWorkspaceStore.getState().updatePlaneCandidateFilters({
+      state: "state:测试中",
+      assignees: ["id:user-bob", "id:user-bob", ""],
+    });
+
+    await vi.waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("btaskassistant-workspace") ?? "{}",
+      );
+      expect(stored.state.planeCandidateFilters).toEqual({
+        state: "state:测试中",
+        assignees: ["id:user-bob"],
+      });
+    });
+  });
+
+  it("updates manual record fields and status without workflow gates", () => {
+    const taskID = useWorkspaceStore.getState().createTask({
+      title: "手工记录",
+      summary: "初始文本",
+      projectName: "未分类",
+    });
+
+    useWorkspaceStore.getState().updateTaskRecord(taskID, {
+      summary: "人工补充后的文本",
+      projectName: "BTaskAssistant",
+      priority: "high",
+      status: "development",
+    });
+
+    const task = useWorkspaceStore.getState().tasks[0];
+    expect(task.summary).toBe("人工补充后的文本");
+    expect(task.projectName).toBe("BTaskAssistant");
+    expect(task.priority).toBe("high");
+    expect(task.status).toBe("development");
+  });
+
+  it("moves tasks to the trash, restores them, and permanently deletes them", () => {
+    const taskID = useWorkspaceStore.getState().createTask({
+      title: "可恢复任务",
+      summary: "正文和来源在回收站中都必须保留。",
+      projectName: "BTaskAssistant",
+      initialEvidence: {
+        type: "manual",
+        title: "原始记录",
+        content: "不要在软删除时丢失。",
+      },
+    });
+    const originalTask = useWorkspaceStore.getState().tasks[0];
+
+    useWorkspaceStore.getState().moveTaskToTrash(taskID);
+
+    let state = useWorkspaceStore.getState();
+    expect(state.tasks).toHaveLength(0);
+    expect(state.selectedTaskId).toBeUndefined();
+    expect(state.trashedTasks).toHaveLength(1);
+    expect(state.trashedTasks[0].id).toBe(taskID);
+    expect(state.trashedTasks[0].summary).toBe(originalTask.summary);
+    expect(state.trashedTasks[0].evidence).toEqual(originalTask.evidence);
+    expect(state.trashedTasks[0].trashedAt).toBeTruthy();
+
+    useWorkspaceStore.getState().restoreTask(taskID);
+
+    state = useWorkspaceStore.getState();
+    expect(state.trashedTasks).toHaveLength(0);
+    expect(state.tasks).toHaveLength(1);
+    expect(state.tasks[0].id).toBe(taskID);
+    expect(state.tasks[0].summary).toBe(originalTask.summary);
+    expect(state.selectedTaskId).toBe(taskID);
+    expect(state.statusFilter).toBe("all");
+
+    useWorkspaceStore.getState().moveTaskToTrash(taskID);
+    useWorkspaceStore.getState().deleteTaskPermanently(taskID);
+
+    state = useWorkspaceStore.getState();
+    expect(state.tasks).toHaveLength(0);
+    expect(state.trashedTasks).toHaveLength(0);
   });
 
   it("walks the complete workflow only through explicit human gates", async () => {
@@ -156,10 +316,453 @@ describe("workspace store", () => {
     expect(state.collectionCandidates[0].decision).toBe("accepted");
     expect(state.collectionCandidates[0].acceptedTaskId).toBe(taskID);
     expect(state.tasks).toHaveLength(1);
-    expect(state.tasks[0].title).toBe("确认 Plane 候选任务");
+    expect(state.tasks[0].title).toBe(planePayload.title);
+    expect(state.tasks[0].summary).toBe(planePayload.descriptionMarkdown);
     expect(state.tasks[0].evidence[0].type).toBe("plane");
     expect(state.tasks[0].evidence[0].content).toContain("Plane ID");
     expect(state.tasks[0].evidence[0].content).toContain("评论");
     expect(() => state.acceptCandidate(candidate.id)).toThrow("已经处理");
+
+    state.moveTaskToTrash(taskID);
+    useWorkspaceStore.getState().deleteTaskPermanently(taskID);
+    state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates[0].decision).toBe("pending");
+    expect(state.collectionCandidates[0].acceptedTaskId).toBeUndefined();
+  });
+
+  it("hydrates only the selected Plane candidate before acceptance", () => {
+    useWorkspaceStore.getState().updatePlaneSettings({
+      projectId: "project-1",
+      projectName: "BTaskAssistant",
+    });
+    const summary: PlaneCandidatePayload = {
+      ...planePayload,
+      descriptionMarkdown: "",
+      sourceMarkdown: "# 整理 Plane 收集流程\n\n- Plane ID: `plane-item-1`",
+      comments: [],
+      detailsLoaded: false,
+    };
+    const secondSummary: PlaneCandidatePayload = {
+      ...summary,
+      externalId: "plane-item-2",
+      externalKey: "BT-19",
+      title: "另一条摘要",
+      sourceMarkdown: "# 另一条摘要\n\n- Plane ID: `plane-item-2`",
+      updatedAt: "2026-07-24T10:02:00Z",
+    };
+
+    useWorkspaceStore
+      .getState()
+      .ingestPlaneCandidates([summary, secondSummary]);
+    let candidate = useWorkspaceStore.getState().collectionCandidates[0];
+    expect(() =>
+      useWorkspaceStore.getState().acceptCandidate(candidate.id),
+    ).toThrow("先加载 Plane 详情和评论");
+
+    expect(
+      useWorkspaceStore.getState().hydratePlaneCandidate(planePayload, {
+        candidateID: candidate.id,
+        collectionRevision: candidate.collectionRevision,
+        projectID: "project-1",
+      }),
+    ).toBe(true);
+    let state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates).toHaveLength(2);
+    expect(state.collectionCandidates[0].detailsLoaded).toBe(true);
+    expect(state.collectionCandidates[0].comments).toHaveLength(1);
+    expect(state.collectionCandidates[1].detailsLoaded).toBe(false);
+
+    candidate = state.collectionCandidates[0];
+    expect(
+      useWorkspaceStore.getState().hydratePlaneCandidate(
+        {
+          ...planePayload,
+          descriptionMarkdown: "Plane 中更新后的正文",
+          sourceMarkdown: "# 整理 Plane 收集流程\n\nPlane 中更新后的正文",
+        },
+        {
+          candidateID: candidate.id,
+          collectionRevision: candidate.collectionRevision,
+          projectID: "project-1",
+        },
+      ),
+    ).toBe(true);
+    expect(
+      useWorkspaceStore.getState().collectionCandidates[0].analysis
+        .summaryMarkdown,
+    ).toBe("Plane 中更新后的正文");
+
+    state = useWorkspaceStore.getState();
+    state.updateCandidateDraft(candidate.id, {
+      title: "人工整理后的标题",
+      summaryMarkdown: "人工整理后的正文",
+    });
+    candidate = useWorkspaceStore.getState().collectionCandidates[0];
+    expect(
+      useWorkspaceStore.getState().hydratePlaneCandidate(planePayload, {
+        candidateID: candidate.id,
+        collectionRevision: candidate.collectionRevision,
+        projectID: "project-1",
+      }),
+    ).toBe(true);
+    expect(
+      useWorkspaceStore.getState().collectionCandidates[0].analysis.title,
+    ).toBe("人工整理后的标题");
+    useWorkspaceStore
+      .getState()
+      .ingestPlaneCandidates([summary, secondSummary]);
+    state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates[0].detailsLoaded).toBe(true);
+    expect(state.collectionCandidates[0].comments).toHaveLength(1);
+    expect(state.collectionCandidates[0].analysis.title).toBe(
+      "人工整理后的标题",
+    );
+
+    const staleRequest = {
+      candidateID: state.collectionCandidates[0].id,
+      collectionRevision: state.collectionCandidates[0].collectionRevision,
+      projectID: "project-1",
+    };
+    const changedSummary: PlaneCandidatePayload = {
+      ...summary,
+      stateName: "开发中",
+      updatedAt: "2026-07-24T10:03:00Z",
+    };
+    useWorkspaceStore
+      .getState()
+      .ingestPlaneCandidates([changedSummary, secondSummary]);
+    expect(
+      useWorkspaceStore
+        .getState()
+        .hydratePlaneCandidate(planePayload, staleRequest),
+    ).toBe(false);
+    state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates[0].stateName).toBe("开发中");
+    expect(state.collectionCandidates[0].detailsLoaded).toBe(false);
+    expect(state.collectionCandidates[0].comments).toHaveLength(0);
+    expect(state.collectionCandidates[0].analysis.title).toBe(
+      "人工整理后的标题",
+    );
+    expect(state.collectionCandidates[0].analysis.summaryMarkdown).toBe(
+      "人工整理后的正文",
+    );
+
+    candidate = state.collectionCandidates[0];
+    expect(
+      useWorkspaceStore.getState().hydratePlaneCandidate(
+        {
+          ...planePayload,
+          stateName: "开发中",
+          updatedAt: changedSummary.updatedAt,
+        },
+        {
+          candidateID: candidate.id,
+          collectionRevision: candidate.collectionRevision,
+          projectID: "project-1",
+        },
+      ),
+    ).toBe(true);
+    state = useWorkspaceStore.getState();
+    expect(state.collectionCandidates[0].analysis.title).toBe(
+      "人工整理后的标题",
+    );
+
+    const taskID = state.acceptCandidate(candidate.id);
+    const task = useWorkspaceStore
+      .getState()
+      .tasks.find((item) => item.id === taskID)!;
+    expect(task.title).toBe(planePayload.title);
+    expect(task.summary).toBe(planePayload.descriptionMarkdown);
+    expect(task.evidence[0].content).toContain("评论也必须作为原始来源保存");
+  });
+
+  it("blocks acceptance until Plane comments finish syncing", () => {
+    useWorkspaceStore.getState().updatePlaneSettings({
+      projectId: "project-1",
+      projectName: "BTaskAssistant",
+    });
+    useWorkspaceStore.getState().ingestPlaneCandidates([
+      {
+        ...planePayload,
+        comments: [],
+        commentsSyncError: "评论同步失败，可稍后重试",
+      },
+    ]);
+
+    const candidate = useWorkspaceStore.getState().collectionCandidates[0];
+    expect(() =>
+      useWorkspaceStore.getState().acceptCandidate(candidate.id),
+    ).toThrow("评论尚未完整同步");
+    expect(useWorkspaceStore.getState().tasks).toHaveLength(0);
+  });
+
+  it("migrates legacy manual Plane drafts without losing them on recollection", async () => {
+    useWorkspaceStore.getState().updatePlaneSettings({
+      projectId: "project-1",
+      projectName: "BTaskAssistant",
+    });
+    useWorkspaceStore.getState().ingestPlaneCandidates([planePayload]);
+    const candidate = useWorkspaceStore.getState().collectionCandidates[0];
+    useWorkspaceStore.getState().updateCandidateDraft(candidate.id, {
+      title: "旧版本人工标题",
+      summaryMarkdown: "旧版本人工正文",
+    });
+    const legacyCandidate = {
+      ...useWorkspaceStore.getState().collectionCandidates[0],
+    } as unknown as Record<string, unknown>;
+    delete legacyCandidate.draftEdited;
+    delete legacyCandidate.collectionRevision;
+    window.localStorage.setItem(
+      "btaskassistant-workspace",
+      JSON.stringify({
+        version: 8,
+        state: {
+          tasks: [],
+          trashedTasks: [],
+          collectionCandidates: [legacyCandidate],
+          planeSettings: useWorkspaceStore.getState().planeSettings,
+          piSettings: DEFAULT_PI_SETTINGS,
+          statusFilter: "all",
+        },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+    expect(
+      useWorkspaceStore.getState().collectionCandidates[0].draftEdited,
+    ).toBe(true);
+
+    useWorkspaceStore.getState().ingestPlaneCandidates([
+      {
+        ...planePayload,
+        descriptionMarkdown: "",
+        sourceMarkdown: "# 更新后的摘要",
+        comments: [],
+        detailsLoaded: false,
+        updatedAt: "2026-07-24T11:00:00Z",
+      },
+    ]);
+    const migrated = useWorkspaceStore.getState().collectionCandidates[0];
+    expect(migrated.detailsLoaded).toBe(false);
+    expect(migrated.analysis.title).toBe("旧版本人工标题");
+    expect(migrated.analysis.summaryMarkdown).toBe("旧版本人工正文");
+  });
+
+  it("stores AI output as interview candidates without auto-approving draft updates", async () => {
+    const taskID = useWorkspaceStore.getState().createTask({
+      title: "补齐需求访谈",
+      summary: "AI 应发现信息缺口，但不能代替用户作决定。",
+      projectName: "BTaskAssistant",
+      projectPath: "/workspace/BTaskAssistant",
+      initialEvidence: {
+        type: "manual",
+        title: "用户说明",
+        content: "需求必须经过人工批准。",
+      },
+    });
+    await useWorkspaceStore.getState().transitionTask(taskID, "requirements");
+
+    const analyze = vi.fn().mockResolvedValue({
+      analysisId: "ANALYSIS-1",
+      round: 1,
+      confirmedFacts: [
+        {
+          id: "FACT-1",
+          content: "需求必须经过人工批准。",
+          sourceFragmentIds: [
+            useWorkspaceStore.getState().tasks[0].evidence[0].id,
+          ],
+        },
+      ],
+      projectObservations: [
+        {
+          id: "OBS-1",
+          content: "现有状态机只允许逐级推进。",
+          filePath: "internal/workflow/machine.go",
+          lineRange: "20-40",
+        },
+      ],
+      questions: [
+        {
+          id: "QUESTION-1",
+          category: "SCOPE",
+          severity: "BLOCKING",
+          question: "是否包含开发阶段？",
+          reason: "不回答会影响实现范围。",
+          sourceFragmentIds: [],
+          projectEvidence: [],
+          answerType: "SINGLE_SELECT",
+          options: ["只做需求整理", "包含开发阶段"],
+          allowCustomAnswer: true,
+        },
+      ],
+      conflicts: [],
+      draftUpdates: {
+        objective: "建立多轮需求访谈",
+        scope: ["需求整理阶段"],
+        outOfScope: [],
+        acceptanceCriteria: ["AI 不会自动批准需求"],
+        constraints: ["项目只读"],
+      },
+      analysisStatus: "NEEDS_USER_INPUT",
+      recommendedAction: "ASK_QUESTIONS",
+      reason: "仍有范围问题需要用户回答。",
+      analyzedAt: "2026-07-28T12:00:00Z",
+    });
+    window.go = {
+      main: {
+        App: {
+          AnalyzeRequirements: analyze,
+          SaveState: vi.fn().mockResolvedValue(undefined),
+        } as never,
+      },
+    };
+
+    await useWorkspaceStore.getState().runRequirementAnalysis(taskID);
+
+    expect(analyze).toHaveBeenCalledWith(
+      expect.any(Object),
+      DEFAULT_PI_SETTINGS,
+    );
+
+    const task = useWorkspaceStore
+      .getState()
+      .tasks.find((candidate) => candidate.id === taskID)!;
+    expect(task.requirements.interview.status).toBe("waiting_user_answer");
+    expect(task.requirements.questions).toHaveLength(1);
+    expect(task.requirements.questions[0].severity).toBe("BLOCKING");
+    expect(task.requirements.facts[0].sourceId).toBe(task.evidence[0].id);
+    expect(task.requirements.scope).toEqual([]);
+    expect(task.requirements.interview.suggestedDraft.scope).toEqual([
+      "需求整理阶段",
+    ]);
+    useWorkspaceStore.getState().answerQuestions(taskID, [
+      {
+        questionId: task.requirements.questions[0].id,
+        answer: "只做需求整理",
+      },
+    ]);
+    expect(
+      useWorkspaceStore.getState().tasks[0].requirements.questions[0].status,
+    ).toBe("ANSWERED");
+  });
+
+  it("freezes unresolved questions and risks when the user force-proceeds", async () => {
+    const taskID = useWorkspaceStore.getState().createTask({
+      title: "强制推进需求",
+      summary: "允许用户带着显式风险生成草稿。",
+      projectName: "BTaskAssistant",
+      initialEvidence: {
+        type: "manual",
+        title: "用户说明",
+        content: "未确认事项不能被隐藏。",
+      },
+    });
+    await useWorkspaceStore.getState().transitionTask(taskID, "requirements");
+    useWorkspaceStore.getState().patchRequirements(taskID, {
+      objective: "保留强制推进风险",
+      scope: ["需求整理阶段"],
+      acceptanceCriteria: ["正式文档包含未确认事项"],
+    });
+    const sourceID = useWorkspaceStore.getState().tasks[0].evidence[0].id;
+    window.go = {
+      main: {
+        App: {
+          SaveState: vi.fn().mockResolvedValue(undefined),
+          AnalyzeRequirements: vi.fn().mockResolvedValue({
+            analysisId: "ANALYSIS-2",
+            round: 1,
+            confirmedFacts: [
+              {
+                id: "FACT-2",
+                content: "未确认事项不能被隐藏。",
+                sourceFragmentIds: [sourceID],
+              },
+            ],
+            projectObservations: [],
+            questions: [
+              {
+                id: "QUESTION-2",
+                category: "BEHAVIOR",
+                severity: "BLOCKING",
+                question: "失败时是否允许重试？",
+                reason: "不回答会影响失败交互。",
+                sourceFragmentIds: [sourceID],
+                projectEvidence: [],
+                answerType: "BOOLEAN",
+                options: ["允许", "不允许"],
+                allowCustomAnswer: true,
+              },
+            ],
+            conflicts: [],
+            draftUpdates: {
+              scope: [],
+              outOfScope: [],
+              acceptanceCriteria: [],
+              constraints: [],
+            },
+            analysisStatus: "NEEDS_USER_INPUT",
+            recommendedAction: "ASK_QUESTIONS",
+            reason: "仍有阻塞问题。",
+            analyzedAt: "2026-07-28T12:05:00Z",
+          }),
+        } as never,
+      },
+    };
+    await useWorkspaceStore.getState().runRequirementAnalysis(taskID);
+    let task = useWorkspaceStore.getState().tasks[0];
+    const questionID = task.requirements.questions[0].id;
+
+    expect(() => useWorkspaceStore.getState().confirmRequirements(taskID)).toThrow(
+      "阻塞问题",
+    );
+    useWorkspaceStore.getState().requestForceProceed(taskID);
+    useWorkspaceStore.getState().confirmForceProceed(taskID, [
+      { questionId: questionID, strategy: "KEEP_UNCONFIRMED" },
+    ]);
+    useWorkspaceStore.getState().confirmRequirements(taskID);
+
+    task = useWorkspaceStore.getState().tasks[0];
+    expect(task.requirements.questions[0].status).toBe("OPEN");
+    expect(task.requirements.questions[0].forceDecision).toBe(
+      "KEEP_UNCONFIRMED",
+    );
+    expect(task.requirements.document).toContain("## 11. 未确认事项");
+    expect(task.requirements.document).toContain("失败时是否允许重试");
+    expect(task.requirements.confirmedAt).toBeTruthy();
+  });
+
+  it("preserves an approved snapshot before a new requirement revision", async () => {
+    const taskID = useWorkspaceStore.getState().createTask({
+      title: "需求版本",
+      summary: "批准版本不能被后续修改静默覆盖。",
+      projectName: "BTaskAssistant",
+      initialEvidence: {
+        type: "manual",
+        title: "版本规则",
+        content: "每次批准都保留不可变快照。",
+      },
+    });
+    await useWorkspaceStore.getState().transitionTask(taskID, "requirements");
+    useWorkspaceStore.getState().patchRequirements(taskID, {
+      objective: "保留第一版",
+      acceptanceCriteria: ["历史快照可追溯"],
+    });
+    useWorkspaceStore.getState().generateDraft(taskID);
+    useWorkspaceStore.getState().confirmRequirements(taskID);
+    const firstDocument = useWorkspaceStore.getState().tasks[0].requirements.document;
+
+    useWorkspaceStore.getState().revokeRequirements(taskID);
+    useWorkspaceStore.getState().patchRequirements(taskID, {
+      objective: "保留第二版",
+    });
+    useWorkspaceStore.getState().generateDraft(taskID);
+    useWorkspaceStore.getState().confirmRequirements(taskID);
+
+    const requirements = useWorkspaceStore.getState().tasks[0].requirements;
+    expect(requirements.confirmedRevision).toBe(2);
+    expect(requirements.approvedRevisions).toHaveLength(2);
+    expect(requirements.approvedRevisions[0].document).toBe(firstDocument);
+    expect(requirements.approvedRevisions[1].document).toContain("保留第二版");
   });
 });

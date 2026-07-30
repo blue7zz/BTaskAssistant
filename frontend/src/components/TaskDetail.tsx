@@ -3,9 +3,7 @@ import {
   ArrowRight,
   Bot,
   Check,
-  CheckCircle2,
   ChevronDown,
-  CircleAlert,
   ClipboardCheck,
   Clock3,
   Code2,
@@ -14,10 +12,8 @@ import {
   FileText,
   FolderGit2,
   Link2,
-  LockKeyhole,
   MessageSquareText,
   Plus,
-  RotateCcw,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -39,6 +35,7 @@ import { copyText } from "../lib/clipboard";
 import type { EngineStatus } from "../lib/bridge";
 import { useWorkspaceStore } from "../store/workspace";
 import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
+import { RequirementWorkspace } from "./RequirementWorkspace";
 
 interface TaskDetailProps {
   task: Task;
@@ -115,40 +112,6 @@ function DraftInput({
         />
       )}
     </label>
-  );
-}
-
-function LineEditor({
-  label,
-  values,
-  placeholder,
-  disabled,
-  onCommit,
-}: {
-  label: string;
-  values: string[];
-  placeholder: string;
-  disabled: boolean;
-  onCommit(values: string[]): void;
-}) {
-  return (
-    <DraftInput
-      label={label}
-      value={values.join("\n")}
-      placeholder={placeholder}
-      multiline
-      rows={4}
-      disabled={disabled}
-      hint="每行一项"
-      onCommit={(value) =>
-        onCommit(
-          value
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean),
-        )
-      }
-    />
   );
 }
 
@@ -429,243 +392,6 @@ function InboxStage({ task, run }: { task: Task; run: RunAction }) {
   );
 }
 
-function RequirementsStage({ task, run }: { task: Task; run: RunAction }) {
-  const patchRequirements = useWorkspaceStore(
-    (state) => state.patchRequirements,
-  );
-  const generateDraft = useWorkspaceStore((state) => state.generateDraft);
-  const answerQuestion = useWorkspaceStore((state) => state.answerQuestion);
-  const confirmRequirements = useWorkspaceStore(
-    (state) => state.confirmRequirements,
-  );
-  const revokeRequirements = useWorkspaceStore(
-    (state) => state.revokeRequirements,
-  );
-  const locked = Boolean(task.requirements.confirmedAt);
-  const unresolved = task.requirements.questions.filter(
-    (question) => !question.resolvedAt,
-  ).length;
-
-  return (
-    <div className="stage-stack">
-      <div className={`stage-callout ${locked ? "success" : "warning"}`}>
-        <div className="callout-icon">
-          {locked ? <ShieldCheck size={18} /> : <Sparkles size={18} />}
-        </div>
-        <div>
-          <strong>
-            {locked ? "这版需求已由人工确认" : "当前使用可复核的固定模板"}
-          </strong>
-          <p>
-            {locked
-              ? "内容已经锁定。若需调整，请先手动撤销确认。"
-              : "模板只引用已有来源并暴露缺失项，不调用未配置的 PI，也不会补造需求。"}
-          </p>
-        </div>
-        {locked && (
-          <button
-            className="button compact secondary"
-            onClick={() =>
-              run(
-                () => revokeRequirements(task.id),
-                "已撤销确认，可以继续修改需求",
-              )
-            }
-          >
-            <RotateCcw size={14} />
-            撤销确认
-          </button>
-        )}
-      </div>
-
-      <BasicsPanel task={task} editable={!locked} run={run} />
-      <EvidencePanel task={task} editable={!locked} run={run} />
-
-      <Panel
-        title="需求边界"
-        eyebrow="所有字段都需要人工核对"
-        icon={<ShieldAlert size={17} />}
-      >
-        <div className="field-grid two-columns requirements-fields">
-          <DraftInput
-            label="目标"
-            value={task.requirements.objective}
-            placeholder="这项任务要解决什么明确问题"
-            multiline
-            rows={4}
-            disabled={locked}
-            onCommit={(objective) =>
-              run(() => patchRequirements(task.id, { objective }))
-            }
-          />
-          <LineEditor
-            label="范围内"
-            values={task.requirements.scope}
-            placeholder="每行写一项已确认要做的内容"
-            disabled={locked}
-            onCommit={(scope) =>
-              run(() => patchRequirements(task.id, { scope }))
-            }
-          />
-          <LineEditor
-            label="范围外"
-            values={task.requirements.outOfScope}
-            placeholder="明确这次不做什么"
-            disabled={locked}
-            onCommit={(outOfScope) =>
-              run(() => patchRequirements(task.id, { outOfScope }))
-            }
-          />
-          <LineEditor
-            label="验收标准"
-            values={task.requirements.acceptanceCriteria}
-            placeholder="必须是可以实际验证的结果"
-            disabled={locked}
-            onCommit={(acceptanceCriteria) =>
-              run(() =>
-                patchRequirements(task.id, { acceptanceCriteria }),
-              )
-            }
-          />
-          <LineEditor
-            label="风险与约束"
-            values={task.requirements.risks}
-            placeholder="例如：不得修改 SDK 源码"
-            disabled={locked}
-            onCommit={(risks) =>
-              run(() => patchRequirements(task.id, { risks }))
-            }
-          />
-        </div>
-        {!locked && (
-          <div className="generation-bar">
-            <div>
-              <strong>生成结构化候选稿</strong>
-              <span>每次字段或来源变化后都需要重新生成</span>
-            </div>
-            <button
-              className="button primary"
-              onClick={() =>
-                run(
-                  () => generateDraft(task.id),
-                  "结构化候选稿已生成，尚未人工确认",
-                )
-              }
-            >
-              <Sparkles size={16} />
-              {task.requirements.generatedAt ? "重新生成" : "生成候选稿"}
-            </button>
-          </div>
-        )}
-      </Panel>
-
-      {task.requirements.questions.length > 0 && (
-        <Panel
-          title="待确认问题"
-          eyebrow={`${unresolved} 项未解决`}
-          icon={<CircleAlert size={17} />}
-        >
-          <div className="question-list">
-            {task.requirements.questions.map((question) => (
-              <article
-                className={`question-card ${question.resolvedAt ? "resolved" : ""}`}
-                key={question.id}
-              >
-                <div className="question-status">
-                  {question.resolvedAt ? (
-                    <CheckCircle2 size={17} />
-                  ) : (
-                    <CircleAlert size={17} />
-                  )}
-                </div>
-                <div>
-                  <strong>{question.question}</strong>
-                  <DraftInput
-                    label="人工确认答案"
-                    value={question.answer}
-                    placeholder="必须由你确认，系统不会替你回答"
-                    disabled={locked}
-                    onCommit={(answer) =>
-                      run(() =>
-                        answerQuestion(task.id, question.id, answer),
-                      )
-                    }
-                  />
-                </div>
-              </article>
-            ))}
-          </div>
-        </Panel>
-      )}
-
-      {task.requirements.document && (
-        <>
-          <Panel
-            title="需求文档候选稿"
-            eyebrow="未确认前不可用于开发"
-            icon={<FileText size={17} />}
-            actions={
-              <CopyButton
-                value={task.requirements.document}
-                label="复制需求文档"
-                run={run}
-              />
-            }
-          >
-            <pre className="document-preview">
-              {task.requirements.document}
-            </pre>
-          </Panel>
-          <Panel
-            title="执行提示词候选稿"
-            eyebrow="包含严禁假设和停止条件"
-            icon={<Code2 size={17} />}
-            actions={
-              <CopyButton
-                value={task.requirements.executionPrompt}
-                label="复制提示词"
-                run={run}
-              />
-            }
-          >
-            <pre className="document-preview prompt-preview">
-              {task.requirements.executionPrompt}
-            </pre>
-          </Panel>
-        </>
-      )}
-
-      <div className={`approval-bar ${locked ? "approved" : ""}`}>
-        <div className="approval-icon">
-          {locked ? <ShieldCheck size={22} /> : <UserCheck size={22} />}
-        </div>
-        <div>
-          <strong>{locked ? "需求已确认并锁定" : "最终决定必须由你完成"}</strong>
-          <p>
-            {locked
-              ? `确认版本 v${task.requirements.confirmedRevision} · ${formatDate(task.requirements.confirmedAt)}`
-              : "确认代表目标、边界、验收标准、来源和所有问题答案都准确。"}
-          </p>
-        </div>
-        {!locked && (
-          <button
-            className="button primary"
-            onClick={() =>
-              run(
-                () => confirmRequirements(task.id),
-                "需求已人工确认；仍需手动推进到待开发",
-              )
-            }
-          >
-            <LockKeyhole size={16} />
-            人工确认这版需求
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ApprovedStage({ task, run }: { task: Task; run: RunAction }) {
   return (
     <div className="stage-stack">
@@ -799,11 +525,11 @@ function DevelopmentStage({
           </label>
           <div className="engine-status-detail">
             <span
-              className={`status-dot ${currentEngine?.configured ? "online" : ""}`}
+              className={`status-dot ${currentEngine?.development ? "online" : ""}`}
             />
             <div>
               <strong>
-                {currentEngine?.configured ? "自动接口可用" : "外部执行模式"}
+                {currentEngine?.development ? "自动接口可用" : "外部执行模式"}
               </strong>
               <p>
                 {currentEngine?.description ??
@@ -1112,7 +838,7 @@ function stageContent(
     case "inbox":
       return <InboxStage task={task} run={run} />;
     case "requirements":
-      return <RequirementsStage task={task} run={run} />;
+      return <RequirementWorkspace task={task} engines={engines} run={run} />;
     case "approved":
       return <ApprovedStage task={task} run={run} />;
     case "development":
@@ -1136,6 +862,15 @@ export function TaskDetail({
     | TaskStatus
     | undefined;
   const nextStatus = TASK_STATUSES[currentIndex + 1] as TaskStatus | undefined;
+  const nextBlocked =
+    (nextStatus === "approved" && !task.requirements.confirmedAt) ||
+    (nextStatus === "development" && !task.requirements.confirmedAt) ||
+    (nextStatus === "review" && task.development.state !== "completed") ||
+    (nextStatus === "done" && !task.review.approvedAt);
+  const requirementAnalysisBusy =
+    task.status === "requirements" &&
+    (task.requirements.interview.status === "analyzing" ||
+      task.requirements.interview.status === "reanalyzing");
 
   const run: RunAction = (action, successMessage) => {
     try {
@@ -1184,6 +919,7 @@ export function TaskDetail({
             {previousStatus && (
               <button
                 className="button secondary"
+                disabled={requirementAnalysisBusy}
                 onClick={() =>
                   run(
                     () => transitionTask(task.id, previousStatus),
@@ -1198,6 +934,7 @@ export function TaskDetail({
             {nextStatus && (
               <button
                 className="button primary"
+                disabled={nextBlocked || requirementAnalysisBusy}
                 onClick={() =>
                   run(
                     () => transitionTask(task.id, nextStatus),

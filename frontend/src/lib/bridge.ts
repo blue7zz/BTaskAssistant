@@ -8,6 +8,11 @@ import type {
   PlaneSettings,
 } from "../domain/collection";
 import type { TaskStatus } from "../domain/task";
+import type { PISettings } from "../domain/engine";
+import type {
+  RequirementAnalysisInput,
+  RequirementAnalysisResult,
+} from "../domain/requirements";
 import type { TransitionGates } from "../domain/workflow";
 import { validateTransition as validateInBrowser } from "../domain/workflow";
 
@@ -15,7 +20,11 @@ export interface EngineStatus {
   id: "pi" | "codex";
   label: string;
   configured: boolean;
+  requirementAnalysis: boolean;
+  development: boolean;
   description: string;
+  commandPath: string;
+  version: string;
 }
 
 interface NativeApp {
@@ -59,7 +68,21 @@ interface NativeApp {
     projectId: string,
     projectIdentifier: string,
   ): Promise<PlaneCandidatePayload[]>;
-  AnalyzePlaneCandidate(sourceMarkdown: string): Promise<CandidateAnalysis>;
+  LoadPlaneWorkItemDetails(
+    baseUrl: string,
+    workspaceSlug: string,
+    projectId: string,
+    projectIdentifier: string,
+    workItemId: string,
+  ): Promise<PlaneCandidatePayload>;
+  AnalyzePlaneCandidate(
+    sourceMarkdown: string,
+    settings: PISettings,
+  ): Promise<CandidateAnalysis>;
+  AnalyzeRequirements(
+    input: RequirementAnalysisInput,
+    settings: PISettings,
+  ): Promise<RequirementAnalysisResult>;
 }
 
 declare global {
@@ -68,6 +91,9 @@ declare global {
       main?: {
         App?: NativeApp;
       };
+    };
+    runtime?: {
+      BrowserOpenURL?(url: string): void;
     };
   }
 }
@@ -128,13 +154,21 @@ export async function getEngineStatuses(): Promise<EngineStatus[]> {
       id: "pi",
       label: "PI / oh-my-pi",
       configured: false,
+      requirementAnalysis: false,
+      development: false,
       description: "浏览器预览模式：自动执行接口未配置。",
+      commandPath: "",
+      version: "",
     },
     {
       id: "codex",
       label: "Codex",
       configured: false,
+      requirementAnalysis: false,
+      development: false,
       description: "当前可复制已确认提示词，自动执行接口待配置。",
+      commandPath: "",
+      version: "",
     },
   ];
 }
@@ -142,7 +176,7 @@ export async function getEngineStatuses(): Promise<EngineStatus[]> {
 function requireNativeApp(): NativeApp {
   const app = nativeApp();
   if (!app) {
-    throw new Error("Plane 和 PI 集成只能在 Wails 桌面客户端中使用");
+    throw new Error("AI 与 Plane 集成只能在 Wails 桌面客户端中使用");
   }
   return app;
 }
@@ -217,8 +251,37 @@ export async function collectPlaneWorkItems(
   );
 }
 
+export async function loadPlaneWorkItemDetails(
+  settings: PlaneSettings,
+  workItemId: string,
+): Promise<PlaneCandidatePayload> {
+  return requireNativeApp().LoadPlaneWorkItemDetails(
+    settings.baseUrl,
+    settings.workspaceSlug,
+    settings.projectId,
+    settings.projectIdentifier ?? "",
+    workItemId,
+  );
+}
+
+export function openExternalURL(url: string): void {
+  if (window.runtime?.BrowserOpenURL) {
+    window.runtime.BrowserOpenURL(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 export async function analyzePlaneCandidate(
   sourceMarkdown: string,
+  settings: PISettings,
 ): Promise<CandidateAnalysis> {
-  return requireNativeApp().AnalyzePlaneCandidate(sourceMarkdown);
+  return requireNativeApp().AnalyzePlaneCandidate(sourceMarkdown, settings);
+}
+
+export async function analyzeRequirements(
+  input: RequirementAnalysisInput,
+  settings: PISettings,
+): Promise<RequirementAnalysisResult> {
+  return requireNativeApp().AnalyzeRequirements(input, settings);
 }

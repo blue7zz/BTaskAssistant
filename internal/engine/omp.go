@@ -25,6 +25,7 @@ type CandidateAnalysis struct {
 
 type OMPAnalyzer struct {
 	CommandPath string
+	Settings    PISettings
 }
 
 func FindOMP() (string, error) {
@@ -68,18 +69,21 @@ Plane 原始来源：
 
 ` + sourceMarkdown
 
-	command := exec.CommandContext(
-		ctx,
-		commandPath,
+	args := []string{
 		"--no-tools",
 		"--no-skills",
 		"--no-rules",
 		"--no-extensions",
 		"--no-title",
 		"--no-session",
-		"--print",
-		prompt,
-	)
+	}
+	piArgs, err := piCommandArguments(a.Settings)
+	if err != nil {
+		return CandidateAnalysis{}, err
+	}
+	args = append(args, piArgs...)
+	args = append(args, "--print", prompt)
+	command := exec.CommandContext(ctx, commandPath, args...)
 	command.Dir = os.TempDir()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

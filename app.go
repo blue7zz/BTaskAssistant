@@ -327,10 +327,66 @@ func (a *App) CollectPlaneWorkItems(
 	)
 }
 
-func (a *App) AnalyzePlaneCandidate(
-	sourceMarkdown string,
-) (engine.CandidateAnalysis, error) {
+func (a *App) LoadPlaneWorkItemDetails(
+	baseURL string,
+	workspaceSlug string,
+	projectID string,
+	projectIdentifier string,
+	workItemID string,
+) (plane.Candidate, error) {
+	client, err := a.planeClient(baseURL, workspaceSlug)
+	if err != nil {
+		return plane.Candidate{}, err
+	}
 	ctx, cancel := context.WithTimeout(a.appContext(), 2*time.Minute)
 	defer cancel()
-	return (engine.OMPAnalyzer{}).AnalyzeCandidate(ctx, sourceMarkdown)
+	return client.LoadCandidateDetails(
+		ctx,
+		workspaceSlug,
+		projectID,
+		projectIdentifier,
+		workItemID,
+	)
+}
+
+func (a *App) AnalyzePlaneCandidate(
+	sourceMarkdown string,
+	settings engine.PISettings,
+) (engine.CandidateAnalysis, error) {
+	settings, err := engine.NormalizePISettings(settings)
+	if err != nil {
+		return engine.CandidateAnalysis{}, err
+	}
+	ctx, cancel := context.WithTimeout(
+		a.appContext(),
+		time.Duration(settings.TimeoutMinutes)*time.Minute+15*time.Second,
+	)
+	defer cancel()
+	return (engine.OMPAnalyzer{Settings: settings}).AnalyzeCandidate(
+		ctx,
+		sourceMarkdown,
+	)
+}
+
+// AnalyzeRequirements runs a single structured requirement-interview round.
+// The selected CLI is constrained to read-only project access; the result is
+// still only a candidate and cannot advance or approve the task.
+func (a *App) AnalyzeRequirements(
+	input engine.RequirementAnalysisInput,
+	settings engine.PISettings,
+) (engine.RequirementAnalysisResult, error) {
+	settings, err := engine.NormalizePISettings(settings)
+	if err != nil {
+		return engine.RequirementAnalysisResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(
+		a.appContext(),
+		time.Duration(settings.TimeoutMinutes)*time.Minute+15*time.Second,
+	)
+	defer cancel()
+	return (engine.RequirementAnalyzer{}).AnalyzeWithSettings(
+		ctx,
+		input,
+		settings,
+	)
 }

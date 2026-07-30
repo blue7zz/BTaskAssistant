@@ -1,14 +1,30 @@
-import { Check, CircleDot, FolderGit2 } from "lucide-react";
+import {
+  Check,
+  CircleDot,
+  FolderGit2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+} from "lucide-react";
 import {
   STATUS_META,
   type Task,
   type TaskPriority,
 } from "../domain/task";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from "react";
 
 interface TaskListProps {
   tasks: Task[];
   selectedTaskID?: string;
+  collapsed: boolean;
+  searchQuery: string;
   onSelect(taskID: string): void;
+  onOpenContextMenu(taskID: string, x: number, y: number): void;
+  onSearchQueryChange(query: string): void;
+  onToggleCollapsed(): void;
 }
 
 const PRIORITY_LABEL: Record<TaskPriority, string> = {
@@ -35,19 +51,77 @@ function formatUpdatedAt(value: string): string {
 export function TaskList({
   tasks,
   selectedTaskID,
+  collapsed,
+  searchQuery,
   onSelect,
+  onOpenContextMenu,
+  onSearchQueryChange,
+  onToggleCollapsed,
 }: TaskListProps) {
+  const openContextMenu = (
+    taskID: string,
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) => {
+    event.preventDefault();
+    onSelect(taskID);
+    onOpenContextMenu(taskID, event.clientX, event.clientY);
+  };
+
+  const openContextMenuWithKeyboard = (
+    taskID: string,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    if (
+      event.key !== "ContextMenu" &&
+      !(event.shiftKey && event.key === "F10")
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    onSelect(taskID);
+    onOpenContextMenu(taskID, bounds.left + 16, bounds.top + 16);
+  };
+
   return (
-    <aside className="task-list-panel">
+    <aside className={`task-list-panel ${collapsed ? "collapsed" : ""}`}>
       <div className="task-list-heading">
-        <div>
-          <span className="eyebrow">当前视图</span>
-          <h2>任务</h2>
+        {!collapsed && (
+          <div>
+            <span className="eyebrow">当前视图</span>
+            <h2>任务</h2>
+          </div>
+        )}
+        <div className="task-list-heading-actions">
+          {!collapsed && <span className="count-pill">{tasks.length}</span>}
+          <button
+            type="button"
+            className="task-list-toggle"
+            aria-label={collapsed ? "展开任务列表" : "收起任务列表"}
+            title={collapsed ? "展开任务列表" : "收起任务列表"}
+            onClick={onToggleCollapsed}
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={16} />
+            ) : (
+              <PanelLeftClose size={16} />
+            )}
+          </button>
         </div>
-        <span className="count-pill">{tasks.length}</span>
       </div>
 
-      <div className="task-list" role="list">
+      {!collapsed && (
+        <label className="search-box task-list-search">
+          <Search size={16} />
+          <input
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            placeholder="搜索任务或项目"
+          />
+        </label>
+      )}
+
+      <div className="task-list" role="list" aria-hidden={collapsed}>
         {tasks.map((task) => (
           <button
             type="button"
@@ -55,6 +129,9 @@ export function TaskList({
             key={task.id}
             className={`task-card ${selectedTaskID === task.id ? "selected" : ""}`}
             onClick={() => onSelect(task.id)}
+            onContextMenu={(event) => openContextMenu(task.id, event)}
+            onKeyDown={(event) => openContextMenuWithKeyboard(task.id, event)}
+            aria-haspopup="menu"
           >
             <div className="task-card-topline">
               <span className={`priority priority-${task.priority}`}>
@@ -83,4 +160,3 @@ export function TaskList({
     </aside>
   );
 }
-
