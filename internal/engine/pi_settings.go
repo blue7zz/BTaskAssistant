@@ -2,7 +2,6 @@ package engine
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -44,21 +43,4 @@ func NormalizePISettings(settings PISettings) (PISettings, error) {
 		return PISettings{}, errors.New("PI 单次执行时限必须在 1 到 10 分钟之间")
 	}
 	return settings, nil
-}
-
-func piCommandArguments(settings PISettings) ([]string, error) {
-	settings, err := NormalizePISettings(settings)
-	if err != nil {
-		return nil, err
-	}
-	args := make([]string, 0, 3)
-	if settings.Model != "" {
-		args = append(args, "--model="+settings.Model)
-	}
-	args = append(
-		args,
-		"--thinking="+settings.ThinkingEffort,
-		fmt.Sprintf("--max-time=%dm", settings.TimeoutMinutes),
-	)
-	return args, nil
 }

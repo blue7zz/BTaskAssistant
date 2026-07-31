@@ -12,33 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const initialSchema = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
-
-CREATE TABLE IF NOT EXISTS schema_migrations (
-	version INTEGER PRIMARY KEY,
-	applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS workspace_state (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	payload TEXT NOT NULL,
-	revision INTEGER NOT NULL DEFAULT 1,
-	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS task_context_settings (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	custom_root TEXT,
-	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
-INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
-`
-
 // SQLiteStore is the first persistence slice of the architecture. The UI
 // workspace remains a single versioned document for now, but SQLite is already
 // the durable source in desktop mode so normalized repositories can be added
@@ -108,7 +81,11 @@ func (s *SQLiteStore) Open() error {
 	}
 	database.SetMaxOpenConns(1)
 
-	if _, err := database.Exec(initialSchema); err != nil {
+	if err := configureDatabase(database); err != nil {
+		database.Close()
+		return err
+	}
+	if err := runMigrations(database, schemaMigrations); err != nil {
 		database.Close()
 		return fmt.Errorf("initialize database: %w", err)
 	}
@@ -151,6 +128,10 @@ func (s *SQLiteStore) Load() (string, error) {
 }
 
 func (s *SQLiteStore) Save(payload string) error {
+	snapshots, err := decodeTaskSnapshots(payload)
+	if err != nil {
+		return fmt.Errorf("decode task workspaces: %w", err)
+	}
 	contexts, err := decodeTaskContexts(payload)
 	if err != nil {
 		return fmt.Errorf("decode task contexts: %w", err)
@@ -171,6 +152,9 @@ func (s *SQLiteStore) Save(payload string) error {
 		}
 		if err := syncTaskContexts(root, contexts); err != nil {
 			return fmt.Errorf("sync task contexts: %w", err)
+		}
+		if err := syncTaskWorkspacesWithConn(ctx, conn, root, snapshots, false); err != nil {
+			return fmt.Errorf("sync task workspaces: %w", err)
 		}
 		_, err = conn.ExecContext(
 			ctx,

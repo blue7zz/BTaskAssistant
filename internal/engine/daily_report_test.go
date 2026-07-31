@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -568,93 +569,23 @@ func repeatedJSONItem(item string, count int) string {
 	return strings.TrimSuffix(strings.Repeat(item+",", count), ",")
 }
 
-func TestDailyReportGeneratorRunsFakePIWithLockedDownArguments(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake CLI uses a POSIX shell")
-	}
-	binDir := t.TempDir()
-	argumentsPath := filepath.Join(t.TempDir(), "arguments.txt")
-	promptCopyPath := filepath.Join(t.TempDir(), "prompt.txt")
-	scriptPath := filepath.Join(binDir, "omp")
-	script := `#!/bin/sh
-set -eu
-printf '%s\n' "$@" > "$BTASK_FAKE_ARGUMENTS"
-for argument in "$@"; do
-  case "$argument" in
-    @*) cp "${argument#@}" "$BTASK_FAKE_PROMPT" ;;
-  esac
-done
-printf '%s' '{"reportDate":"2026-07-30","results":[{"projectNo":"会议","projectName":"项目评审","task":"确认验收标准","status":"已完成","progress":"100%","evidence":["会议结论"]}],"blockers":[],"reviews":[],"nextActions":[{"projectNo":"y15","projectName":"y15_app","goal":"完成三个回归问题","deadline":"18:00 前","inferred":false}]}'
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake PI: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("BTASK_FAKE_ARGUMENTS", argumentsPath)
-	t.Setenv("BTASK_FAKE_PROMPT", promptCopyPath)
-
+func TestDailyReportGeneratorWaitsForNativePIRPCWithoutOMPFallback(t *testing.T) {
 	input := dailyReportGenerationTestInput()
 	var progressEvents []DailyReportGenerationProgress
-	result, err := (DailyReportGenerator{}).Generate(
+	_, err := (DailyReportGenerator{}).Generate(
 		context.Background(),
 		input,
-		PISettings{
-			Model:          "openai-codex/gpt-test",
-			ThinkingEffort: "high",
-			TimeoutMinutes: 1,
-		},
+		PISettings{},
 		func(progress DailyReportGenerationProgress) {
 			progressEvents = append(progressEvents, progress)
 		},
 	)
-	if err != nil {
-		t.Fatalf("generate with fake PI: %v", err)
+	if !errors.Is(err, ErrPIUtilityRPCUnavailable) {
+		t.Fatalf("expected native PI RPC unavailable error, got %v", err)
 	}
-	if len(result.Results) != 1 || result.Results[0].Task != "确认验收标准" {
-		t.Fatalf("unexpected generated result %#v", result)
-	}
-	expectedStages := []string{
-		"validating",
-		"collecting_git",
-		"building_prompt",
-		"waiting_ai",
-		"parsing_result",
-		"completed",
-	}
-	if len(progressEvents) != len(expectedStages) {
+	if len(progressEvents) == 0 ||
+		progressEvents[len(progressEvents)-1].Stage != "waiting_ai" {
 		t.Fatalf("unexpected progress events %#v", progressEvents)
-	}
-	for index, stage := range expectedStages {
-		if progressEvents[index].RequestID != input.RequestID ||
-			progressEvents[index].Stage != stage {
-			t.Fatalf("unexpected progress event %d: %#v", index, progressEvents[index])
-		}
-	}
-	arguments, err := os.ReadFile(argumentsPath)
-	if err != nil {
-		t.Fatalf("read fake PI arguments: %v", err)
-	}
-	for _, expected := range []string{
-		"--no-tools",
-		"--no-skills",
-		"--no-rules",
-		"--no-extensions",
-		"--no-session",
-		"--model=openai-codex/gpt-test",
-		"--thinking=high",
-		"--max-time=1m",
-	} {
-		if !strings.Contains(string(arguments), expected) {
-			t.Fatalf("fake PI arguments missing %q:\n%s", expected, arguments)
-		}
-	}
-	prompt, err := os.ReadFile(promptCopyPath)
-	if err != nil {
-		t.Fatalf("read fake PI prompt: %v", err)
-	}
-	if !strings.Contains(string(prompt), "参加项目评审") ||
-		!strings.Contains(string(prompt), "固定规则") {
-		t.Fatalf("unexpected PI prompt:\n%s", prompt)
 	}
 }
 

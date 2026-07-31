@@ -345,7 +345,7 @@ export function DailyReportSettings({
                 }))
               }
             >
-              <option value="pi">PI / oh-my-pi</option>
+              <option value="pi">PI</option>
               <option value="codex">Codex</option>
             </select>
           </label>

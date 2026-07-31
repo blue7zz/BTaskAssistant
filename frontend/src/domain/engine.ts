@@ -1,5 +1,26 @@
 export type PIThinkingEffort = "low" | "medium" | "high" | "xhigh";
 
+export const NATIVE_PI_ENGINE = "pi" as const;
+export const CODEX_ENGINE = "codex" as const;
+
+export function migrateEngineIdentity(
+  value: unknown,
+  fallback: typeof NATIVE_PI_ENGINE | typeof CODEX_ENGINE,
+): string {
+  if (typeof value !== "string" || value.trim() === "") return fallback;
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized === CODEX_ENGINE) return CODEX_ENGINE;
+  if (
+    normalized === NATIVE_PI_ENGINE ||
+    normalized === "omp" ||
+    normalized === "oh-my-pi" ||
+    normalized === "pi / oh-my-pi"
+  ) {
+    return NATIVE_PI_ENGINE;
+  }
+  return value;
+}
+
 export interface PISettings {
   model: string;
   thinkingEffort: PIThinkingEffort;

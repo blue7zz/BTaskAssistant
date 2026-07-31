@@ -9,7 +9,9 @@ import {
 } from "../domain/collection";
 import { buildRequirementDraft } from "../domain/templates";
 import {
+  CODEX_ENGINE,
   DEFAULT_PI_SETTINGS,
+  migrateEngineIdentity,
   normalizePISettings,
   type PISettings,
 } from "../domain/engine";
@@ -70,6 +72,22 @@ export const DEFAULT_PLANE_CANDIDATE_FILTERS: PlaneCandidateFilters = {
   state: "all",
   assignees: [],
 };
+
+function normalizeDevelopmentEngine(value: unknown): DevelopmentEngine {
+  return migrateEngineIdentity(value, CODEX_ENGINE) as DevelopmentEngine;
+}
+
+function normalizeTaskDevelopment(
+  development: Task["development"] | undefined,
+): Task["development"] {
+  return {
+    ...createEmptyDevelopment(),
+    ...development,
+    engine: normalizeDevelopmentEngine(
+      (development as { engine?: unknown } | undefined)?.engine,
+    ),
+  };
+}
 
 export type DailyReportDrafts = Record<string, DailyReportDraft>;
 
@@ -1842,7 +1860,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "btaskassistant-workspace",
       storage: createJSONStorage(() => workspaceStorage),
-      version: 13,
+      version: 14,
       migrate: (persistedState) => {
         const state = persistedState as Partial<WorkspaceState> & {
           dailyReportDraft?: DailyReportDraft;
@@ -1857,6 +1875,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               selectedForAnalysis: source.selectedForAnalysis !== false,
             })),
             requirements: normalizeRequirements(task.requirements),
+            development: normalizeTaskDevelopment(task.development),
           })),
           trashedTasks: (state.trashedTasks ?? []).map((task) => ({
             ...task,
@@ -1866,6 +1885,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               selectedForAnalysis: source.selectedForAnalysis !== false,
             })),
             requirements: normalizeRequirements(task.requirements),
+            development: normalizeTaskDevelopment(task.development),
           })),
           collectionCandidates: (state.collectionCandidates ?? []).map(
             (candidate) => ({

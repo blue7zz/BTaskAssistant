@@ -518,7 +518,7 @@ function DevelopmentStage({
                 }
               >
                 <option value="codex">Codex</option>
-                <option value="pi">PI / oh-my-pi</option>
+                <option value="pi">PI</option>
               </select>
               <ChevronDown size={15} />
             </div>

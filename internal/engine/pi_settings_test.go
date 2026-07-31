@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"slices"
 	"testing"
 )
 
@@ -26,22 +25,18 @@ func TestNormalizePISettingsUsesCompatibleThinkingDefault(t *testing.T) {
 	}
 }
 
-func TestPICommandArgumentsOverrideGlobalDefaults(t *testing.T) {
-	args, err := piCommandArguments(PISettings{
-		Model:          "openai-codex/gpt-5.5",
+func TestNormalizePISettingsPreservesNativeRPCPreferences(t *testing.T) {
+	settings, err := NormalizePISettings(PISettings{
+		Model:          "  openai-codex/gpt-5.5  ",
 		ThinkingEffort: "high",
 		TimeoutMinutes: 5,
 	})
 	if err != nil {
-		t.Fatalf("build args: %v", err)
+		t.Fatalf("normalize settings: %v", err)
 	}
-	for _, expected := range []string{
-		"--model=openai-codex/gpt-5.5",
-		"--thinking=high",
-		"--max-time=5m",
-	} {
-		if !slices.Contains(args, expected) {
-			t.Fatalf("args %v missing %q", args, expected)
-		}
+	if settings.Model != "openai-codex/gpt-5.5" ||
+		settings.ThinkingEffort != "high" ||
+		settings.TimeoutMinutes != 5 {
+		t.Fatalf("unexpected normalized PI settings %#v", settings)
 	}
 }

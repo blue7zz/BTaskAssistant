@@ -391,67 +391,31 @@ func runRequirementCLI(
 	attachments []requirementAttachment,
 	settings PISettings,
 ) (string, error) {
-	commandPath, err := exec.LookPath(analystCommand(analyst))
+	if analyst == "pi" {
+		return "", ErrPIUtilityRPCUnavailable
+	}
+	if analyst != "codex" {
+		return "", fmt.Errorf("不支持的需求分析器 %q", analyst)
+	}
+	commandPath, err := exec.LookPath("codex")
 	if err != nil {
 		return "", fmt.Errorf("未找到 %s 需求分析器", strings.ToUpper(analyst))
 	}
 
-	var command *exec.Cmd
-	if analyst == "pi" {
-		promptFile, err := os.CreateTemp("", "btask-requirement-*.txt")
-		if err != nil {
-			return "", fmt.Errorf("创建需求分析输入包失败: %w", err)
-		}
-		promptPath := promptFile.Name()
-		defer os.Remove(promptPath)
-		if _, err := promptFile.WriteString(prompt); err != nil {
-			_ = promptFile.Close()
-			return "", fmt.Errorf("写入需求分析输入包失败: %w", err)
-		}
-		if err := promptFile.Close(); err != nil {
-			return "", fmt.Errorf("关闭需求分析输入包失败: %w", err)
-		}
-		args := []string{
-			"--no-skills",
-			"--no-rules",
-			"--no-extensions",
-			"--no-title",
-			"--no-session",
-			"--no-lsp",
-			"--no-pty",
-			"--cwd=" + workDir,
-		}
-		piArgs, err := piCommandArguments(settings)
-		if err != nil {
-			return "", err
-		}
-		args = append(args, piArgs...)
-		if !projectRead {
-			args = append(args, "--no-tools")
-		} else {
-			args = append(args, "--tools=read,grep,glob")
-		}
-		args = append(args, "--print", "@"+promptPath)
-		for _, attachment := range attachments {
-			args = append(args, "@"+attachment.Path)
-		}
-		command = exec.CommandContext(ctx, commandPath, args...)
-	} else {
-		args := []string{
-			"exec",
-			"--sandbox", "read-only",
-			"--ephemeral",
-			"--skip-git-repo-check",
-			"--color", "never",
-			"--cd", workDir,
-		}
-		for _, attachment := range attachments {
-			args = append(args, "--image", attachment.Path)
-		}
-		args = append(args, "-")
-		command = exec.CommandContext(ctx, commandPath, args...)
-		command.Stdin = strings.NewReader(prompt)
+	args := []string{
+		"exec",
+		"--sandbox", "read-only",
+		"--ephemeral",
+		"--skip-git-repo-check",
+		"--color", "never",
+		"--cd", workDir,
 	}
+	for _, attachment := range attachments {
+		args = append(args, "--image", attachment.Path)
+	}
+	args = append(args, "-")
+	command := exec.CommandContext(ctx, commandPath, args...)
+	command.Stdin = strings.NewReader(prompt)
 	command.Dir = workDir
 
 	var stdout bytes.Buffer
@@ -472,13 +436,6 @@ func runRequirementCLI(
 		return "", errors.New("AI 返回内容超过 2 MB，已拒绝保存")
 	}
 	return stdout.String(), nil
-}
-
-func analystCommand(analyst string) string {
-	if analyst == "codex" {
-		return "codex"
-	}
-	return "omp"
 }
 
 func parseRequirementAnalysis(

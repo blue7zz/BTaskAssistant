@@ -17,6 +17,7 @@ import {
   type Requirements,
   type Task,
 } from "./task";
+import { migrateEngineIdentity, NATIVE_PI_ENGINE } from "./engine";
 
 export interface AnalysisMaterial {
   materialId: string;
@@ -215,6 +216,9 @@ export function normalizeRequirementInterview(
   return {
     ...empty,
     ...interview,
+    analyst: normalizeRequirementAnalyst(
+      (interview as { analyst?: unknown } | undefined)?.analyst,
+    ),
     analyses: interview?.analyses ?? [],
     projectObservations: interview?.projectObservations ?? [],
     conflicts: interview?.conflicts ?? [],
@@ -223,6 +227,12 @@ export function normalizeRequirementInterview(
       ...interview?.suggestedDraft,
     },
   };
+}
+
+export function normalizeRequirementAnalyst(
+  value: unknown,
+): RequirementAnalyst {
+  return migrateEngineIdentity(value, NATIVE_PI_ENGINE) as RequirementAnalyst;
 }
 
 export function normalizeRequirements(

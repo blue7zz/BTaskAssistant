@@ -254,7 +254,7 @@ docs(PI工作台): 锁定原生 PI 分阶段实施计划
 
 - schema 2 → 3。
 - 旧 workspace_state 保留。
-- 每任务写 legacy_task_migrations 记录。
+- v3 同步创建 legacy_task_migrations；每任务写 copy-first 迁移记录，阶段 7 的 v5 只做最终索引和约束加固。
 
 ### 验证
 

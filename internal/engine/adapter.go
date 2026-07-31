@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 var ErrNotConfigured = errors.New("AI 引擎尚未配置")
@@ -40,16 +42,16 @@ type Status struct {
 }
 
 func Statuses() []Status {
-	piPath, piVersion, piErr := commandDetails("omp")
+	piPath, piVersion, piErr := nativePICommandDetails()
 	codexPath, codexVersion, codexErr := commandDetails("codex")
 	return []Status{
 		{
 			ID:                  "pi",
-			Label:               "PI / oh-my-pi",
+			Label:               "PI",
 			Configured:          piErr == nil,
-			RequirementAnalysis: piErr == nil,
+			RequirementAnalysis: false,
 			Development:         false,
-			Description:         requirementEngineDescription("PI", piErr),
+			Description:         nativePIDescription(piErr),
 			CommandPath:         piPath,
 			Version:             piVersion,
 		},
@@ -76,6 +78,65 @@ func commandDetails(name string) (string, string, error) {
 		return path, "", nil
 	}
 	return path, strings.TrimSpace(string(output)), nil
+}
+
+func nativePICommandDetails() (string, string, error) {
+	path, err := exec.LookPath("pi")
+	if err != nil {
+		return "", "", err
+	}
+	directory, err := os.MkdirTemp("", "btask-pi-probe-*")
+	if err != nil {
+		return path, "", err
+	}
+	defer os.RemoveAll(directory)
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return path, "", err
+	}
+	sessionDirectory := directory + string(os.PathSeparator) + "sessions"
+	if err := os.Mkdir(sessionDirectory, 0o700); err != nil {
+		return path, "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, path, "--version")
+	command.Dir = directory
+	isolatedEnvironment := environmentWithOverride(
+		os.Environ(),
+		"PI_CODING_AGENT_DIR",
+		directory,
+	)
+	command.Env = environmentWithOverride(
+		isolatedEnvironment,
+		"PI_CODING_AGENT_SESSION_DIR",
+		sessionDirectory,
+	)
+	output, err := command.Output()
+	if ctx.Err() != nil {
+		return path, "", ctx.Err()
+	}
+	if err != nil {
+		return path, "", err
+	}
+	return path, strings.TrimSpace(string(output)), nil
+}
+
+func environmentWithOverride(environment []string, key string, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, item := range environment {
+		if !strings.HasPrefix(item, prefix) {
+			result = append(result, item)
+		}
+	}
+	return append(result, prefix+value)
+}
+
+func nativePIDescription(err error) string {
+	if err != nil {
+		return "原生 PI CLI 未安装；仍可人工整理需求或使用 Codex。"
+	}
+	return "已检测到原生 PI；RPC 分析与任务会话将在阶段 2 接入。"
 }
 
 func requirementEngineDescription(label string, err error) string {

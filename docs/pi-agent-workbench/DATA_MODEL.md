@@ -111,11 +111,13 @@
 |---:|---|---|
 | 1 | 既有 | workspace_state |
 | 2 | 既有 | task_context_settings |
-| 3 | 阶段 1 | task_workspaces、resources、agent/session/event/run/tool、permission、git、artifact 基础表 |
+| 3 | 阶段 1 | task_workspaces、resources、agent/session/event/run/tool、permission、git、artifact 基础表，以及 copy-first 所需的 legacy_task_migrations |
 | 4 | 阶段 3 | message_attachments、resource_references、requirement_proposals |
-| 5 | 阶段 7 | legacy_task_migrations 状态与最终索引/约束修补 |
+| 5 | 阶段 7 | 最终索引、状态约束和升级兼容修补 |
 
 既有数据库已经记录 1、2 时，runner 不重放；新数据库从 1 依次执行。迁移测试必须覆盖“旧 initialSchema 数据库 → 最新”和“空数据库 → 最新”。
+
+阶段 1 必须立即记录每个旧任务的迁移结果，因此 legacy_task_migrations 随 v3 创建；阶段 7 不再补建该表，只允许在不丢失 v3 记录的前提下加固索引和约束。
 
 ## 4. 表定义
 
@@ -295,6 +297,7 @@ pending request 在 app 重启时一律转 expired；不能恢复为已允许。
 | id | TEXT PRIMARY KEY |
 | task_id | TEXT NULL |
 | session_id | TEXT NULL |
+| request_id | TEXT NULL；once scope 必填并引用 permission_requests |
 | capability | TEXT NOT NULL |
 | target_pattern | TEXT NOT NULL |
 | scope | TEXT NOT NULL：once、session、task、permanent |

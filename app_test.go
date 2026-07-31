@@ -164,6 +164,32 @@ func TestOpenTaskContextRootPreservesOpenerError(t *testing.T) {
 	}
 }
 
+func TestTaskWorkspaceBridgeEnsuresListsAndReadsOnlyItsTask(t *testing.T) {
+	app := newTaskContextTestApp(t)
+	payload := `{"state":{"tasks":[{"id":"task_bridge","title":"Bridge 任务","summary":"完整上下文","revision":1,"createdAt":"2026-08-01T08:00:00Z","updatedAt":"2026-08-01T08:00:00Z"}]}}`
+	if err := app.SaveState(payload); err != nil {
+		t.Fatalf("save task: %v", err)
+	}
+	workspace, err := app.EnsureTaskWorkspace("task_bridge")
+	if err != nil {
+		t.Fatalf("ensure task workspace: %v", err)
+	}
+	if workspace.TaskID != "task_bridge" || workspace.State != "ready" {
+		t.Fatalf("unexpected task workspace %#v", workspace)
+	}
+	entries, err := app.ListTaskWorkspaceFiles("task_bridge", "context")
+	if err != nil || len(entries) < 3 {
+		t.Fatalf("list task workspace: entries %#v, error %v", entries, err)
+	}
+	preview, err := app.ReadTaskWorkspaceFile("task_bridge", "context/task.md")
+	if err != nil || !strings.Contains(preview.Content, "Bridge 任务") {
+		t.Fatalf("read task workspace: preview %#v, error %v", preview, err)
+	}
+	if _, err := app.ReadTaskWorkspaceFile("task_other", "context/task.md"); err == nil {
+		t.Fatal("cross-task workspace read was accepted")
+	}
+}
+
 func TestStartupIgnoresTaskContextReconciliationFailure(t *testing.T) {
 	root := t.TempDir()
 	databasePath := filepath.Join(root, "btask.db")

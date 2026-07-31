@@ -35,24 +35,24 @@ describe("PI settings page", () => {
         createElement(PISettingsPage, {
           engine: {
             id: "pi",
-            label: "PI / oh-my-pi",
+            label: "PI",
             configured: true,
-            requirementAnalysis: true,
+            requirementAnalysis: false,
             development: false,
             description: "PI 可用于只读需求分析。",
-            commandPath: "/Users/blue/.local/bin/omp",
-            version: "omp/16.5.2",
+            commandPath: "/opt/homebrew/bin/pi",
+            version: "0.82.1",
           },
           onSuccess,
         }),
       );
     });
 
-    expect(container.textContent).toContain("已启用 gpt-5.5 兼容修复");
-    expect(container.textContent).toContain("omp/16.5.2");
+    expect(container.textContent).toContain("已启用每任务隔离策略");
+    expect(container.textContent).toContain("0.82.1");
 
     const modelInput = container.querySelector(
-      'input[placeholder*="openai-codex/gpt-5.5"]',
+      'input[placeholder*="provider/model"]',
     ) as HTMLInputElement;
     const inputSetter = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
@@ -80,7 +80,7 @@ describe("PI settings page", () => {
       timeoutMinutes: 5,
     });
     expect(onSuccess).toHaveBeenCalledWith(
-      "PI 详细设置已保存，下一轮分析将使用新配置",
+      "PI 设置已保存，将在原生 RPC 接入后使用",
     );
   });
 });

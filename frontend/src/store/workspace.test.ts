@@ -110,6 +110,82 @@ describe("workspace store", () => {
     ).toBe(false);
   });
 
+  it("maps legacy OMP engine strings to native PI during hydration", async () => {
+    const task = {
+      id: "task_legacy_engine",
+      title: "旧引擎任务",
+      summary: "",
+      projectName: "",
+      projectPath: "",
+      priority: "medium",
+      status: "requirements",
+      evidence: [],
+      requirements: {
+        interview: {
+          status: "preparing",
+          analyst: "oh-my-pi",
+          round: 0,
+          analyses: [],
+          projectObservations: [],
+          conflicts: [],
+          suggestedDraft: {
+            scope: [],
+            outOfScope: [],
+            acceptanceCriteria: [],
+            constraints: [],
+          },
+        },
+      },
+      development: {
+        engine: "omp",
+        state: "idle",
+        resultNote: "",
+      },
+      review: { mode: "manual", checklist: [], note: "" },
+      revision: 1,
+      createdAt: "2026-08-01T08:00:00Z",
+      updatedAt: "2026-08-01T08:00:00Z",
+    };
+    window.localStorage.setItem(
+      "btaskassistant-workspace",
+      JSON.stringify({
+        version: 13,
+        state: {
+          tasks: [task],
+          trashedTasks: [
+            {
+              ...task,
+              id: "task_legacy_trash",
+              development: {
+                ...task.development,
+                engine: "PI / oh-my-pi",
+              },
+              trashedAt: "2026-08-01T09:00:00Z",
+            },
+          ],
+          collectionCandidates: [],
+          planeSettings: DEFAULT_PLANE_SETTINGS,
+          planeCandidateFilters: DEFAULT_PLANE_CANDIDATE_FILTERS,
+          piSettings: DEFAULT_PI_SETTINGS,
+          dailyReportSettings: DEFAULT_DAILY_REPORT_SETTINGS,
+          dailyReportAISettings: {
+            ...DEFAULT_DAILY_REPORT_AI_SETTINGS,
+            engine: "omp",
+          },
+          statusFilter: "all",
+        },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    const state = useWorkspaceStore.getState();
+    expect(state.tasks[0].development.engine).toBe("pi");
+    expect(state.tasks[0].requirements.interview.analyst).toBe("pi");
+    expect(state.trashedTasks[0].development.engine).toBe("pi");
+    expect(state.dailyReportAISettings.engine).toBe("pi");
+  });
+
   it("persists Plane candidate filters and restores them after refresh", async () => {
     window.localStorage.setItem(
       "btaskassistant-workspace",
@@ -242,7 +318,7 @@ describe("workspace store", () => {
       const stored = JSON.parse(
         window.localStorage.getItem("btaskassistant-workspace") ?? "{}",
       );
-      expect(stored.version).toBe(13);
+      expect(stored.version).toBe(14);
       expect(stored.state.dailyReportSettings.employeeId).toBe("DN1111");
       expect(stored.state.dailyReportDrafts[today].results[0].projectNo).toBe(
         "BT-18",
@@ -328,7 +404,7 @@ describe("workspace store", () => {
       const stored = JSON.parse(
         window.localStorage.getItem("btaskassistant-workspace") ?? "{}",
       );
-      expect(stored.version).toBe(13);
+      expect(stored.version).toBe(14);
       expect(stored.state.dailyReportAISettings).toEqual({
         engine: "codex",
         customInstructions: "仅使用真实 Git 证据",

@@ -137,6 +137,23 @@ export function TaskContextSettings({
           )}
         </div>
 
+        {rootInfo && (
+          <div className="task-context-status-row" aria-live="polite">
+            <span className="task-context-status">
+              SQLite v{rootInfo.databaseSchemaVersion ?? 3} · Task Workspace v
+              {rootInfo.taskWorkspaceSchemaVersion ?? 1}
+            </span>
+            <span className="task-context-status">
+              已建立 {rootInfo.workspaceCount ?? 0} 个任务空间
+            </span>
+            {(rootInfo.workspaceErrorCount ?? 0) > 0 && (
+              <span className="task-context-status unavailable" role="alert">
+                {rootInfo.workspaceErrorCount} 个任务空间需要修复
+              </span>
+            )}
+          </div>
+        )}
+
         <label className="field task-context-path-field">
           <span>
             当前目录
@@ -161,7 +178,7 @@ export function TaskContextSettings({
 
         <div className="task-context-actions">
           <p>
-            可在每个任务目录中继续放入文档、图片等资料。更改时请选择空目录；迁移成功后旧目录会保留为备份。
+            系统会按任务隔离 context、sources、attachments、artifacts、repos 和 runs。更改时请选择空目录；迁移成功后旧目录与旧版资料都会保留。
           </p>
           <div>
             <button

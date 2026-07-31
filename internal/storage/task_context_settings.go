@@ -12,13 +12,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 )
 
 type TaskContextRootInfo struct {
-	Path        string `json:"path"`
-	DefaultPath string `json:"defaultPath"`
-	Custom      bool   `json:"custom"`
-	Available   bool   `json:"available"`
+	Path                       string `json:"path"`
+	DefaultPath                string `json:"defaultPath"`
+	Custom                     bool   `json:"custom"`
+	Available                  bool   `json:"available"`
+	DatabaseSchemaVersion      int    `json:"databaseSchemaVersion"`
+	TaskWorkspaceSchemaVersion int    `json:"taskWorkspaceSchemaVersion"`
+	WorkspaceCount             int    `json:"workspaceCount"`
+	WorkspaceErrorCount        int    `json:"workspaceErrorCount"`
 }
 
 func (s *SQLiteStore) defaultTaskContextRoot() (string, error) {
@@ -81,11 +87,19 @@ func (s *SQLiteStore) TaskContextRootInfo() (TaskContextRootInfo, error) {
 		return TaskContextRootInfo{}, fmt.Errorf("创建默认任务资料目录失败: %w", err)
 	}
 	info, statErr := os.Stat(path)
+	workspaceCount, workspaceErrorCount, err := taskWorkspaceCounts(database)
+	if err != nil {
+		return TaskContextRootInfo{}, err
+	}
 	return TaskContextRootInfo{
-		Path:        path,
-		DefaultPath: defaultRoot,
-		Custom:      custom,
-		Available:   statErr == nil && info.IsDir(),
+		Path:                       path,
+		DefaultPath:                defaultRoot,
+		Custom:                     custom,
+		Available:                  statErr == nil && info.IsDir(),
+		DatabaseSchemaVersion:      currentSchemaVersion,
+		TaskWorkspaceSchemaVersion: taskspace.SchemaVersion,
+		WorkspaceCount:             workspaceCount,
+		WorkspaceErrorCount:        workspaceErrorCount,
 	}, nil
 }
 
@@ -115,6 +129,14 @@ func (s *SQLiteStore) SetTaskContextRoot(path string) (TaskContextRootInfo, erro
 			if err := copyTaskContextRoot(current, target); err != nil {
 				return err
 			}
+			if err := rebaseTaskWorkspaceRootsWithConn(
+				ctx,
+				connection,
+				current,
+				target,
+			); err != nil {
+				return err
+			}
 		}
 
 		var payload string
@@ -126,14 +148,22 @@ func (s *SQLiteStore) SetTaskContextRoot(path string) (TaskContextRootInfo, erro
 			return err
 		}
 		contexts := map[string][]byte{}
+		snapshots := map[string]taskspace.TaskSnapshot{}
 		if err == nil {
 			contexts, err = decodeTaskContexts(payload)
 			if err != nil {
 				return fmt.Errorf("decode task contexts: %w", err)
 			}
+			snapshots, err = decodeTaskSnapshots(payload)
+			if err != nil {
+				return fmt.Errorf("decode task workspaces: %w", err)
+			}
 		}
 		if err := syncTaskContexts(target, contexts); err != nil {
 			return fmt.Errorf("sync target task contexts: %w", err)
+		}
+		if err := syncTaskWorkspacesWithConn(ctx, connection, target, snapshots, true); err != nil {
+			return fmt.Errorf("sync target task workspaces: %w", err)
 		}
 
 		defaultRoot, err := s.defaultTaskContextRoot()
@@ -168,12 +198,98 @@ func (s *SQLiteStore) SetTaskContextRoot(path string) (TaskContextRootInfo, erro
 		return TaskContextRootInfo{}, err
 	}
 	isDefault, _ := sameDirectory(defaultRoot, target)
+	workspaceCount, workspaceErrorCount, err := taskWorkspaceCounts(database)
+	if err != nil {
+		return TaskContextRootInfo{}, err
+	}
 	return TaskContextRootInfo{
-		Path:        target,
-		DefaultPath: defaultRoot,
-		Custom:      !isDefault,
-		Available:   true,
+		Path:                       target,
+		DefaultPath:                defaultRoot,
+		Custom:                     !isDefault,
+		Available:                  true,
+		DatabaseSchemaVersion:      currentSchemaVersion,
+		TaskWorkspaceSchemaVersion: taskspace.SchemaVersion,
+		WorkspaceCount:             workspaceCount,
+		WorkspaceErrorCount:        workspaceErrorCount,
 	}, nil
+}
+
+func rebaseTaskWorkspaceRootsWithConn(
+	ctx context.Context,
+	connection *sql.Conn,
+	currentRoot string,
+	targetRoot string,
+) error {
+	rows, err := connection.QueryContext(ctx, `
+		SELECT task_id, root_path, legacy_context_path
+		  FROM task_workspaces`,
+	)
+	if err != nil {
+		return err
+	}
+	type workspacePath struct {
+		taskID            string
+		rootPath          string
+		legacyContextPath sql.NullString
+	}
+	paths := make([]workspacePath, 0)
+	for rows.Next() {
+		var item workspacePath
+		if err := rows.Scan(&item.taskID, &item.rootPath, &item.legacyContextPath); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		paths = append(paths, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range paths {
+		relative, err := filepath.Rel(currentRoot, item.rootPath)
+		if err != nil || relative != item.taskID {
+			continue
+		}
+		newRootPath := filepath.Join(targetRoot, item.taskID)
+		var legacyContextPath any
+		if item.legacyContextPath.Valid {
+			legacyRelative, err := filepath.Rel(currentRoot, item.legacyContextPath.String)
+			if err == nil && isNestedRelativePath(legacyRelative) {
+				legacyContextPath = filepath.Join(targetRoot, legacyRelative)
+			} else {
+				legacyContextPath = item.legacyContextPath.String
+			}
+		}
+		if _, err := connection.ExecContext(ctx, `
+			UPDATE task_workspaces
+			   SET root_path = ?, legacy_context_path = ?, updated_at = CURRENT_TIMESTAMP
+			 WHERE task_id = ?`,
+			newRootPath,
+			legacyContextPath,
+			item.taskID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type queryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func taskWorkspaceCounts(queryer queryRower) (int, int, error) {
+	var workspaceCount int
+	var workspaceErrorCount int
+	if err := queryer.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN state = 'error' THEN 1 ELSE 0 END), 0)
+		  FROM task_workspaces`,
+	).Scan(&workspaceCount, &workspaceErrorCount); err != nil {
+		return 0, 0, err
+	}
+	return workspaceCount, workspaceErrorCount, nil
 }
 
 func (s *SQLiteStore) ReconcileTaskContexts() error {
@@ -194,7 +310,16 @@ func (s *SQLiteStore) ReconcileTaskContexts() error {
 			`SELECT payload FROM workspace_state WHERE id = 1`,
 		).Scan(&payload)
 		if errors.Is(err, sql.ErrNoRows) {
-			return syncTaskContexts(root, map[string][]byte{})
+			if err := syncTaskContexts(root, map[string][]byte{}); err != nil {
+				return err
+			}
+			return syncTaskWorkspacesWithConn(
+				ctx,
+				connection,
+				root,
+				map[string]taskspace.TaskSnapshot{},
+				false,
+			)
 		}
 		if err != nil {
 			return err
@@ -203,7 +328,14 @@ func (s *SQLiteStore) ReconcileTaskContexts() error {
 		if err != nil {
 			return fmt.Errorf("decode task contexts: %w", err)
 		}
-		return syncTaskContexts(root, contexts)
+		if err := syncTaskContexts(root, contexts); err != nil {
+			return err
+		}
+		snapshots, err := decodeTaskSnapshots(payload)
+		if err != nil {
+			return fmt.Errorf("decode task workspaces: %w", err)
+		}
+		return syncTaskWorkspacesWithConn(ctx, connection, root, snapshots, false)
 	})
 }
 

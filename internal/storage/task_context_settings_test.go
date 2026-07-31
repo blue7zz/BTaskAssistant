@@ -225,3 +225,42 @@ func TestSetTaskContextRootRejectsNonEmptyTargetWithoutChangingIt(t *testing.T) 
 		t.Fatalf("rejected migration switched root: %#v", info)
 	}
 }
+
+func TestSetTaskContextRootRebasesPreservedWorkspaceAfterStateIsCleared(t *testing.T) {
+	dataDirectory := t.TempDir()
+	store := NewSQLiteStoreAt(filepath.Join(dataDirectory, "btask.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Save(`{"state":{"tasks":[{"id":"task_preserved","title":"保留任务"}]}}`); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace, err := store.TaskWorkspace("task_preserved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetTaskContextRoot(target); err != nil {
+		t.Fatalf("move preserved workspace root: %v", err)
+	}
+	workspace, err := store.TaskWorkspace("task_preserved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot := filepath.Join(resolvedTarget, "task_preserved")
+	if workspace.RootPath != wantRoot || workspace.RootPath == oldWorkspace.RootPath {
+		t.Fatalf("preserved workspace root was not rebased: %#v", workspace)
+	}
+	preview, err := store.ReadTaskWorkspaceFile("task_preserved", "context/task.md")
+	if err != nil || !strings.Contains(preview.Content, "保留任务") {
+		t.Fatalf("rebased workspace is unreadable: %#v, %v", preview, err)
+	}
+	if _, err := os.Stat(filepath.Join(oldWorkspace.RootPath, "context", "task.md")); err != nil {
+		t.Fatalf("old workspace was not retained: %v", err)
+	}
+}

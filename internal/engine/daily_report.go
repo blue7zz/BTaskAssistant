@@ -544,8 +544,13 @@ func runDailyReportCLI(
 	prompt string,
 	runtime PISettings,
 ) (string, error) {
-	commandName := analystCommand(analyst)
-	commandPath, err := exec.LookPath(commandName)
+	if analyst == "pi" {
+		return "", ErrPIUtilityRPCUnavailable
+	}
+	if analyst != "codex" {
+		return "", fmt.Errorf("不支持的日报生成器 %q", analyst)
+	}
+	commandPath, err := exec.LookPath("codex")
 	if err != nil {
 		return "", fmt.Errorf("未找到 %s 日报生成器", strings.ToUpper(analyst))
 	}
@@ -555,58 +560,32 @@ func runDailyReportCLI(
 	}
 	defer os.RemoveAll(temporaryDir)
 
-	var command *exec.Cmd
-	if analyst == "pi" {
-		promptPath := temporaryDir + string(os.PathSeparator) + "prompt.txt"
-		if err := os.WriteFile(promptPath, []byte(prompt), 0o600); err != nil {
-			return "", fmt.Errorf("写入日报 AI 输入失败: %w", err)
-		}
-		args := []string{
-			"--no-tools",
-			"--no-skills",
-			"--no-rules",
-			"--no-extensions",
-			"--no-title",
-			"--no-session",
-			"--no-lsp",
-			"--no-pty",
-			"--cwd=" + temporaryDir,
-		}
-		piArgs, err := piCommandArguments(runtime)
-		if err != nil {
-			return "", err
-		}
-		args = append(args, piArgs...)
-		args = append(args, "--print", "@"+promptPath)
-		command = exec.CommandContext(ctx, commandPath, args...)
-	} else {
-		args := []string{
-			"exec",
-			"--sandbox", "read-only",
-			"--ephemeral",
-			"--strict-config",
-			"--ignore-user-config",
-			"--ignore-rules",
-			"--disable", "shell_tool",
-			"--disable", "unified_exec",
-			"--disable", "apps",
-			"--disable", "hooks",
-			"--skip-git-repo-check",
-			"--color", "never",
-			"--cd", temporaryDir,
-		}
-		if runtime.Model != "" {
-			args = append(args, "--model", runtime.Model)
-		}
-		args = append(
-			args,
-			"--config",
-			fmt.Sprintf("model_reasoning_effort=%q", runtime.ThinkingEffort),
-			"-",
-		)
-		command = exec.CommandContext(ctx, commandPath, args...)
-		command.Stdin = strings.NewReader(prompt)
+	args := []string{
+		"exec",
+		"--sandbox", "read-only",
+		"--ephemeral",
+		"--strict-config",
+		"--ignore-user-config",
+		"--ignore-rules",
+		"--disable", "shell_tool",
+		"--disable", "unified_exec",
+		"--disable", "apps",
+		"--disable", "hooks",
+		"--skip-git-repo-check",
+		"--color", "never",
+		"--cd", temporaryDir,
 	}
+	if runtime.Model != "" {
+		args = append(args, "--model", runtime.Model)
+	}
+	args = append(
+		args,
+		"--config",
+		fmt.Sprintf("model_reasoning_effort=%q", runtime.ThinkingEffort),
+		"-",
+	)
+	command := exec.CommandContext(ctx, commandPath, args...)
+	command.Stdin = strings.NewReader(prompt)
 	command.Dir = temporaryDir
 
 	stdout := newCappedBuffer(maxDailyReportOutputBytes)

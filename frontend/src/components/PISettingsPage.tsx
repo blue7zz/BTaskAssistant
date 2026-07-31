@@ -26,7 +26,7 @@ const THINKING_OPTIONS: Array<{
   { value: "low", label: "低", description: "更快，适合简单整理" },
   { value: "medium", label: "中", description: "速度与分析深度均衡" },
   { value: "high", label: "高", description: "适合多数需求访谈" },
-  { value: "xhigh", label: "极高", description: "兼容 gpt-5.5 的最高档" },
+  { value: "xhigh", label: "极高", description: "保留旧设置并等待 PI 校验" },
 ];
 
 interface PISettingsPageProps {
@@ -48,13 +48,13 @@ export function PISettingsPage({
     const next = normalizePISettings(draft);
     updateSettings(next);
     setDraft(next);
-    onSuccess("PI 详细设置已保存，下一轮分析将使用新配置");
+    onSuccess("PI 设置已保存，将在原生 RPC 接入后使用");
   };
 
   const reset = () => {
     updateSettings(DEFAULT_PI_SETTINGS);
     setDraft({ ...DEFAULT_PI_SETTINGS });
-    onSuccess("PI 设置已恢复为兼容默认值");
+    onSuccess("PI 设置已恢复为隔离默认值");
   };
 
   return (
@@ -64,17 +64,17 @@ export function PISettingsPage({
           <BrainCircuit size={28} />
         </div>
         <div>
-          <span className="eyebrow">PI / OH-MY-PI</span>
-          <h2>控制每一次 PI 分析实际使用的参数</h2>
+          <span className="eyebrow">NATIVE PI</span>
+          <h2>配置原生 PI 的模型与推理偏好</h2>
           <p>
-            此处配置会同时用于需求访谈和 Plane 候选提炼。API Key
-            与登录信息仍由 OMP 自己管理，不会写入任务数据库。
+            每个任务使用隔离的 PI 配置目录，默认不读取或复制
+            ~/.pi/agent。原生 RPC 接入前，这些设置只会保存，不会启动 PI。
           </p>
         </div>
         <div className={`pi-runtime-state ${engine?.configured ? "online" : ""}`}>
           <span className={`status-dot ${engine?.configured ? "online" : ""}`} />
           <div>
-            <strong>{engine?.configured ? "PI 已就绪" : "PI 未检测到"}</strong>
+            <strong>{engine?.configured ? "已检测到原生 PI" : "PI 未检测到"}</strong>
             <small>{engine?.version || "等待桌面客户端检测"}</small>
           </div>
         </div>
@@ -88,7 +88,7 @@ export function PISettingsPage({
                 <Cpu size={18} />
                 <div>
                   <h3>模型与推理</h3>
-                  <p>显式覆盖 OMP 全局参数，避免模型与思考档位不兼容。</p>
+                  <p>启动后通过原生 PI RPC 校验，不转换成旧 CLI 参数。</p>
                 </div>
               </div>
             </header>
@@ -107,10 +107,10 @@ export function PISettingsPage({
                       model: event.target.value,
                     }))
                   }
-                  placeholder="例如 openai-codex/gpt-5.5；留空则使用 OMP 默认模型"
+                  placeholder="例如 provider/model；留空则由原生 PI 会话选择"
                 />
                 <small className="pi-field-help">
-                  留空不会读取或复制 OMP 的全局配置，只在运行时沿用其默认模型。
+                  留空不会读取或复制全局 PI 配置；阶段 2 会根据可用模型列表显式匹配。
                 </small>
               </label>
 
@@ -183,10 +183,10 @@ export function PISettingsPage({
           <section className="pi-compatibility-card">
             <CheckCircle2 size={20} />
             <div>
-              <strong>已启用 gpt-5.5 兼容修复</strong>
+              <strong>已启用每任务隔离策略</strong>
               <p>
-                每次运行都会显式传入所选思考强度。默认使用 xhigh，不再继承可能为
-                max 的 OMP 全局值；旧的 max 设置也会自动迁移为 xhigh。
+                默认资源策略为 isolated，不继承 ~/.pi/agent。旧的 max
+                思考强度会读时迁移为 xhigh，实际可用档位由原生 PI RPC 校验。
               </p>
             </div>
           </section>
@@ -206,7 +206,7 @@ export function PISettingsPage({
             <dl>
               <div>
                 <dt>状态</dt>
-                <dd>{engine?.configured ? "可用" : "未安装或不在 PATH"}</dd>
+                <dd>{engine?.configured ? "已安装，RPC 待接入" : "未安装或不在 PATH"}</dd>
               </div>
               <div>
                 <dt>版本</dt>
@@ -225,14 +225,14 @@ export function PISettingsPage({
                 <ShieldCheck size={18} />
                 <div>
                   <h3>固定安全边界</h3>
-                  <p>这些限制不能在设置页中关闭。</p>
+                  <p>阶段 1 锁定的资源与执行边界。</p>
                 </div>
               </div>
             </header>
             <ul>
-              <li>需求分析只开放 read、grep、glob</li>
-              <li>不加载技能、规则、扩展或会话</li>
-              <li>关闭 LSP、PTY 与代码写入能力</li>
+              <li>默认不继承全局 PI 资源或凭据</li>
+              <li>阶段 2 RPC 完成前不启动 PI</li>
+              <li>任务资料、Session 与运行目录按任务隔离</li>
               <li>分析结果仍需用户采纳和人工批准</li>
             </ul>
           </section>

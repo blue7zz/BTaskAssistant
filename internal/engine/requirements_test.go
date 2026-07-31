@@ -1,10 +1,27 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestPIRequirementAnalysisDoesNotFallbackToOMPBeforeRPC(t *testing.T) {
+	output, err := runRequirementCLI(
+		context.Background(),
+		"pi",
+		t.TempDir(),
+		false,
+		"fixed prompt",
+		nil,
+		PISettings{},
+	)
+	if output != "" || !errors.Is(err, ErrPIUtilityRPCUnavailable) {
+		t.Fatalf("expected native PI RPC unavailable error, output %q error %v", output, err)
+	}
+}
 
 func requirementTestInput() RequirementAnalysisInput {
 	return RequirementAnalysisInput{

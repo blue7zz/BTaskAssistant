@@ -140,6 +140,10 @@ func TestSQLiteStoreWritesIndependentActiveAndTrashedTaskContexts(
 	if trashed["trashedAt"] != "2026-08-01T01:02:03Z" {
 		t.Fatalf("trash metadata was not preserved: %#v", trashed)
 	}
+	trashedWorkspace, err := store.TaskWorkspace("task_trashed")
+	if err != nil || trashedWorkspace.State != "archived" {
+		t.Fatalf("trashed task workspace was not archived: %#v, %v", trashedWorkspace, err)
+	}
 }
 
 func TestSQLiteStoreLoadIsReadOnlyAndReconcileBackfillsTaskContexts(t *testing.T) {

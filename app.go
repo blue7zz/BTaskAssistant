@@ -16,6 +16,7 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/plane"
 	"github.com/blue7zz/BTaskAssistant/internal/report"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
+	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 	"github.com/blue7zz/BTaskAssistant/internal/workflow"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -142,6 +143,35 @@ func (a *App) GetTaskContextRoot() (storage.TaskContextRootInfo, error) {
 		return storage.TaskContextRootInfo{}, a.startupErr
 	}
 	return a.store.TaskContextRootInfo()
+}
+
+func (a *App) EnsureTaskWorkspace(
+	taskID string,
+) (storage.TaskWorkspaceRecord, error) {
+	if a.startupErr != nil {
+		return storage.TaskWorkspaceRecord{}, a.startupErr
+	}
+	return a.store.EnsureTaskWorkspace(taskID)
+}
+
+func (a *App) ListTaskWorkspaceFiles(
+	taskID string,
+	path string,
+) ([]taskspace.WorkspaceEntry, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	return a.store.ListTaskWorkspaceFiles(taskID, path)
+}
+
+func (a *App) ReadTaskWorkspaceFile(
+	taskID string,
+	path string,
+) (taskspace.FilePreview, error) {
+	if a.startupErr != nil {
+		return taskspace.FilePreview{}, a.startupErr
+	}
+	return a.store.ReadTaskWorkspaceFile(taskID, path)
 }
 
 func (a *App) SelectTaskContextRoot() (string, error) {
@@ -640,19 +670,13 @@ func (a *App) AnalyzePlaneCandidate(
 	sourceMarkdown string,
 	settings engine.PISettings,
 ) (engine.CandidateAnalysis, error) {
-	settings, err := engine.NormalizePISettings(settings)
-	if err != nil {
+	if strings.TrimSpace(sourceMarkdown) == "" {
+		return engine.CandidateAnalysis{}, errors.New("候选来源不能为空")
+	}
+	if _, err := engine.NormalizePISettings(settings); err != nil {
 		return engine.CandidateAnalysis{}, err
 	}
-	ctx, cancel := context.WithTimeout(
-		a.appContext(),
-		time.Duration(settings.TimeoutMinutes)*time.Minute+15*time.Second,
-	)
-	defer cancel()
-	return (engine.OMPAnalyzer{Settings: settings}).AnalyzeCandidate(
-		ctx,
-		sourceMarkdown,
-	)
+	return engine.CandidateAnalysis{}, engine.ErrPIUtilityRPCUnavailable
 }
 
 // GenerateDailyReport produces a structured candidate from read-only Git facts,

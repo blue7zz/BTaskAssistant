@@ -44,6 +44,44 @@ export interface TaskContextRootInfo {
   defaultPath: string;
   custom: boolean;
   available: boolean;
+  databaseSchemaVersion?: number;
+  taskWorkspaceSchemaVersion?: number;
+  workspaceCount?: number;
+  workspaceErrorCount?: number;
+}
+
+export interface TaskWorkspaceInfo {
+  taskId: string;
+  workspaceId: string;
+  rootPath: string;
+  schemaVersion: number;
+  manifestRevision: number;
+  state: "ready" | "legacy" | "error" | "archived";
+  legacyContextPath?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastReconciledAt?: string;
+  errorMessage?: string;
+}
+
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  type: "file" | "directory" | "symlink" | "special";
+  byteSize: number;
+  modifiedAt: string;
+  readable: boolean;
+}
+
+export interface FilePreview {
+  path: string;
+  name: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  kind: "text" | "image";
+  content: string;
+  truncated: boolean;
 }
 
 interface NativeApp {
@@ -94,6 +132,15 @@ interface NativeApp {
   SelectTaskContextRoot(): Promise<string>;
   SetTaskContextRoot(path: string): Promise<TaskContextRootInfo>;
   OpenTaskContextRoot(): Promise<void>;
+  EnsureTaskWorkspace?(taskId: string): Promise<TaskWorkspaceInfo>;
+  ListTaskWorkspaceFiles?(
+    taskId: string,
+    path: string,
+  ): Promise<WorkspaceEntry[]>;
+  ReadTaskWorkspaceFile?(
+    taskId: string,
+    path: string,
+  ): Promise<FilePreview>;
   ListPlaneProjects(
     baseUrl: string,
     workspaceSlug: string,
@@ -205,11 +252,11 @@ export async function getEngineStatuses(): Promise<EngineStatus[]> {
   return [
     {
       id: "pi",
-      label: "PI / oh-my-pi",
+      label: "PI",
       configured: false,
       requirementAnalysis: false,
       development: false,
-      description: "浏览器预览模式：自动执行接口未配置。",
+      description: "浏览器预览模式：原生 PI 运行时不可用。",
       commandPath: "",
       version: "",
     },
@@ -339,6 +386,52 @@ export async function setTaskContextRoot(
 
 export async function openTaskContextRoot(): Promise<void> {
   await requireTaskContextNativeApp().OpenTaskContextRoot();
+}
+
+function requireTaskWorkspaceNativeApp(): Required<
+  Pick<
+    NativeApp,
+    | "EnsureTaskWorkspace"
+    | "ListTaskWorkspaceFiles"
+    | "ReadTaskWorkspaceFile"
+  >
+> {
+  const app = nativeApp();
+  if (
+    typeof app?.EnsureTaskWorkspace !== "function" ||
+    typeof app.ListTaskWorkspaceFiles !== "function" ||
+    typeof app.ReadTaskWorkspaceFile !== "function"
+  ) {
+    throw new Error("任务工作区文件只能在 Wails 桌面客户端中使用");
+  }
+  return app as Required<
+    Pick<
+      NativeApp,
+      | "EnsureTaskWorkspace"
+      | "ListTaskWorkspaceFiles"
+      | "ReadTaskWorkspaceFile"
+    >
+  >;
+}
+
+export async function ensureTaskWorkspace(
+  taskId: string,
+): Promise<TaskWorkspaceInfo> {
+  return requireTaskWorkspaceNativeApp().EnsureTaskWorkspace(taskId);
+}
+
+export async function listTaskWorkspaceFiles(
+  taskId: string,
+  path = "",
+): Promise<WorkspaceEntry[]> {
+  return requireTaskWorkspaceNativeApp().ListTaskWorkspaceFiles(taskId, path);
+}
+
+export async function readTaskWorkspaceFile(
+  taskId: string,
+  path: string,
+): Promise<FilePreview> {
+  return requireTaskWorkspaceNativeApp().ReadTaskWorkspaceFile(taskId, path);
 }
 
 export async function generateDailyReport(

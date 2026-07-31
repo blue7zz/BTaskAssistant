@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 )
 
 const (
@@ -53,48 +55,62 @@ type persistedTaskContext struct {
 }
 
 func decodeTaskContexts(payload string) (map[string][]byte, error) {
+	snapshots, err := decodeTaskSnapshots(payload)
+	if err != nil {
+		return nil, err
+	}
+	contexts := make(map[string][]byte, len(snapshots))
+	for taskID, snapshot := range snapshots {
+		var formatted bytes.Buffer
+		if err := json.Indent(&formatted, snapshot.RawJSON, "", "  "); err != nil {
+			return nil, fmt.Errorf("format task %q: %w", taskID, err)
+		}
+		formatted.WriteByte('\n')
+		contexts[taskID] = formatted.Bytes()
+	}
+	return contexts, nil
+}
+
+func decodeTaskSnapshots(payload string) (map[string]taskspace.TaskSnapshot, error) {
 	var workspace persistedWorkspace
 	if err := json.Unmarshal([]byte(payload), &workspace); err != nil {
 		return nil, err
 	}
 
-	contexts := make(map[string][]byte)
+	snapshots := make(map[string]taskspace.TaskSnapshot)
 	foldedIDs := make(map[string]string)
-	add := func(task json.RawMessage) error {
-		var identity struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(task, &identity); err != nil {
+	add := func(task json.RawMessage, archived bool) error {
+		var snapshot taskspace.TaskSnapshot
+		if err := json.Unmarshal(task, &snapshot); err != nil {
 			return fmt.Errorf("decode task identity: %w", err)
 		}
-		if !taskIDPattern.MatchString(identity.ID) {
-			return fmt.Errorf("invalid task id %q", identity.ID)
+		if !taskIDPattern.MatchString(snapshot.ID) {
+			return fmt.Errorf("invalid task id %q", snapshot.ID)
 		}
-		folded := strings.ToLower(identity.ID)
+		folded := strings.ToLower(snapshot.ID)
 		if existing, exists := foldedIDs[folded]; exists {
-			return fmt.Errorf("duplicate task ids %q and %q", existing, identity.ID)
+			return fmt.Errorf("duplicate task ids %q and %q", existing, snapshot.ID)
 		}
-
-		var formatted bytes.Buffer
-		if err := json.Indent(&formatted, task, "", "  "); err != nil {
-			return fmt.Errorf("format task %q: %w", identity.ID, err)
+		if snapshot.Revision < 1 {
+			snapshot.Revision = 1
 		}
-		formatted.WriteByte('\n')
-		contexts[identity.ID] = formatted.Bytes()
-		foldedIDs[folded] = identity.ID
+		snapshot.Archived = archived
+		snapshot.RawJSON = append(json.RawMessage(nil), task...)
+		snapshots[snapshot.ID] = snapshot
+		foldedIDs[folded] = snapshot.ID
 		return nil
 	}
 	for _, task := range workspace.State.Tasks {
-		if err := add(task); err != nil {
+		if err := add(task, false); err != nil {
 			return nil, err
 		}
 	}
 	for _, task := range workspace.State.TrashedTasks {
-		if err := add(task); err != nil {
+		if err := add(task, true); err != nil {
 			return nil, err
 		}
 	}
-	return contexts, nil
+	return snapshots, nil
 }
 
 func syncTaskContexts(rootPath string, contexts map[string][]byte) error {

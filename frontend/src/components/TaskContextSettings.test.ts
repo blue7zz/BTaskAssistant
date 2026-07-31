@@ -62,6 +62,10 @@ describe("Task context settings", () => {
         "/Users/test/Library/Application Support/BTaskAssistant/tasks",
       custom: false,
       available: true,
+      databaseSchemaVersion: 3,
+      taskWorkspaceSchemaVersion: 1,
+      workspaceCount: 4,
+      workspaceErrorCount: 1,
     });
     const openRoot = vi.fn().mockResolvedValue(undefined);
     window.go = {
@@ -89,6 +93,9 @@ describe("Task context settings", () => {
     expect(getRoot).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("应用默认目录");
     expect(container.textContent).toContain("目录可用");
+    expect(container.textContent).toContain("SQLite v3 · Task Workspace v1");
+    expect(container.textContent).toContain("已建立 4 个任务空间");
+    expect(container.textContent).toContain("1 个任务空间需要修复");
     expect(
       (container.querySelector(
         'input[aria-label="任务资料根目录"]',

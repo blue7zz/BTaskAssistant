@@ -1,4 +1,5 @@
 import { createID } from "../lib/id";
+import { migrateEngineIdentity, NATIVE_PI_ENGINE } from "./engine";
 import type { DevelopmentState, TaskStatus } from "./task";
 
 export const DAILY_REPORT_LEVELS = ["L1", "L2", "L3D", "L3"] as const;
@@ -367,7 +368,10 @@ export function normalizeDailyReportAISettings(
   value?: Partial<DailyReportAISettings>,
 ): DailyReportAISettings {
   return {
-    engine: value?.engine === "codex" ? "codex" : "pi",
+    engine: migrateEngineIdentity(
+      (value as { engine?: unknown } | undefined)?.engine,
+      NATIVE_PI_ENGINE,
+    ) as DailyReportAIEngine,
     customInstructions: stringValue(value?.customInstructions),
     gitAuthor: stringValue(value?.gitAuthor),
     includeUncommitted:
