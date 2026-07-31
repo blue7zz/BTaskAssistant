@@ -2,15 +2,20 @@ import {
   ArrowLeft,
   BrainCircuit,
   CloudDownload,
+  NotebookPen,
 } from "lucide-react";
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import type { EngineStatus } from "../lib/bridge";
+import { DailyReportSettings } from "./DailyReportSettings";
 import { PISettingsPage } from "./PISettingsPage";
 import { PlaneConnectionSettings } from "./PlaneConnectionSettings";
 
-type SettingsCategory = "pi" | "plane";
+export type SettingsCategory = "pi" | "plane" | "report";
+
+const SETTINGS_CATEGORIES: SettingsCategory[] = ["pi", "plane", "report"];
 
 interface SettingsPageProps {
+  initialCategory?: SettingsCategory;
   engine?: EngineStatus;
   planeConnected: boolean;
   onBack(): void;
@@ -20,6 +25,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({
+  initialCategory = "pi",
   engine,
   planeConnected,
   onBack,
@@ -27,13 +33,23 @@ export function SettingsPage({
   onSuccess,
   onError,
 }: SettingsPageProps) {
-  const [category, setCategory] = useState<SettingsCategory>("pi");
+  const [category, setCategory] =
+    useState<SettingsCategory>(initialCategory);
+
+  useEffect(() => setCategory(initialCategory), [initialCategory]);
+
   const selectAdjacentCategory = (
     event: KeyboardEvent<HTMLButtonElement>,
   ) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const nextCategory = category === "pi" ? "plane" : "pi";
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const currentIndex = SETTINGS_CATEGORIES.indexOf(category);
+    const nextCategory =
+      SETTINGS_CATEGORIES[
+        (currentIndex + direction + SETTINGS_CATEGORIES.length) %
+          SETTINGS_CATEGORIES.length
+      ];
     setCategory(nextCategory);
     const nextTab = event.currentTarget.parentElement?.querySelector(
       `[data-settings-category="${nextCategory}"]`,
@@ -47,7 +63,7 @@ export function SettingsPage({
         <div>
           <span className="eyebrow">应用设置</span>
           <h1>设置</h1>
-          <p>按分类管理外部连接与本地执行参数。</p>
+          <p>按分类管理外部连接、本地执行与日报参数。</p>
         </div>
         <button
           type="button"
@@ -102,6 +118,24 @@ export function SettingsPage({
               <small>连接与来源显示</small>
             </span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            id="settings-tab-report"
+            aria-controls="settings-panel-report"
+            aria-selected={category === "report"}
+            tabIndex={category === "report" ? 0 : -1}
+            data-settings-category="report"
+            className={category === "report" ? "active" : ""}
+            onClick={() => setCategory("report")}
+            onKeyDown={selectAdjacentCategory}
+          >
+            <NotebookPen size={17} />
+            <span>
+              <strong>日报设置</strong>
+              <small>人员资料与云端提交</small>
+            </span>
+          </button>
         </nav>
 
         <div
@@ -112,13 +146,15 @@ export function SettingsPage({
         >
           {category === "pi" ? (
             <PISettingsPage engine={engine} onSuccess={onSuccess} />
-          ) : (
+          ) : category === "plane" ? (
             <PlaneConnectionSettings
               connected={planeConnected}
               onConnectionChange={onPlaneConnectionChange}
               onSuccess={onSuccess}
               onError={onError}
             />
+          ) : (
+            <DailyReportSettings onSuccess={onSuccess} onError={onError} />
           )}
         </div>
       </div>

@@ -14,6 +14,7 @@ import {
   CloudDownload,
   Inbox,
   MessageSquareText,
+  NotebookPen,
   Plus,
   Settings,
   ShieldCheck,
@@ -28,7 +29,11 @@ import { TaskContextMenu } from "./components/TaskContextMenu";
 import { ManualTaskDetail } from "./components/ManualTaskDetail";
 import { TaskList } from "./components/TaskList";
 import { PlaneCollector } from "./components/PlaneCollector";
-import { SettingsPage } from "./components/SettingsPage";
+import { DailyReportPage } from "./components/DailyReportPage";
+import {
+  SettingsPage,
+  type SettingsCategory,
+} from "./components/SettingsPage";
 import { TrashView } from "./components/TrashView";
 import { STATUS_META, TASK_STATUSES, type TaskStatus } from "./domain/task";
 import {
@@ -52,7 +57,12 @@ const NAV_ICONS: Record<TaskStatus, typeof Inbox> = {
 };
 
 type Notice = { kind: "success" | "error"; message: string };
-type WorkspaceView = "tasks" | "plane" | "trash" | "settings";
+type WorkspaceView =
+  | "tasks"
+  | "plane"
+  | "report"
+  | "trash"
+  | "settings";
 type ContentView = Exclude<WorkspaceView, "settings">;
 type ResizablePanel = "sidebar" | "task-list";
 
@@ -125,6 +135,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>("tasks");
   const [settingsReturnView, setSettingsReturnView] =
     useState<ContentView>("tasks");
+  const [settingsInitialCategory, setSettingsInitialCategory] =
+    useState<SettingsCategory>("pi");
   const [planeAvailable, setPlaneAvailable] = useState(false);
   const [planeConnectionChecked, setPlaneConnectionChecked] = useState(false);
   const [planeConnectionRevision, setPlaneConnectionRevision] = useState(0);
@@ -340,8 +352,9 @@ export default function App() {
     setComposerOpen(true);
   };
 
-  const openSettings = () => {
+  const openSettings = (category: SettingsCategory) => {
     if (activeView !== "settings") setSettingsReturnView(activeView);
+    setSettingsInitialCategory(category);
     setActiveView("settings");
   };
 
@@ -562,11 +575,24 @@ export default function App() {
           </div>
         )}
 
+        <div className="nav-section report-nav">
+          <span className="nav-label">工作报告</span>
+          <button
+            type="button"
+            className={`nav-item ${activeView === "report" ? "active" : ""}`}
+            onClick={() => setActiveView("report")}
+            aria-label="打开日报"
+          >
+            <NotebookPen size={16} />
+            <span className="nav-item-label">日报</span>
+          </button>
+        </div>
+
         <div className="sidebar-footer">
           <button
             type="button"
             className={`nav-item ${activeView === "settings" ? "active" : ""}`}
-            onClick={openSettings}
+            onClick={() => openSettings("pi")}
             aria-label="打开设置"
           >
             <Settings size={16} />
@@ -593,12 +619,19 @@ export default function App() {
       <main className="main-shell">
         {activeView === "settings" ? (
           <SettingsPage
+            initialCategory={settingsInitialCategory}
             engine={engines.find((engine) => engine.id === "pi")}
             planeConnected={planeAvailable}
             onBack={closeSettings}
             onPlaneConnectionChange={() =>
               setPlaneConnectionRevision((revision) => revision + 1)
             }
+            onSuccess={reportSuccess}
+            onError={reportError}
+          />
+        ) : activeView === "report" ? (
+          <DailyReportPage
+            onOpenSettings={() => openSettings("report")}
             onSuccess={reportSuccess}
             onError={reportError}
           />

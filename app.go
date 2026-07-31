@@ -11,6 +11,7 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
 	"github.com/blue7zz/BTaskAssistant/internal/plane"
+	"github.com/blue7zz/BTaskAssistant/internal/report"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	"github.com/blue7zz/BTaskAssistant/internal/workflow"
 )
@@ -18,16 +19,18 @@ import (
 // App exposes the deliberately small native boundary used by the React client.
 // Product decisions stay in the workflow layer; AI engines stay behind adapters.
 type App struct {
-	ctx         context.Context
-	store       *storage.SQLiteStore
-	credentials credentials.Store
-	startupErr  error
+	ctx                  context.Context
+	store                *storage.SQLiteStore
+	credentials          credentials.Store
+	dailyReportGenerator engine.DailyReportGenerating
+	startupErr           error
 }
 
 func NewApp() *App {
 	return &App{
-		store:       storage.NewSQLiteStore("BTaskAssistant"),
-		credentials: credentials.NewSystemStore("BTaskAssistant"),
+		store:                storage.NewSQLiteStore("BTaskAssistant"),
+		credentials:          credentials.NewSystemStore("BTaskAssistant"),
+		dailyReportGenerator: engine.DailyReportGenerator{},
 	}
 }
 
@@ -95,6 +98,132 @@ func (a *App) appContext() context.Context {
 		return a.ctx
 	}
 	return context.Background()
+}
+
+func dailyReportCredentialAccount(
+	apiURL string,
+	employeeID string,
+) (string, error) {
+	normalized, err := report.NormalizeAPIURL(apiURL)
+	if err != nil {
+		return "", err
+	}
+	employeeID = strings.TrimSpace(employeeID)
+	if employeeID == "" {
+		return "", errors.New("请输入工号")
+	}
+	sum := sha256.Sum256([]byte(normalized + "\x00" + employeeID))
+	return fmt.Sprintf("daily-report-token-%x", sum[:16]), nil
+}
+
+func (a *App) readDailyReportToken(
+	apiURL string,
+	employeeID string,
+) (string, error) {
+	account, err := dailyReportCredentialAccount(apiURL, employeeID)
+	if err != nil {
+		return "", err
+	}
+	token, err := a.credentials.Get(account)
+	if err != nil {
+		return "", err
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", credentials.ErrNotFound
+	}
+	return token, nil
+}
+
+// SaveDailyReportToken keeps the employee-bound token in the platform
+// credential store. It is never included in the persisted workspace snapshot.
+func (a *App) SaveDailyReportToken(
+	apiURL string,
+	employeeID string,
+	token string,
+) error {
+	account, err := dailyReportCredentialAccount(apiURL, employeeID)
+	if err != nil {
+		return err
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("请输入日报 Token")
+	}
+	if err := a.credentials.Set(account, token); err != nil {
+		return fmt.Errorf("保存到系统凭据库失败: %w", err)
+	}
+	return nil
+}
+
+func (a *App) DeleteDailyReportToken(apiURL string, employeeID string) error {
+	account, err := dailyReportCredentialAccount(apiURL, employeeID)
+	if err != nil {
+		return err
+	}
+	if err := a.credentials.Delete(account); err != nil {
+		return fmt.Errorf("从系统凭据库删除日报 Token 失败: %w", err)
+	}
+	return nil
+}
+
+func (a *App) HasDailyReportToken(
+	apiURL string,
+	employeeID string,
+) (bool, error) {
+	token, err := a.readDailyReportToken(apiURL, employeeID)
+	if errors.Is(err, credentials.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("读取系统凭据库失败: %w", err)
+	}
+	return strings.TrimSpace(token) != "", nil
+}
+
+func (a *App) SubmitDailyReport(
+	apiURL string,
+	employeeID string,
+	reportDate string,
+	content string,
+) (report.SubmitResult, error) {
+	token, err := a.readDailyReportToken(apiURL, employeeID)
+	if errors.Is(err, credentials.ErrNotFound) {
+		return report.SubmitResult{}, errors.New("该工号的日报 Token 尚未保存")
+	}
+	if err != nil {
+		return report.SubmitResult{}, fmt.Errorf("读取系统凭据库失败: %w", err)
+	}
+	client, err := report.NewClient(apiURL, token)
+	if err != nil {
+		return report.SubmitResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(a.appContext(), 35*time.Second)
+	defer cancel()
+	response, err := client.SubmitDaily(ctx, report.DailyReport{
+		EmployeeID: employeeID,
+		ReportDate: reportDate,
+		Content:    content,
+	})
+	if err != nil {
+		return report.SubmitResult{}, err
+	}
+	if response.Code != 0 {
+		message := strings.TrimSpace(response.Msg)
+		if message == "" {
+			message = "未知错误"
+		}
+		return report.SubmitResult{}, fmt.Errorf(
+			"日报提交失败（code %d）: %s",
+			response.Code,
+			message,
+		)
+	}
+	return report.SubmitResult{
+		ID:      response.Data.ID,
+		Action:  response.Data.Action,
+		Message: response.Msg,
+	}, nil
 }
 
 func planeCredentialAccount(baseURL string) (string, error) {
@@ -366,6 +495,29 @@ func (a *App) AnalyzePlaneCandidate(
 		ctx,
 		sourceMarkdown,
 	)
+}
+
+// GenerateDailyReport produces a structured candidate from read-only Git facts,
+// selected workflow-task summaries, and a free-form user description. The caller
+// must preview and explicitly confirm it before writing into the report form.
+func (a *App) GenerateDailyReport(
+	input engine.DailyReportGenerationInput,
+	runtime engine.PISettings,
+) (engine.DailyReportGenerationResult, error) {
+	runtime, err := engine.NormalizePISettings(runtime)
+	if err != nil {
+		return engine.DailyReportGenerationResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(
+		a.appContext(),
+		time.Duration(runtime.TimeoutMinutes)*time.Minute+15*time.Second,
+	)
+	defer cancel()
+	generator := a.dailyReportGenerator
+	if generator == nil {
+		generator = engine.DailyReportGenerator{}
+	}
+	return generator.Generate(ctx, input, runtime)
 }
 
 // AnalyzeRequirements runs a single structured requirement-interview round.

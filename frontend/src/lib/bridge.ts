@@ -10,6 +10,11 @@ import type {
 import type { TaskStatus } from "../domain/task";
 import type { PISettings } from "../domain/engine";
 import type {
+  DailyReportGenerationInput,
+  DailyReportGenerationResult,
+  DailyReportSettings,
+} from "../domain/report";
+import type {
   RequirementAnalysisInput,
   RequirementAnalysisResult,
 } from "../domain/requirements";
@@ -25,6 +30,12 @@ export interface EngineStatus {
   description: string;
   commandPath: string;
   version: string;
+}
+
+export interface DailyReportSubmissionResult {
+  id: number | string;
+  action: "inserted" | "updated";
+  message?: string;
 }
 
 interface NativeApp {
@@ -53,6 +64,23 @@ interface NativeApp {
     baseUrl: string,
     workspaceSlug: string,
   ): Promise<boolean>;
+  SaveDailyReportToken(
+    apiUrl: string,
+    employeeId: string,
+    token: string,
+  ): Promise<void>;
+  DeleteDailyReportToken(apiUrl: string, employeeId: string): Promise<void>;
+  HasDailyReportToken(apiUrl: string, employeeId: string): Promise<boolean>;
+  SubmitDailyReport(
+    apiUrl: string,
+    employeeId: string,
+    reportDate: string,
+    content: string,
+  ): Promise<DailyReportSubmissionResult>;
+  GenerateDailyReport(
+    input: DailyReportGenerationInput,
+    runtime: PISettings,
+  ): Promise<DailyReportGenerationResult>;
   ListPlaneProjects(
     baseUrl: string,
     workspaceSlug: string,
@@ -179,6 +207,108 @@ function requireNativeApp(): NativeApp {
     throw new Error("AI 与 Plane 集成只能在 Wails 桌面客户端中使用");
   }
   return app;
+}
+
+function requireDailyReportNativeApp(): NativeApp {
+  const app = nativeApp();
+  if (!app) {
+    throw new Error("日报云端功能只能在 Wails 桌面客户端中使用");
+  }
+  return app;
+}
+
+export function dailyReportCloudAvailable(): boolean {
+  return Boolean(nativeApp());
+}
+
+export function dailyReportAIAvailable(): boolean {
+  return Boolean(nativeApp());
+}
+
+export async function generateDailyReport(
+  input: DailyReportGenerationInput,
+  piSettings: PISettings,
+): Promise<DailyReportGenerationResult> {
+  const app = nativeApp();
+  if (!app) {
+    throw new Error("AI 生成日报只能在 Wails 桌面客户端中使用");
+  }
+  return app.GenerateDailyReport(input, piSettings);
+}
+
+export async function saveDailyReportToken(
+  apiUrl: string,
+  employeeId: string,
+  token: string,
+): Promise<void> {
+  const normalizedApiUrl = apiUrl.trim();
+  const normalizedEmployeeId = employeeId.trim();
+  const normalizedToken = token.trim();
+  if (!normalizedApiUrl) throw new Error("请输入日报 API 地址");
+  if (!normalizedEmployeeId) throw new Error("请输入工号");
+  if (!normalizedToken) throw new Error("请输入日报 Token");
+  await requireDailyReportNativeApp().SaveDailyReportToken(
+    normalizedApiUrl,
+    normalizedEmployeeId,
+    normalizedToken,
+  );
+}
+
+export async function deleteDailyReportToken(
+  apiUrl: string,
+  employeeId: string,
+): Promise<void> {
+  const normalizedApiUrl = apiUrl.trim();
+  const normalizedEmployeeId = employeeId.trim();
+  if (!normalizedApiUrl) throw new Error("请输入日报 API 地址");
+  if (!normalizedEmployeeId) throw new Error("请输入工号");
+  await requireDailyReportNativeApp().DeleteDailyReportToken(
+    normalizedApiUrl,
+    normalizedEmployeeId,
+  );
+}
+
+export async function hasDailyReportToken(
+  apiUrl: string,
+  employeeId: string,
+): Promise<boolean> {
+  const normalizedApiUrl = apiUrl.trim();
+  const normalizedEmployeeId = employeeId.trim();
+  const app = nativeApp();
+  if (!app || !normalizedApiUrl || !normalizedEmployeeId) return false;
+  return app.HasDailyReportToken(normalizedApiUrl, normalizedEmployeeId);
+}
+
+export async function submitDailyReport(
+  settings: DailyReportSettings,
+  reportDate: string,
+  content: string,
+): Promise<DailyReportSubmissionResult> {
+  const normalizedApiUrl = settings.apiUrl.trim();
+  const normalizedEmployeeId = settings.employeeId.trim();
+  const normalizedReportDate = reportDate.trim();
+  if (!normalizedApiUrl) throw new Error("请输入日报 API 地址");
+  if (!normalizedEmployeeId) throw new Error("请输入工号");
+  if (!normalizedReportDate) throw new Error("请选择日报日期");
+  if (!content.trim()) throw new Error("日报内容不能为空");
+
+  const response = await requireDailyReportNativeApp().SubmitDailyReport(
+    normalizedApiUrl,
+    normalizedEmployeeId,
+    normalizedReportDate,
+    content,
+  );
+  if (response.action !== "inserted" && response.action !== "updated") {
+    throw new Error("日报 API 返回了未知的提交结果");
+  }
+  return {
+    id:
+      typeof response.id === "string" || typeof response.id === "number"
+        ? response.id
+        : "?",
+    action: response.action,
+    message: response.message,
+  };
 }
 
 export async function savePlaneToken(

@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaneCandidatePayload } from "../domain/collection";
 import { DEFAULT_PI_SETTINGS } from "../domain/engine";
 import {
+  DEFAULT_DAILY_REPORT_AI_SETTINGS,
+  DEFAULT_DAILY_REPORT_SETTINGS,
+  createEmptyDailyReportDraft,
+  localDateString,
+} from "../domain/report";
+import {
   DEFAULT_PLANE_CANDIDATE_FILTERS,
   DEFAULT_PLANE_SETTINGS,
   useWorkspaceStore,
@@ -36,6 +42,7 @@ describe("workspace store", () => {
   beforeEach(() => {
     window.go = undefined;
     window.localStorage.clear();
+    const dailyReportDraft = createEmptyDailyReportDraft("2026-07-30");
     useWorkspaceStore.setState({
       tasks: [],
       trashedTasks: [],
@@ -49,6 +56,11 @@ describe("workspace store", () => {
       },
       planeCandidateFilters: { ...DEFAULT_PLANE_CANDIDATE_FILTERS },
       piSettings: { ...DEFAULT_PI_SETTINGS },
+      dailyReportSettings: { ...DEFAULT_DAILY_REPORT_SETTINGS },
+      dailyReportAISettings: { ...DEFAULT_DAILY_REPORT_AI_SETTINGS },
+      dailyReportProjectHistory: [],
+      dailyReportDate: dailyReportDraft.date,
+      dailyReportDrafts: { [dailyReportDraft.date]: dailyReportDraft },
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: true,
@@ -138,6 +150,193 @@ describe("workspace store", () => {
         state: "state:测试中",
         assignees: ["id:user-bob"],
       });
+    });
+  });
+
+  it("migrates and persists date-scoped daily report drafts without a token", async () => {
+    const legacyDraft = createEmptyDailyReportDraft("2026-07-29");
+    legacyDraft.results[0] = {
+      ...legacyDraft.results[0],
+      projectNo: "BT-17",
+      projectName: "旧日报",
+      description: "迁移前正文",
+    };
+    window.localStorage.setItem(
+      "btaskassistant-workspace",
+      JSON.stringify({
+        version: 11,
+        state: {
+          tasks: [],
+          trashedTasks: [],
+          collectionCandidates: [],
+          planeSettings: DEFAULT_PLANE_SETTINGS,
+          planeCandidateFilters: DEFAULT_PLANE_CANDIDATE_FILTERS,
+          piSettings: DEFAULT_PI_SETTINGS,
+          dailyReportSettings: DEFAULT_DAILY_REPORT_SETTINGS,
+          dailyReportDraft: legacyDraft,
+          statusFilter: "all",
+        },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    expect(useWorkspaceStore.getState().dailyReportSettings).toEqual(
+      DEFAULT_DAILY_REPORT_SETTINGS,
+    );
+    expect(useWorkspaceStore.getState().dailyReportAISettings).toEqual(
+      DEFAULT_DAILY_REPORT_AI_SETTINGS,
+    );
+    expect(useWorkspaceStore.getState().dailyReportProjectHistory).toEqual([]);
+    expect(
+      useWorkspaceStore.getState().dailyReportDrafts["2026-07-29"].results[0]
+        .projectNo,
+    ).toBe("BT-17");
+    expect(useWorkspaceStore.getState().dailyReportDate).toBe(
+      localDateString(),
+    );
+
+    useWorkspaceStore.getState().updateDailyReportSettings({
+      organization: "技术中心",
+      submitter: "张三",
+      employeeId: "DN1111",
+      apiUrl: "https://report.example.com/submit",
+    });
+    const today = useWorkspaceStore.getState().dailyReportDate;
+    const currentDraft = useWorkspaceStore.getState().dailyReportDrafts[today];
+    useWorkspaceStore.getState().updateDailyReportDraft({
+      results: [
+        {
+          ...currentDraft.results[0],
+          projectNo: "BT-18",
+          projectName: "日报",
+          description: "已完成",
+        },
+      ],
+    });
+    useWorkspaceStore.getState().selectDailyReportDate("2026-07-28");
+    const previousDraft =
+      useWorkspaceStore.getState().dailyReportDrafts["2026-07-28"];
+    useWorkspaceStore.getState().updateDailyReportDraft({
+      results: [
+        {
+          ...previousDraft.results[0],
+          projectNo: "BT-16",
+          projectName: "补交日报",
+          description: "按日期独立保存",
+        },
+      ],
+    });
+    useWorkspaceStore.getState().selectDailyReportDate(today);
+    expect(
+      useWorkspaceStore.getState().dailyReportDrafts[today].results[0]
+        .projectNo,
+    ).toBe("BT-18");
+    useWorkspaceStore.getState().selectDailyReportDate("2026-07-28");
+    expect(
+      useWorkspaceStore.getState().dailyReportDrafts["2026-07-28"].results[0]
+        .projectNo,
+    ).toBe("BT-16");
+
+    await vi.waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("btaskassistant-workspace") ?? "{}",
+      );
+      expect(stored.version).toBe(13);
+      expect(stored.state.dailyReportSettings.employeeId).toBe("DN1111");
+      expect(stored.state.dailyReportDrafts[today].results[0].projectNo).toBe(
+        "BT-18",
+      );
+      expect(
+        stored.state.dailyReportDrafts["2026-07-28"].results[0].projectNo,
+      ).toBe("BT-16");
+      expect(stored.state.dailyReportDate).toBeUndefined();
+      expect(JSON.stringify(stored)).not.toContain("apiToken");
+    });
+
+    useWorkspaceStore.getState().resetDailyReportDraft();
+    expect(useWorkspaceStore.getState().dailyReportDate).toBe("2026-07-28");
+    expect(
+      useWorkspaceStore.getState().dailyReportDrafts["2026-07-28"].results[0],
+    ).toMatchObject({
+        projectNo: "",
+        projectName: "",
+        description: "",
+    });
+    expect(useWorkspaceStore.getState().dailyReportSettings.organization).toBe(
+      "技术中心",
+    );
+  });
+
+  it("persists normalized AI settings and a bounded project history", async () => {
+    useWorkspaceStore.getState().updateDailyReportAISettings({
+      engine: "codex",
+      customInstructions: "仅使用真实 Git 证据",
+      gitAuthor: " blue@example.com ",
+      includeUncommitted: false,
+    });
+    useWorkspaceStore.getState().rememberDailyReportProjects([
+      {
+        projectNo: "Y15",
+        projectName: "Y15 App",
+        path: " /workspace/y15/ ",
+      },
+      {
+        projectNo: "duplicate",
+        projectName: "重复路径",
+        path: "/workspace/y15",
+      },
+    ]);
+
+    const first = useWorkspaceStore.getState().dailyReportProjectHistory[0];
+    expect(first).toMatchObject({
+      projectNo: "Y15",
+      projectName: "Y15 App",
+      path: "/workspace/y15",
+    });
+    expect(first.id).toMatch(/^report-project-history_/);
+
+    useWorkspaceStore.getState().rememberDailyReportProjects([
+      {
+        projectNo: "Y15-NEW",
+        projectName: "Y15 App 新名称",
+        path: "/workspace/y15///",
+      },
+      ...Array.from({ length: 21 }, (_, index) => ({
+        projectNo: `P${index}`,
+        projectName: `Project ${index}`,
+        path: `/workspace/project-${index}/`,
+      })),
+    ]);
+
+    const history = useWorkspaceStore.getState().dailyReportProjectHistory;
+    expect(history).toHaveLength(20);
+    expect(history[0]).toMatchObject({
+      id: first.id,
+      projectNo: "Y15-NEW",
+      path: "/workspace/y15",
+    });
+
+    useWorkspaceStore.getState().removeDailyReportProject(first.id);
+    expect(
+      useWorkspaceStore
+        .getState()
+        .dailyReportProjectHistory.some((project) => project.id === first.id),
+    ).toBe(false);
+
+    await vi.waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("btaskassistant-workspace") ?? "{}",
+      );
+      expect(stored.version).toBe(13);
+      expect(stored.state.dailyReportAISettings).toEqual({
+        engine: "codex",
+        customInstructions: "仅使用真实 Git 证据",
+        gitAuthor: " blue@example.com ",
+        includeUncommitted: false,
+      });
+      expect(stored.state.dailyReportProjectHistory).toHaveLength(19);
+      expect(stored.state.dailyReportProjectHistory[0].path).not.toMatch(/\/$/);
     });
   });
 

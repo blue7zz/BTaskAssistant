@@ -3,6 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_PI_SETTINGS } from "./domain/engine";
+import {
+  DEFAULT_DAILY_REPORT_SETTINGS,
+  createEmptyDailyReportDraft,
+} from "./domain/report";
 import { useWorkspaceStore } from "./store/workspace";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
@@ -14,6 +18,7 @@ describe("App smoke test", () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    const dailyReportDraft = createEmptyDailyReportDraft("2026-07-30");
     useWorkspaceStore.setState({
       tasks: [],
       trashedTasks: [],
@@ -26,6 +31,9 @@ describe("App smoke test", () => {
         showInTaskSources: true,
       },
       piSettings: { ...DEFAULT_PI_SETTINGS },
+      dailyReportSettings: { ...DEFAULT_DAILY_REPORT_SETTINGS },
+      dailyReportDate: dailyReportDraft.date,
+      dailyReportDrafts: { [dailyReportDraft.date]: dailyReportDraft },
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: true,
@@ -152,6 +160,50 @@ describe("App smoke test", () => {
     expect(container.querySelector(".workspace-grid")).not.toBeNull();
     expect(useWorkspaceStore.getState().selectedTaskId).toBe(taskID);
     expect(container.textContent).toContain("设置返回目标");
+  });
+
+  it("opens the daily report below task sources and returns from its settings", async () => {
+    await act(async () => {
+      root.render(createElement(App));
+      await Promise.resolve();
+    });
+
+    const dailyReportButton = container.querySelector(
+      'button[aria-label="打开日报"]',
+    ) as HTMLButtonElement;
+    expect(dailyReportButton).not.toBeNull();
+    expect(dailyReportButton.textContent).toContain("日报");
+
+    await act(async () => dailyReportButton.click());
+    expect(container.querySelector(".daily-report-page")).not.toBeNull();
+    expect(container.textContent).toContain("【今日结果】");
+    expect(container.textContent).toContain("导出预览（Markdown）");
+
+    const reportSettingsButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("日报设置"))!;
+    await act(async () => {
+      reportSettingsButton.click();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector(".daily-report-settings-page"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[role="tab"][aria-selected="true"]')
+        ?.textContent,
+    ).toContain("日报设置");
+
+    await act(async () => {
+      (
+        container.querySelector(
+          'button[aria-label="返回上一个界面"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    expect(container.querySelector(".settings-page")).toBeNull();
+    expect(container.querySelector(".daily-report-page")).not.toBeNull();
   });
 
   it("returns from settings to the previously open trash view", async () => {

@@ -14,6 +14,19 @@ import {
   type PISettings,
 } from "../domain/engine";
 import {
+  DEFAULT_DAILY_REPORT_AI_SETTINGS,
+  createEmptyDailyReportDraft,
+  localDateString,
+  normalizeDailyReportAISettings,
+  normalizeDailyReportDraft,
+  normalizeDailyReportSettings,
+  type DailyReportAISettings,
+  type DailyReportDraft,
+  type DailyReportGenerationProject,
+  type DailyReportProjectHistoryItem,
+  type DailyReportSettings,
+} from "../domain/report";
+import {
   buildRequirementAnalysisInput,
   isApprovalBlockingQuestion,
   mergeUnique,
@@ -57,6 +70,71 @@ export const DEFAULT_PLANE_CANDIDATE_FILTERS: PlaneCandidateFilters = {
   state: "all",
   assignees: [],
 };
+
+export type DailyReportDrafts = Record<string, DailyReportDraft>;
+
+const MAX_DAILY_REPORT_PROJECT_HISTORY = 20;
+
+const INITIAL_DAILY_REPORT_DATE = localDateString();
+
+function normalizeDailyReportDrafts(
+  drafts?: DailyReportDrafts,
+  legacyDraft?: DailyReportDraft,
+): DailyReportDrafts {
+  const normalized: DailyReportDrafts = {};
+  if (drafts && typeof drafts === "object") {
+    for (const [date, draft] of Object.entries(drafts)) {
+      if (!draft || typeof draft !== "object") continue;
+      const normalizedDraft = normalizeDailyReportDraft({
+        ...draft,
+        date: draft.date || date,
+      });
+      normalized[normalizedDraft.date] = normalizedDraft;
+    }
+  }
+  if (legacyDraft) {
+    const normalizedLegacy = normalizeDailyReportDraft(legacyDraft);
+    if (!normalized[normalizedLegacy.date]) {
+      normalized[normalizedLegacy.date] = normalizedLegacy;
+    }
+  }
+  return normalized;
+}
+
+function normalizeDailyReportProjectPath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed === "/") return trimmed;
+  return trimmed.replace(/\/+$/, "");
+}
+
+function normalizeDailyReportProjectHistory(
+  items?: Array<Partial<DailyReportProjectHistoryItem>>,
+): DailyReportProjectHistoryItem[] {
+  if (!Array.isArray(items)) return [];
+  const byPath = new Map<string, DailyReportProjectHistoryItem>();
+  for (const item of items) {
+    const path = normalizeDailyReportProjectPath(
+      typeof item?.path === "string" ? item.path : "",
+    );
+    if (!path || byPath.has(path)) continue;
+    byPath.set(path, {
+      id:
+        typeof item.id === "string" && item.id.trim()
+          ? item.id
+          : createID("report-project-history"),
+      projectNo:
+        typeof item.projectNo === "string" ? item.projectNo.trim() : "",
+      projectName:
+        typeof item.projectName === "string" ? item.projectName.trim() : "",
+      path,
+      lastUsedAt:
+        typeof item.lastUsedAt === "string" ? item.lastUsedAt.trim() : "",
+    });
+  }
+  return Array.from(byPath.values())
+    .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt))
+    .slice(0, MAX_DAILY_REPORT_PROJECT_HISTORY);
+}
 
 export const DEFAULT_PLANE_SETTINGS: PlaneSettings = {
   baseUrl: "https://plane.fymyriad.com",
@@ -132,6 +210,11 @@ interface WorkspaceState {
   planeSettings: PlaneSettings;
   planeCandidateFilters: PlaneCandidateFilters;
   piSettings: PISettings;
+  dailyReportSettings: DailyReportSettings;
+  dailyReportAISettings: DailyReportAISettings;
+  dailyReportProjectHistory: DailyReportProjectHistoryItem[];
+  dailyReportDate: string;
+  dailyReportDrafts: DailyReportDrafts;
   selectedTaskId?: string;
   statusFilter: StatusFilter;
   hydrated: boolean;
@@ -142,6 +225,13 @@ interface WorkspaceState {
   updatePlaneSettings(patch: Partial<PlaneSettings>): void;
   updatePlaneCandidateFilters(patch: Partial<PlaneCandidateFilters>): void;
   updatePISettings(patch: Partial<PISettings>): void;
+  updateDailyReportSettings(patch: Partial<DailyReportSettings>): void;
+  updateDailyReportAISettings(patch: Partial<DailyReportAISettings>): void;
+  rememberDailyReportProjects(projects: DailyReportGenerationProject[]): void;
+  removeDailyReportProject(projectID: string): void;
+  selectDailyReportDate(date: string): void;
+  updateDailyReportDraft(patch: Partial<DailyReportDraft>): void;
+  resetDailyReportDraft(): void;
   ingestPlaneCandidates(payloads: PlaneCandidatePayload[]): number;
   hydratePlaneCandidate(
     payload: PlaneCandidatePayload,
@@ -483,6 +573,15 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       planeSettings: DEFAULT_PLANE_SETTINGS,
       planeCandidateFilters: DEFAULT_PLANE_CANDIDATE_FILTERS,
       piSettings: DEFAULT_PI_SETTINGS,
+      dailyReportSettings: normalizeDailyReportSettings(),
+      dailyReportAISettings: { ...DEFAULT_DAILY_REPORT_AI_SETTINGS },
+      dailyReportProjectHistory: [],
+      dailyReportDate: INITIAL_DAILY_REPORT_DATE,
+      dailyReportDrafts: {
+        [INITIAL_DAILY_REPORT_DATE]: createEmptyDailyReportDraft(
+          INITIAL_DAILY_REPORT_DATE,
+        ),
+      },
       selectedTaskId: undefined,
       statusFilter: "all",
       hydrated: false,
@@ -504,6 +603,97 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       updatePISettings: (patch) =>
         set((state) => ({
           piSettings: normalizePISettings({ ...state.piSettings, ...patch }),
+        })),
+      updateDailyReportSettings: (patch) =>
+        set((state) => {
+          const next = { ...state.dailyReportSettings, ...patch };
+          if (
+            patch.level &&
+            patch.level !== "L3" &&
+            state.dailyReportSettings.level === "L3" &&
+            patch.role === undefined &&
+            next.role === "TL"
+          ) {
+            next.role = "FE";
+          }
+          return {
+            dailyReportSettings: normalizeDailyReportSettings(next),
+          };
+        }),
+      updateDailyReportAISettings: (patch) =>
+        set((state) => ({
+          dailyReportAISettings: normalizeDailyReportAISettings({
+            ...state.dailyReportAISettings,
+            ...patch,
+          }),
+        })),
+      rememberDailyReportProjects: (projects) =>
+        set((state) => {
+          const usedAt = now();
+          const existingByPath = new Map(
+            state.dailyReportProjectHistory.map((project) => [
+              project.path,
+              project,
+            ]),
+          );
+          const remembered = projects.map((project) => {
+            const path = normalizeDailyReportProjectPath(project.path);
+            const existing = existingByPath.get(path);
+            return {
+              id: existing?.id ?? createID("report-project-history"),
+              projectNo: project.projectNo.trim(),
+              projectName: project.projectName.trim(),
+              path,
+              lastUsedAt: usedAt,
+            };
+          });
+          return {
+            dailyReportProjectHistory: normalizeDailyReportProjectHistory([
+              ...remembered,
+              ...state.dailyReportProjectHistory,
+            ]),
+          };
+        }),
+      removeDailyReportProject: (projectID) =>
+        set((state) => ({
+          dailyReportProjectHistory: state.dailyReportProjectHistory.filter(
+            (project) => project.id !== projectID,
+          ),
+        })),
+      selectDailyReportDate: (dailyReportDate) =>
+        set((state) => {
+          if (state.dailyReportDrafts[dailyReportDate]) {
+            return { dailyReportDate };
+          }
+          return {
+            dailyReportDate,
+            dailyReportDrafts: {
+              ...state.dailyReportDrafts,
+              [dailyReportDate]: createEmptyDailyReportDraft(dailyReportDate),
+            },
+          };
+        }),
+      updateDailyReportDraft: (patch) =>
+        set((state) => {
+          const date = state.dailyReportDate;
+          const current =
+            state.dailyReportDrafts[date] ?? createEmptyDailyReportDraft(date);
+          const next = { ...current, ...patch, date };
+          return {
+            dailyReportDrafts: {
+              ...state.dailyReportDrafts,
+              [date]: next,
+            },
+          };
+        }),
+      resetDailyReportDraft: () =>
+        set((state) => ({
+          dailyReportDrafts: {
+            ...state.dailyReportDrafts,
+            [state.dailyReportDate]: createEmptyDailyReportDraft(
+              state.dailyReportDate,
+            ),
+          },
         })),
       ingestPlaneCandidates: (payloads) => {
         const state = get();
@@ -1627,9 +1817,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "btaskassistant-workspace",
       storage: createJSONStorage(() => workspaceStorage),
-      version: 10,
+      version: 13,
       migrate: (persistedState) => {
-        const state = persistedState as Partial<WorkspaceState>;
+        const state = persistedState as Partial<WorkspaceState> & {
+          dailyReportDraft?: DailyReportDraft;
+        };
         return {
           ...state,
           tasks: (state.tasks ?? []).map((task) => ({
@@ -1666,6 +1858,20 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             state.planeCandidateFilters,
           ),
           piSettings: normalizePISettings(state.piSettings),
+          dailyReportSettings: normalizeDailyReportSettings(
+            state.dailyReportSettings,
+          ),
+          dailyReportAISettings: normalizeDailyReportAISettings(
+            state.dailyReportAISettings,
+          ),
+          dailyReportProjectHistory: normalizeDailyReportProjectHistory(
+            state.dailyReportProjectHistory,
+          ),
+          dailyReportDate: localDateString(),
+          dailyReportDrafts: normalizeDailyReportDrafts(
+            state.dailyReportDrafts,
+            state.dailyReportDraft,
+          ),
         } as WorkspaceState;
       },
       partialize: (state) => ({
@@ -1675,11 +1881,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         planeSettings: state.planeSettings,
         planeCandidateFilters: state.planeCandidateFilters,
         piSettings: state.piSettings,
+        dailyReportSettings: state.dailyReportSettings,
+        dailyReportAISettings: state.dailyReportAISettings,
+        dailyReportProjectHistory: state.dailyReportProjectHistory,
+        dailyReportDrafts: state.dailyReportDrafts,
         selectedTaskId: state.selectedTaskId,
         statusFilter: state.statusFilter,
       }),
       onRehydrateStorage: () => (state) => {
-        state?.setHydrated(true);
+        if (!state) return;
+        state.selectDailyReportDate(localDateString());
+        state.setHydrated(true);
       },
     },
   ),
