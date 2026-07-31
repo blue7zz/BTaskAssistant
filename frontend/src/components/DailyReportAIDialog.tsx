@@ -2,9 +2,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  FolderOpen,
   FolderGit2,
   ListChecks,
   LoaderCircle,
+  Pencil,
   Plus,
   Sparkles,
   X,
@@ -22,7 +24,9 @@ import {
 import { STATUS_META } from "../domain/task";
 import {
   dailyReportAIAvailable,
+  dailyReportDirectoryPickerAvailable,
   generateDailyReport,
+  selectDailyReportProjectDirectory,
 } from "../lib/bridge";
 import { useWorkspaceStore } from "../store/workspace";
 
@@ -38,11 +42,20 @@ const MAX_SELECTED_TASKS = 30;
 
 function normalizedPath(value: string): string {
   const trimmed = value.trim();
-  return trimmed === "/" ? trimmed : trimmed.replace(/\/+$/, "");
+  if (trimmed === "/" || /^[A-Za-z]:[\\/]?$/.test(trimmed)) return trimmed;
+  return trimmed.replace(/[\\/]+$/, "");
+}
+
+function isAbsolutePath(path: string): boolean {
+  return (
+    path.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(path) ||
+    path.startsWith("\\\\")
+  );
 }
 
 function pathName(path: string): string {
-  const parts = normalizedPath(path).split("/").filter(Boolean);
+  const parts = normalizedPath(path).split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? "本地项目";
 }
 
@@ -105,6 +118,9 @@ export function DailyReportAIDialog({
   const rememberProjects = useWorkspaceStore(
     (state) => state.rememberDailyReportProjects,
   );
+  const updateProject = useWorkspaceStore(
+    (state) => state.updateDailyReportProject,
+  );
   const updateDraft = useWorkspaceStore(
     (state) => state.updateDailyReportDraft,
   );
@@ -118,6 +134,8 @@ export function DailyReportAIDialog({
     projectName: "",
     path: "",
   });
+  const [editingProjectID, setEditingProjectID] = useState<string>();
+  const [selectingDirectory, setSelectingDirectory] = useState(false);
   const [manualDescription, setManualDescription] = useState("");
   const [generated, setGenerated] = useState<DailyReportGenerationResult>();
   const [generating, setGenerating] = useState(false);
@@ -129,6 +147,11 @@ export function DailyReportAIDialog({
   const selectedProjects = candidates.filter((project) =>
     selectedPaths.includes(project.path),
   );
+  const editableProjectIDs = useMemo(
+    () => new Set([...history, ...localProjects].map((project) => project.id)),
+    [history, localProjects],
+  );
+  const directoryPickerAvailable = dailyReportDirectoryPickerAvailable();
   const reportTasks = useMemo(
     () =>
       tasks
@@ -162,6 +185,8 @@ export function DailyReportAIDialog({
     setSelectedTaskIDs([]);
     setLocalProjects([]);
     setNewProject({ projectNo: "", projectName: "", path: "" });
+    setEditingProjectID(undefined);
+    setSelectingDirectory(false);
     setManualDescription("");
     setGenerated(undefined);
     setGenerating(false);
@@ -175,6 +200,11 @@ export function DailyReportAIDialog({
     onClose();
   };
 
+  const cancelProjectEdit = () => {
+    setEditingProjectID(undefined);
+    setNewProject({ projectNo: "", projectName: "", path: "" });
+  };
+
   const toggleProject = (path: string) => {
     if (
       !selectedPaths.includes(path) &&
@@ -182,6 +212,10 @@ export function DailyReportAIDialog({
     ) {
       onError(new Error(`每次最多选择 ${MAX_SELECTED_PROJECTS} 个项目`));
       return;
+    }
+    if (selectedPaths.includes(path)) {
+      const project = candidates.find((candidate) => candidate.path === path);
+      if (project?.id === editingProjectID) cancelProjectEdit();
     }
     setSelectedPaths((current) =>
       current.includes(path)
@@ -205,12 +239,46 @@ export function DailyReportAIDialog({
     );
   };
 
+  const startProjectEdit = (project: DailyReportProjectHistoryItem) => {
+    setEditingProjectID(project.id);
+    setNewProject({
+      projectNo: project.projectNo,
+      projectName: project.projectName,
+      path: project.path,
+    });
+  };
+
+  const chooseProjectDirectory = async () => {
+    if (!directoryPickerAvailable || selectingDirectory) return;
+    setSelectingDirectory(true);
+    try {
+      const path = await selectDailyReportProjectDirectory();
+      if (path.trim()) {
+        setNewProject((current) => ({ ...current, path }));
+      }
+    } catch (error) {
+      onError(error);
+    } finally {
+      setSelectingDirectory(false);
+    }
+  };
+
+  const projectFromForm = () => {
+    const path = normalizedPath(newProject.path);
+    if (!path || !isAbsolutePath(path)) {
+      throw new Error("请输入本地 Git 仓库的绝对路径");
+    }
+    return {
+      projectNo: newProject.projectNo.trim(),
+      projectName: newProject.projectName.trim() || pathName(path),
+      path,
+    };
+  };
+
   const addProject = () => {
     try {
-      const path = normalizedPath(newProject.path);
-      if (!path || !path.startsWith("/")) {
-        throw new Error("请输入本地 Git 仓库的绝对路径");
-      }
+      const project = projectFromForm();
+      const { path } = project;
       if (
         !selectedPaths.includes(path) &&
         selectedPaths.length >= MAX_SELECTED_PROJECTS
@@ -219,9 +287,7 @@ export function DailyReportAIDialog({
       }
       const item: DailyReportProjectHistoryItem = {
         id: `local-report-project-${Date.now()}`,
-        projectNo: newProject.projectNo.trim(),
-        projectName: newProject.projectName.trim() || pathName(path),
-        path,
+        ...project,
         lastUsedAt: "",
       };
       setLocalProjects((current) => [
@@ -232,6 +298,51 @@ export function DailyReportAIDialog({
         current.includes(path) ? current : [...current, path],
       );
       setNewProject({ projectNo: "", projectName: "", path: "" });
+    } catch (error) {
+      onError(error);
+    }
+  };
+
+  const saveProjectEdit = () => {
+    const editingProject = candidates.find(
+      (project) => project.id === editingProjectID,
+    );
+    if (!editingProject) return;
+    try {
+      const project = projectFromForm();
+      if (
+        candidates.some(
+          (candidate) =>
+            candidate.id !== editingProject.id &&
+            normalizedPath(candidate.path) === project.path,
+        )
+      ) {
+        throw new Error("该仓库路径已存在，请选择其他文件夹");
+      }
+      const localProject = localProjects.some(
+        (candidate) => candidate.id === editingProject.id,
+      );
+      if (localProject) {
+        setLocalProjects((current) =>
+          current.map((candidate) =>
+            candidate.id === editingProject.id
+              ? { ...candidate, ...project }
+              : candidate,
+          ),
+        );
+      } else {
+        updateProject(editingProject.id, project);
+      }
+      setSelectedPaths((current) =>
+        Array.from(
+          new Set(
+            current.map((path) =>
+              path === editingProject.path ? project.path : path,
+            ),
+          ),
+        ),
+      );
+      cancelProjectEdit();
     } catch (error) {
       onError(error);
     }
@@ -413,26 +524,44 @@ export function DailyReportAIDialog({
                 <div className="daily-report-project-options">
                   {candidates.map((project) => {
                     const selected = selectedPaths.includes(project.path);
+                    const editable =
+                      selected && editableProjectIDs.has(project.id);
                     return (
-                      <label
-                        className={`daily-report-project-option ${selected ? "selected" : ""}`}
+                      <div
+                        className="daily-report-project-option-shell"
                         key={project.path}
                       >
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={() => toggleProject(project.path)}
-                        />
-                        <span>
-                          <strong>
-                            {project.projectNo
-                              ? `${project.projectNo} · `
-                              : ""}
-                            {project.projectName || pathName(project.path)}
-                          </strong>
-                          <small>{project.path}</small>
-                        </span>
-                      </label>
+                        <label
+                          className={`daily-report-project-option ${selected ? "selected" : ""} ${editable ? "has-edit-action" : ""}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            aria-label={`选择项目 ${project.projectName || pathName(project.path)}`}
+                            onChange={() => toggleProject(project.path)}
+                          />
+                          <span>
+                            <strong>
+                              {project.projectNo
+                                ? `${project.projectNo} · `
+                                : ""}
+                              {project.projectName || pathName(project.path)}
+                            </strong>
+                            <small>{project.path}</small>
+                          </span>
+                        </label>
+                        {editable && (
+                          <button
+                            type="button"
+                            className="daily-report-project-edit-button"
+                            aria-label={`编辑项目 ${project.projectName || pathName(project.path)}`}
+                            onClick={() => startProjectEdit(project)}
+                          >
+                            <Pencil size={12} />
+                            编辑
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -465,25 +594,58 @@ export function DailyReportAIDialog({
                   }
                   placeholder="项目名称，可选"
                 />
-                <input
-                  aria-label="AI 日报仓库路径"
-                  value={newProject.path}
-                  onChange={(event) =>
-                    setNewProject((current) => ({
-                      ...current,
-                      path: event.target.value,
-                    }))
-                  }
-                  placeholder="/绝对路径/to/repository"
-                />
-                <button
-                  type="button"
-                  className="button secondary compact"
-                  onClick={addProject}
-                >
-                  <Plus size={14} />
-                  添加并选择
-                </button>
+                <div className="daily-report-project-path-field">
+                  <input
+                    aria-label="AI 日报仓库路径"
+                    value={newProject.path}
+                    onChange={(event) =>
+                      setNewProject((current) => ({
+                        ...current,
+                        path: event.target.value,
+                      }))
+                    }
+                    placeholder="/绝对路径/to/repository"
+                  />
+                  <button
+                    type="button"
+                    className="button secondary compact"
+                    aria-label="选择 AI 日报项目文件夹"
+                    title={
+                      directoryPickerAvailable
+                        ? "选择本地 Git 仓库文件夹"
+                        : "浏览器预览模式不支持选择文件夹，请手动输入绝对路径"
+                    }
+                    disabled={!directoryPickerAvailable || selectingDirectory}
+                    onClick={chooseProjectDirectory}
+                  >
+                    {selectingDirectory ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <FolderOpen size={14} />
+                    )}
+                    选择文件夹
+                  </button>
+                </div>
+                <div className="daily-report-project-form-actions">
+                  {editingProjectID && (
+                    <button
+                      type="button"
+                      className="button ghost compact"
+                      aria-label="取消编辑 AI 日报项目"
+                      onClick={cancelProjectEdit}
+                    >
+                      取消
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="button secondary compact"
+                    onClick={editingProjectID ? saveProjectEdit : addProject}
+                  >
+                    {editingProjectID ? <Check size={14} /> : <Plus size={14} />}
+                    {editingProjectID ? "保存修改" : "添加并选择"}
+                  </button>
+                </div>
               </div>
             </section>
 

@@ -3,18 +3,124 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type memoryCredentialStore struct {
 	secrets map[string]string
+}
+
+func TestNewAppConfiguresDirectoryDialog(t *testing.T) {
+	if NewApp().openDirectoryDialog == nil {
+		t.Fatal("expected the Wails directory dialog to be configured")
+	}
+}
+
+func TestSelectDailyReportProjectDirectoryReturnsAbsoluteCleanPath(
+	t *testing.T,
+) {
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "desktop")
+	selected := filepath.Join(".", "workspace", "..", "repository")
+	app := &App{
+		ctx: ctx,
+		openDirectoryDialog: func(
+			gotContext context.Context,
+			options wailsruntime.OpenDialogOptions,
+		) (string, error) {
+			if gotContext != ctx {
+				t.Fatal("directory dialog did not receive the Wails context")
+			}
+			if options.Title != "选择本地 Git 仓库" {
+				t.Fatalf("unexpected dialog title %q", options.Title)
+			}
+			return selected, nil
+		},
+	}
+
+	result, err := app.SelectDailyReportProjectDirectory()
+	if err != nil {
+		t.Fatalf("select daily report project directory: %v", err)
+	}
+	expected, err := filepath.Abs(selected)
+	if err != nil {
+		t.Fatalf("resolve expected absolute path: %v", err)
+	}
+	if result != filepath.Clean(expected) {
+		t.Fatalf("expected %q, got %q", filepath.Clean(expected), result)
+	}
+}
+
+func TestSelectDailyReportProjectDirectoryAllowsCancellation(t *testing.T) {
+	app := &App{
+		ctx: context.Background(),
+		openDirectoryDialog: func(
+			context.Context,
+			wailsruntime.OpenDialogOptions,
+		) (string, error) {
+			return "", nil
+		},
+	}
+
+	result, err := app.SelectDailyReportProjectDirectory()
+	if err != nil {
+		t.Fatalf("cancel directory selection: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected an empty cancelled selection, got %q", result)
+	}
+}
+
+func TestSelectDailyReportProjectDirectoryRequiresDesktopContext(t *testing.T) {
+	called := false
+	app := &App{
+		openDirectoryDialog: func(
+			context.Context,
+			wailsruntime.OpenDialogOptions,
+		) (string, error) {
+			called = true
+			return "", nil
+		},
+	}
+
+	_, err := app.SelectDailyReportProjectDirectory()
+	if err == nil || !strings.Contains(err.Error(), "桌面客户端尚未初始化") {
+		t.Fatalf("expected an uninitialised desktop error, got %v", err)
+	}
+	if called {
+		t.Fatal("directory dialog must not open without the Wails context")
+	}
+}
+
+func TestSelectDailyReportProjectDirectoryWrapsDialogError(t *testing.T) {
+	dialogErr := errors.New("dialog unavailable")
+	app := &App{
+		ctx: context.Background(),
+		openDirectoryDialog: func(
+			context.Context,
+			wailsruntime.OpenDialogOptions,
+		) (string, error) {
+			return "", dialogErr
+		},
+	}
+
+	_, err := app.SelectDailyReportProjectDirectory()
+	if err == nil || !strings.Contains(err.Error(), "选择本地 Git 仓库目录失败") {
+		t.Fatalf("expected a wrapped directory dialog error, got %v", err)
+	}
+	if !errors.Is(err, dialogErr) {
+		t.Fatalf("expected the dialog error to be preserved, got %v", err)
+	}
 }
 
 type recordingDailyReportGenerator struct {

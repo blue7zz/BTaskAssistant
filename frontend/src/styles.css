@@ -5240,6 +5240,15 @@ body.panel-resizing .workspace-grid {
   padding: 13px 14px 0;
 }
 
+.daily-report-project-option-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.daily-report-project-option-shell .daily-report-project-option {
+  height: 100%;
+}
+
 .daily-report-project-option {
   display: grid;
   min-width: 0;
@@ -5261,6 +5270,34 @@ body.panel-resizing .workspace-grid {
   border-color: #aaa2f0;
   background: #f4f2ff;
   box-shadow: 0 0 0 3px rgba(114, 103, 240, 0.06);
+}
+
+.daily-report-project-option.has-edit-action {
+  padding-right: 65px;
+}
+
+.daily-report-project-edit-button {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: #665be6;
+  border: 1px solid #d8d4f8;
+  border-radius: 7px;
+  background: white;
+  font-size: 8.5px;
+  font-weight: 680;
+  transform: translateY(-50%);
+}
+
+.daily-report-project-edit-button:hover {
+  border-color: #b9b2f2;
+  background: #f8f7ff;
 }
 
 .daily-report-project-option input {
@@ -5311,6 +5348,26 @@ body.panel-resizing .workspace-grid {
   min-width: 0;
   height: 34px;
   font-size: 9.5px;
+}
+
+.daily-report-project-path-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.daily-report-project-path-field .button {
+  height: 34px;
+  white-space: nowrap;
+}
+
+.daily-report-project-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .daily-report-manual-input {

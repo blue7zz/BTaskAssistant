@@ -340,6 +340,69 @@ describe("workspace store", () => {
     });
   });
 
+  it("updates a remembered project without changing its history identity", async () => {
+    useWorkspaceStore.setState({
+      dailyReportProjectHistory: [
+        {
+          id: "history-y16",
+          projectNo: "Y16",
+          projectName: "Y16 App",
+          path: "/workspace/y16",
+          lastUsedAt: "2026-07-30T10:00:00Z",
+        },
+      ],
+    });
+
+    useWorkspaceStore.getState().updateDailyReportProject("history-y16", {
+      projectNo: " Y16-NEW ",
+      projectName: " Y16 App New ",
+      path: " C:\\workspace\\y16\\ ",
+    });
+
+    expect(useWorkspaceStore.getState().dailyReportProjectHistory).toEqual([
+      {
+        id: "history-y16",
+        projectNo: "Y16-NEW",
+        projectName: "Y16 App New",
+        path: "C:\\workspace\\y16",
+        lastUsedAt: "2026-07-30T10:00:00Z",
+      },
+    ]);
+
+    await vi.waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("btaskassistant-workspace") ?? "{}",
+      );
+      expect(stored.state.dailyReportProjectHistory).toEqual([
+        {
+          id: "history-y16",
+          projectNo: "Y16-NEW",
+          projectName: "Y16 App New",
+          path: "C:\\workspace\\y16",
+          lastUsedAt: "2026-07-30T10:00:00Z",
+        },
+      ]);
+    });
+
+    useWorkspaceStore.getState().updateDailyReportProject("history-y16", {
+      projectNo: "ROOT",
+      projectName: "Windows Root",
+      path: " C:\\ ",
+    });
+    expect(
+      useWorkspaceStore.getState().dailyReportProjectHistory[0].path,
+    ).toBe("C:\\");
+
+    useWorkspaceStore.getState().updateDailyReportProject("history-y16", {
+      projectNo: "ROOT",
+      projectName: "POSIX Root",
+      path: " / ",
+    });
+    expect(
+      useWorkspaceStore.getState().dailyReportProjectHistory[0].path,
+    ).toBe("/");
+  });
+
   it("updates manual record fields and status without workflow gates", () => {
     const taskID = useWorkspaceStore.getState().createTask({
       title: "手工记录",

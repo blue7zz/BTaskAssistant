@@ -103,8 +103,8 @@ function normalizeDailyReportDrafts(
 
 function normalizeDailyReportProjectPath(path: string): string {
   const trimmed = path.trim();
-  if (trimmed === "/") return trimmed;
-  return trimmed.replace(/\/+$/, "");
+  if (trimmed === "/" || /^[A-Za-z]:[\\/]$/.test(trimmed)) return trimmed;
+  return trimmed.replace(/[\\/]+$/, "");
 }
 
 function normalizeDailyReportProjectHistory(
@@ -228,6 +228,10 @@ interface WorkspaceState {
   updateDailyReportSettings(patch: Partial<DailyReportSettings>): void;
   updateDailyReportAISettings(patch: Partial<DailyReportAISettings>): void;
   rememberDailyReportProjects(projects: DailyReportGenerationProject[]): void;
+  updateDailyReportProject(
+    projectID: string,
+    project: DailyReportGenerationProject,
+  ): void;
   removeDailyReportProject(projectID: string): void;
   selectDailyReportDate(date: string): void;
   updateDailyReportDraft(patch: Partial<DailyReportDraft>): void;
@@ -651,6 +655,27 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             dailyReportProjectHistory: normalizeDailyReportProjectHistory([
               ...remembered,
               ...state.dailyReportProjectHistory,
+            ]),
+          };
+        }),
+      updateDailyReportProject: (projectID, project) =>
+        set((state) => {
+          const existing = state.dailyReportProjectHistory.find(
+            (item) => item.id === projectID,
+          );
+          const path = normalizeDailyReportProjectPath(project.path);
+          if (!existing || !path) return {};
+          return {
+            dailyReportProjectHistory: normalizeDailyReportProjectHistory([
+              {
+                ...existing,
+                projectNo: project.projectNo.trim(),
+                projectName: project.projectName.trim(),
+                path,
+              },
+              ...state.dailyReportProjectHistory.filter(
+                (item) => item.id !== projectID,
+              ),
             ]),
           };
         }),

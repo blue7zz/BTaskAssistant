@@ -20,6 +20,14 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function setInputValue(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+    input,
+    value,
+  );
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function findButton(container: HTMLElement, text: string): HTMLButtonElement {
   return Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
     (button) => button.textContent?.includes(text),
@@ -257,6 +265,189 @@ describe("Daily report AI dialog", () => {
       useWorkspaceStore.getState().dailyReportDrafts["2026-07-31"].results[0]
         .projectNo,
     ).toBe("");
+  });
+
+  it("edits a selected historical project and fills its path from the directory picker", async () => {
+    const generate = vi.fn().mockResolvedValue({
+      reportDate: "2026-07-30",
+      results: [],
+      blockers: [],
+      reviews: [],
+      nextActions: [],
+    });
+    const selectDirectory = vi
+      .fn()
+      .mockResolvedValue("/workspace/wx-y16-app-renamed");
+    window.go = {
+      main: {
+        App: {
+          SaveState: vi.fn().mockResolvedValue(undefined),
+          GenerateDailyReport: generate,
+          SelectDailyReportProjectDirectory: selectDirectory,
+        },
+      },
+    } as unknown as typeof window.go;
+    useWorkspaceStore.setState({
+      dailyReportProjectHistory: [
+        {
+          id: "project-y16",
+          projectNo: "y16",
+          projectName: "wx-y16-app",
+          path: "/workspace/wx-y16-app",
+          lastUsedAt: "2026-07-29T10:00:00Z",
+        },
+      ],
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(DailyReportAIDialog, {
+          open: true,
+          onClose: vi.fn(),
+          onSuccess: vi.fn(),
+          onError: vi.fn(),
+        }),
+      );
+    });
+
+    await act(async () => {
+      (
+        container.querySelector(
+          'input[aria-label="选择项目 wx-y16-app"]',
+        ) as HTMLInputElement
+      ).click();
+    });
+    await act(async () => {
+      (
+        container.querySelector(
+          'button[aria-label="编辑项目 wx-y16-app"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+
+    const projectNo = container.querySelector(
+      'input[aria-label="AI 日报项目编号"]',
+    ) as HTMLInputElement;
+    const projectName = container.querySelector(
+      'input[aria-label="AI 日报项目名称"]',
+    ) as HTMLInputElement;
+    const projectPath = container.querySelector(
+      'input[aria-label="AI 日报仓库路径"]',
+    ) as HTMLInputElement;
+    expect(projectNo.value).toBe("y16");
+    expect(projectName.value).toBe("wx-y16-app");
+    expect(projectPath.value).toBe("/workspace/wx-y16-app");
+
+    await act(async () => {
+      setInputValue(projectNo, " Y16-NEW ");
+      setInputValue(projectName, " Y16 新项目 ");
+      (
+        container.querySelector(
+          'button[aria-label="选择 AI 日报项目文件夹"]',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(selectDirectory).toHaveBeenCalledTimes(1);
+    expect(projectPath.value).toBe("/workspace/wx-y16-app-renamed");
+
+    await act(async () => findButton(container, "保存修改").click());
+
+    expect(useWorkspaceStore.getState().dailyReportProjectHistory[0]).toMatchObject({
+      id: "project-y16",
+      projectNo: "Y16-NEW",
+      projectName: "Y16 新项目",
+      path: "/workspace/wx-y16-app-renamed",
+      lastUsedAt: "2026-07-29T10:00:00Z",
+    });
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="选择项目 Y16 新项目"]',
+      )?.checked,
+    ).toBe(true);
+
+    await act(async () => {
+      findButton(container, "生成预览").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(generate.mock.calls[0][0].projects).toEqual([
+      {
+        projectNo: "Y16-NEW",
+        projectName: "Y16 新项目",
+        path: "/workspace/wx-y16-app-renamed",
+      },
+    ]);
+  });
+
+  it("keeps the typed path when directory selection or project editing is cancelled", async () => {
+    window.go = {
+      main: {
+        App: {
+          SaveState: vi.fn().mockResolvedValue(undefined),
+          GenerateDailyReport: vi.fn(),
+          SelectDailyReportProjectDirectory: vi.fn().mockResolvedValue(""),
+        },
+      },
+    } as unknown as typeof window.go;
+    useWorkspaceStore.setState({
+      dailyReportProjectHistory: [
+        {
+          id: "project-y15",
+          projectNo: "Y15",
+          projectName: "Y15 App",
+          path: "/workspace/y15",
+          lastUsedAt: "2026-07-28T10:00:00Z",
+        },
+      ],
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(DailyReportAIDialog, {
+          open: true,
+          onClose: vi.fn(),
+          onSuccess: vi.fn(),
+          onError: vi.fn(),
+        }),
+      );
+    });
+    await act(async () => {
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="选择项目 Y15 App"]',
+      )?.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="编辑项目 Y15 App"]',
+      )?.click();
+    });
+    const pathInput = container.querySelector(
+      'input[aria-label="AI 日报仓库路径"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      setInputValue(pathInput, "/workspace/typed-path");
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="选择 AI 日报项目文件夹"]',
+      )?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(pathInput.value).toBe("/workspace/typed-path");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="取消编辑 AI 日报项目"]',
+      )?.click();
+    });
+    expect(useWorkspaceStore.getState().dailyReportProjectHistory[0]).toMatchObject({
+      id: "project-y15",
+      projectNo: "Y15",
+      projectName: "Y15 App",
+      path: "/workspace/y15",
+    });
+    expect(pathInput.value).toBe("");
   });
 
   it("explains missing organization before invoking AI", async () => {

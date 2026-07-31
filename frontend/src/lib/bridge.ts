@@ -81,6 +81,7 @@ interface NativeApp {
     input: DailyReportGenerationInput,
     runtime: PISettings,
   ): Promise<DailyReportGenerationResult>;
+  SelectDailyReportProjectDirectory(): Promise<string>;
   ListPlaneProjects(
     baseUrl: string,
     workspaceSlug: string,
@@ -223,6 +224,19 @@ export function dailyReportCloudAvailable(): boolean {
 
 export function dailyReportAIAvailable(): boolean {
   return Boolean(nativeApp());
+}
+
+export function dailyReportDirectoryPickerAvailable(): boolean {
+  return typeof nativeApp()?.SelectDailyReportProjectDirectory === "function";
+}
+
+export async function selectDailyReportProjectDirectory(): Promise<string> {
+  const app = nativeApp();
+  if (typeof app?.SelectDailyReportProjectDirectory !== "function") {
+    throw new Error("选择本地目录只能在 Wails 桌面客户端中使用");
+  }
+  const path = await app.SelectDailyReportProjectDirectory();
+  return typeof path === "string" ? path : "";
 }
 
 export async function generateDailyReport(

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +15,13 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/report"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	"github.com/blue7zz/BTaskAssistant/internal/workflow"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+type directoryDialogOpener func(
+	context.Context,
+	wailsruntime.OpenDialogOptions,
+) (string, error)
 
 // App exposes the deliberately small native boundary used by the React client.
 // Product decisions stay in the workflow layer; AI engines stay behind adapters.
@@ -23,6 +30,7 @@ type App struct {
 	store                *storage.SQLiteStore
 	credentials          credentials.Store
 	dailyReportGenerator engine.DailyReportGenerating
+	openDirectoryDialog  directoryDialogOpener
 	startupErr           error
 }
 
@@ -31,6 +39,7 @@ func NewApp() *App {
 		store:                storage.NewSQLiteStore("BTaskAssistant"),
 		credentials:          credentials.NewSystemStore("BTaskAssistant"),
 		dailyReportGenerator: engine.DailyReportGenerator{},
+		openDirectoryDialog:  wailsruntime.OpenDirectoryDialog,
 	}
 }
 
@@ -98,6 +107,33 @@ func (a *App) appContext() context.Context {
 		return a.ctx
 	}
 	return context.Background()
+}
+
+func (a *App) SelectDailyReportProjectDirectory() (string, error) {
+	if a.ctx == nil {
+		return "", errors.New("桌面客户端尚未初始化")
+	}
+
+	openDirectoryDialog := a.openDirectoryDialog
+	if openDirectoryDialog == nil {
+		openDirectoryDialog = wailsruntime.OpenDirectoryDialog
+	}
+	selected, err := openDirectoryDialog(
+		a.ctx,
+		wailsruntime.OpenDialogOptions{Title: "选择本地 Git 仓库"},
+	)
+	if err != nil {
+		return "", fmt.Errorf("选择本地 Git 仓库目录失败: %w", err)
+	}
+	if selected == "" {
+		return "", nil
+	}
+
+	absolute, err := filepath.Abs(selected)
+	if err != nil {
+		return "", fmt.Errorf("解析所选目录失败: %w", err)
+	}
+	return filepath.Clean(absolute), nil
 }
 
 func dailyReportCredentialAccount(
