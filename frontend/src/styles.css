@@ -4313,6 +4313,7 @@ body.panel-resizing .workspace-grid {
 
 .pi-settings-page,
 .plane-settings-page,
+.task-context-settings-page,
 .daily-report-settings-page {
   min-width: 0;
   min-height: 0;
@@ -4640,11 +4641,132 @@ body.panel-resizing .workspace-grid {
 
 .plane-settings-page .collector-settings,
 .daily-report-settings-page .collector-settings,
+.task-context-settings-card,
 .plane-source-setting {
   width: 100%;
   max-width: 1080px;
   margin-right: auto;
   margin-left: auto;
+}
+
+.task-context-settings-card {
+  padding: 17px;
+}
+
+.task-context-status-row {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 11px;
+}
+
+.task-context-status {
+  display: inline-flex;
+  min-height: 23px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  color: #6259d0;
+  border: 1px solid #dedaf8;
+  border-radius: 999px;
+  background: #f3f1ff;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.task-context-status.available {
+  color: #2f7658;
+  border-color: #cfe7dc;
+  background: var(--success-soft);
+}
+
+.task-context-status.unavailable {
+  color: #8a6840;
+  border-color: #eadcc8;
+  background: #fff8ee;
+}
+
+.task-context-path-field {
+  gap: 7px;
+}
+
+.task-context-path-control {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.task-context-path-control > svg {
+  position: absolute;
+  z-index: 1;
+  left: 11px;
+  flex: 0 0 auto;
+  color: #777983;
+  pointer-events: none;
+}
+
+.task-context-path-control > input {
+  min-width: 0;
+  padding-left: 35px;
+  color: #484a52;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+}
+
+.task-context-path-control > input:disabled {
+  color: #8e9098;
+  opacity: 1;
+}
+
+.task-context-default-path {
+  margin: 9px 0 0;
+  color: #8a8c94;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.task-context-default-path code {
+  overflow-wrap: anywhere;
+  color: #696b74;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.task-context-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid #ededf1;
+}
+
+.task-context-actions > p {
+  max-width: 620px;
+  margin: 0;
+  color: #85878f;
+  font-size: 8.5px;
+  line-height: 1.6;
+}
+
+.task-context-actions > div {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-context-preview-note {
+  margin-top: 12px;
+  padding: 10px 11px;
+  color: #7d674d;
+  border: 1px solid #eadcc8;
+  border-radius: 9px;
+  background: #fff8ee;
+  font-size: 8.5px;
+  line-height: 1.6;
 }
 
 .plane-connection-options {
@@ -4798,7 +4920,16 @@ body.panel-resizing .workspace-grid {
     flex-direction: column;
   }
 
+  .task-context-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .connection-action-row .button {
+    align-self: flex-end;
+  }
+
+  .task-context-actions > div {
     align-self: flex-end;
   }
 }

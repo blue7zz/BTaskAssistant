@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -23,6 +25,8 @@ type directoryDialogOpener func(
 	wailsruntime.OpenDialogOptions,
 ) (string, error)
 
+type pathOpener func(context.Context, string) error
+
 const dailyReportGenerationProgressEvent = "daily-report:generation-progress"
 
 type dailyReportProgressEmitter func(
@@ -39,6 +43,7 @@ type App struct {
 	dailyReportGenerator    engine.DailyReportGenerating
 	emitDailyReportProgress dailyReportProgressEmitter
 	openDirectoryDialog     directoryDialogOpener
+	openPath                pathOpener
 	startupErr              error
 }
 
@@ -58,12 +63,16 @@ func NewApp() *App {
 			)
 		},
 		openDirectoryDialog: wailsruntime.OpenDirectoryDialog,
+		openPath:            openPathInFileManager,
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.startupErr = a.store.Open()
+	if a.startupErr == nil {
+		_ = a.store.ReconcileTaskContexts()
+	}
 }
 
 func (a *App) shutdown(_ context.Context) {
@@ -78,7 +87,8 @@ func (a *App) LoadState() (string, error) {
 	return a.store.Load()
 }
 
-// SaveState atomically persists the complete Zustand snapshot.
+// SaveState persists the complete Zustand snapshot and materializes its task
+// contexts in the configured local directory.
 func (a *App) SaveState(payload string) error {
 	if a.startupErr != nil {
 		return a.startupErr
@@ -125,6 +135,100 @@ func (a *App) appContext() context.Context {
 		return a.ctx
 	}
 	return context.Background()
+}
+
+func (a *App) GetTaskContextRoot() (storage.TaskContextRootInfo, error) {
+	if a.startupErr != nil {
+		return storage.TaskContextRootInfo{}, a.startupErr
+	}
+	return a.store.TaskContextRootInfo()
+}
+
+func (a *App) SelectTaskContextRoot() (string, error) {
+	if a.ctx == nil {
+		return "", errors.New("桌面客户端尚未初始化")
+	}
+
+	root, err := a.GetTaskContextRoot()
+	if err != nil {
+		return "", err
+	}
+	options := wailsruntime.OpenDialogOptions{
+		Title:                "选择任务资料目录",
+		CanCreateDirectories: true,
+		ResolvesAliases:      true,
+	}
+	if root.Available {
+		options.DefaultDirectory = root.Path
+	}
+
+	openDirectoryDialog := a.openDirectoryDialog
+	if openDirectoryDialog == nil {
+		openDirectoryDialog = wailsruntime.OpenDirectoryDialog
+	}
+	selected, err := openDirectoryDialog(a.ctx, options)
+	if err != nil {
+		return "", fmt.Errorf("选择任务资料目录失败: %w", err)
+	}
+	if selected == "" {
+		return "", nil
+	}
+	absolute, err := filepath.Abs(selected)
+	if err != nil {
+		return "", fmt.Errorf("解析所选任务资料目录失败: %w", err)
+	}
+	return filepath.Clean(absolute), nil
+}
+
+func (a *App) SetTaskContextRoot(
+	path string,
+) (storage.TaskContextRootInfo, error) {
+	if a.startupErr != nil {
+		return storage.TaskContextRootInfo{}, a.startupErr
+	}
+	root, err := a.store.SetTaskContextRoot(path)
+	if err != nil {
+		return storage.TaskContextRootInfo{}, fmt.Errorf(
+			"设置任务资料目录失败: %w",
+			err,
+		)
+	}
+	return root, nil
+}
+
+func (a *App) OpenTaskContextRoot() error {
+	if a.ctx == nil {
+		return errors.New("桌面客户端尚未初始化")
+	}
+	root, err := a.GetTaskContextRoot()
+	if err != nil {
+		return err
+	}
+	if !root.Available {
+		return errors.New("任务资料目录当前不可用")
+	}
+
+	openPath := a.openPath
+	if openPath == nil {
+		openPath = openPathInFileManager
+	}
+	if err := openPath(a.ctx, root.Path); err != nil {
+		return fmt.Errorf("打开任务资料目录失败: %w", err)
+	}
+	return nil
+}
+
+func openPathInFileManager(ctx context.Context, path string) error {
+	var command *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		command = exec.CommandContext(ctx, "open", path)
+	case "windows":
+		command = exec.CommandContext(ctx, "explorer.exe", path)
+	default:
+		command = exec.CommandContext(ctx, "xdg-open", path)
+	}
+	return command.Run()
 }
 
 func (a *App) SelectDailyReportProjectDirectory() (string, error) {

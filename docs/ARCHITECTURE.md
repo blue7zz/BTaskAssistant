@@ -30,7 +30,7 @@ flowchart TD
 | 状态 | `frontend/src/store` | 任务操作、确认失效规则、持久化 |
 | 本机桥接 | `app.go`、`frontend/src/lib/bridge.ts` | 状态读写、原生门禁、引擎状态 |
 | Go 领域 | `internal/workflow` | 桌面端最终状态转换校验 |
-| 存储 | `internal/storage` | SQLite 初始化、迁移与工作区快照 |
+| 存储 | `internal/storage` | SQLite 初始化、迁移、工作区快照与任务上下文目录 |
 | AI 边界 | `internal/engine` | PI / Codex 结构化需求分析、只读权限和配置状态 |
 | 外部收集 | `internal/plane` | HTTPS、PAT 鉴权、分页、去重前标准化 |
 | 凭据 | `internal/credentials` | 系统凭据库；令牌不进入 SQLite |
@@ -40,7 +40,8 @@ flowchart TD
 任务正文使用 MDXEditor。编辑器直接接收和输出 Markdown，不通过 HTML
 作为中间持久化格式；现有纯文本任务天然兼容。支持富文本、Markdown
 源码、表格、链接和图片，单张本地图片限制为 4 MB，并以 data URL
-随本地工作区保存。后续资料存储规范化时，再迁移到内容寻址文件目录。
+随本地工作区和对应任务的 `context.json` 保存。后续资料存储规范化时，
+再迁移为任务目录中的独立资料文件。
 
 ## Plane 收集箱
 
@@ -78,10 +79,35 @@ Plane 集成按两层处理：
 桌面客户端通过 Go 写入：
 
 ```text
-<UserConfigDir>/BTaskAssistant/database/btask.db
+<UserConfigDir>/BTaskAssistant/
+├── database/
+│   └── btask.db
+└── tasks/
+    └── <task-id>/
+        ├── context.json
+        ├── files/
+        └── images/
 ```
 
-第一版先把完整工作区保存到 `workspace_state` 的版本化 JSON 字段中，并启用 WAL、外键和写入等待。这样桌面模式从第一天就以 SQLite 为持久化真相；后续按 `SOFTWARE_ARCHITECTURE.md` 把 Task、RequirementRevision、ExecutionRun 等逐步拆成规范表时，可以通过迁移完成而不改变前端存储入口。浏览器预览没有 Wails Bridge，因此自动回退到 `localStorage`。
+第一版先把完整工作区保存到 `workspace_state` 的版本化 JSON 字段中，并启用
+WAL、外键和写入等待。SQLite 是恢复真相；每次保存还会按稳定的任务 ID 将
+完整 `Task` 聚合通过临时文件替换同步到独立的 `context.json`，内容包括基础
+信息、来源、需求、开发记录、审核记录和回收站状态。文件类需求来源会落到
+`files/`，任务 JSON 内有效的 data URL 图片会按内容哈希落到 `images/`；未变化
+的应用管理文件不会重复写入。用户自行放入任务目录的其他文件和图片不会被
+自动扫描、覆盖或删除。
+
+`projectPath` 仍只引用用户选择的代码仓库，不会把仓库复制到任务目录；PAT、
+Token 等凭据也不进入任务目录。移入回收站、恢复、永久删除任务以及清空工作区
+都不会自动删除任务目录，避免误删用户补充的资料；不再被 SQLite 引用的目录
+保留为本地归档。
+
+任务资料根目录默认是 `<UserConfigDir>/BTaskAssistant/tasks`，可在设置中查看、
+打开或迁移到用户选择的新空目录。迁移会复制包括用户文件在内的完整目录，验证
+并重新生成当前任务上下文后才切换 SQLite 配置；失败时继续使用旧目录，成功后
+旧目录也保留为备份。应用启动时会根据 SQLite 幂等补建或修复当前任务的应用管理
+文件。浏览器预览没有 Wails Bridge，因而只回退到 `localStorage`，不提供物理
+任务目录。
 
 ## AI 适配器策略
 

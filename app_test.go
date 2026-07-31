@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
+	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -25,8 +27,169 @@ func TestNewAppConfiguresDirectoryDialog(t *testing.T) {
 	if app.openDirectoryDialog == nil {
 		t.Fatal("expected the Wails directory dialog to be configured")
 	}
+	if app.openPath == nil {
+		t.Fatal("expected the task context path opener to be configured")
+	}
 	if app.emitDailyReportProgress == nil {
 		t.Fatal("expected the Wails daily report progress emitter to be configured")
+	}
+}
+
+func newTaskContextTestApp(t *testing.T) *App {
+	t.Helper()
+	app := &App{
+		ctx:   context.Background(),
+		store: storage.NewSQLiteStoreAt(filepath.Join(t.TempDir(), "btask.db")),
+	}
+	t.Cleanup(func() { _ = app.store.Close() })
+	return app
+}
+
+func TestSelectTaskContextRootUsesDedicatedDialog(t *testing.T) {
+	app := newTaskContextTestApp(t)
+	currentRoot, err := app.SetTaskContextRoot(t.TempDir())
+	if err != nil {
+		t.Fatalf("set current task context root: %v", err)
+	}
+	selectedRoot := t.TempDir()
+	app.openDirectoryDialog = func(
+		ctx context.Context,
+		options wailsruntime.OpenDialogOptions,
+	) (string, error) {
+		if ctx != app.ctx {
+			t.Fatal("directory dialog did not receive the Wails context")
+		}
+		if options.Title != "选择任务资料目录" {
+			t.Fatalf("unexpected dialog title %q", options.Title)
+		}
+		if !options.CanCreateDirectories {
+			t.Fatal("expected the dialog to allow directory creation")
+		}
+		if !options.ResolvesAliases {
+			t.Fatal("expected the dialog to resolve aliases")
+		}
+		if options.DefaultDirectory != currentRoot.Path {
+			t.Fatalf(
+				"expected default directory %q, got %q",
+				currentRoot.Path,
+				options.DefaultDirectory,
+			)
+		}
+		return filepath.Join(selectedRoot, "."), nil
+	}
+
+	selected, err := app.SelectTaskContextRoot()
+	if err != nil {
+		t.Fatalf("select task context root: %v", err)
+	}
+	if selected != filepath.Clean(selectedRoot) {
+		t.Fatalf("expected %q, got %q", filepath.Clean(selectedRoot), selected)
+	}
+}
+
+func TestSelectTaskContextRootAllowsCancellation(t *testing.T) {
+	app := newTaskContextTestApp(t)
+	app.openDirectoryDialog = func(
+		context.Context,
+		wailsruntime.OpenDialogOptions,
+	) (string, error) {
+		return "", nil
+	}
+
+	selected, err := app.SelectTaskContextRoot()
+	if err != nil {
+		t.Fatalf("cancel task context root selection: %v", err)
+	}
+	if selected != "" {
+		t.Fatalf("expected an empty cancelled selection, got %q", selected)
+	}
+}
+
+func TestSelectTaskContextRootPreservesDialogError(t *testing.T) {
+	dialogErr := errors.New("dialog unavailable")
+	app := newTaskContextTestApp(t)
+	app.openDirectoryDialog = func(
+		context.Context,
+		wailsruntime.OpenDialogOptions,
+	) (string, error) {
+		return "", dialogErr
+	}
+
+	_, err := app.SelectTaskContextRoot()
+	if !errors.Is(err, dialogErr) {
+		t.Fatalf("expected the dialog error to be preserved, got %v", err)
+	}
+}
+
+func TestOpenTaskContextRootUsesInjectedPathOpener(t *testing.T) {
+	app := newTaskContextTestApp(t)
+	selectedRoot := t.TempDir()
+	root, err := app.SetTaskContextRoot(selectedRoot)
+	if err != nil {
+		t.Fatalf("set task context root: %v", err)
+	}
+	called := false
+	app.openPath = func(ctx context.Context, path string) error {
+		called = true
+		if ctx != app.ctx {
+			t.Fatal("path opener did not receive the Wails context")
+		}
+		if path != root.Path {
+			t.Fatalf("expected path %q, got %q", root.Path, path)
+		}
+		return nil
+	}
+
+	if err := app.OpenTaskContextRoot(); err != nil {
+		t.Fatalf("open task context root: %v", err)
+	}
+	if !called {
+		t.Fatal("expected the path opener to be called")
+	}
+}
+
+func TestOpenTaskContextRootPreservesOpenerError(t *testing.T) {
+	openerErr := errors.New("opener unavailable")
+	app := newTaskContextTestApp(t)
+	if _, err := app.SetTaskContextRoot(t.TempDir()); err != nil {
+		t.Fatalf("set task context root: %v", err)
+	}
+	app.openPath = func(context.Context, string) error {
+		return openerErr
+	}
+
+	err := app.OpenTaskContextRoot()
+	if !errors.Is(err, openerErr) {
+		t.Fatalf("expected the opener error to be preserved, got %v", err)
+	}
+}
+
+func TestStartupIgnoresTaskContextReconciliationFailure(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "btask.db")
+	store := storage.NewSQLiteStoreAt(databasePath)
+	customRoot := t.TempDir()
+	if _, err := store.SetTaskContextRoot(customRoot); err != nil {
+		t.Fatalf("set task context root: %v", err)
+	}
+	if err := store.Save(`{"state":{"tasks":[]}}`); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	if err := os.RemoveAll(customRoot); err != nil {
+		t.Fatalf("remove custom root: %v", err)
+	}
+
+	app := &App{store: storage.NewSQLiteStoreAt(databasePath)}
+	app.startup(context.Background())
+	t.Cleanup(func() { app.shutdown(context.Background()) })
+	if app.startupErr != nil {
+		t.Fatalf("reconciliation failure must not fail startup: %v", app.startupErr)
+	}
+	if payload, err := app.LoadState(); err != nil || payload == "" {
+		t.Fatalf("expected persisted state after non-fatal reconciliation, payload %q, error %v", payload, err)
 	}
 }
 

@@ -23,7 +23,7 @@ BTaskAssistant 是一个本地优先、人工把关的 AI 开发任务工作流�
 - 可选择 Codex 或 PI / oh-my-pi，复制已确认提示词并记录外部委托结果。
 - 开发完成后生成固定审核清单，人工逐项检查、记录证据并确认通过。
 - 所有任务状态只能手动推进或退回一个阶段。
-- Wails 桌面模式把工作区数据保存在本机配置目录；浏览器预览模式使用 `localStorage`。
+- Wails 桌面模式把工作区数据保存在本机配置目录，并为每个任务维护独立的完整上下文目录；浏览器预览模式使用 `localStorage`。
 
 ## 核心状态机
 
@@ -92,7 +92,7 @@ wails dev
 wails build
 ```
 
-首次执行 Go 命令时会下载模块依赖并生成 `go.sum`。桌面数据保存在系统用户配置目录下的 `BTaskAssistant/database/btask.db`。
+首次执行 Go 命令时会下载模块依赖并生成 `go.sum`。桌面数据默认保存在系统用户配置目录下：SQLite 位于 `BTaskAssistant/database/btask.db`，每个任务在 `BTaskAssistant/tasks/<task-id>/` 中拥有独立目录，包含上下文快照以及从任务资料中落盘的文件和图片。任务资料根目录可在“设置 → 任务资料”中查看、打开或迁移到新的空目录；迁移成功后旧目录会保留为备份。
 
 ## 验证
 

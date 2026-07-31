@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   BrainCircuit,
   CloudDownload,
+  HardDrive,
   NotebookPen,
 } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
@@ -9,10 +10,16 @@ import type { EngineStatus } from "../lib/bridge";
 import { DailyReportSettings } from "./DailyReportSettings";
 import { PISettingsPage } from "./PISettingsPage";
 import { PlaneConnectionSettings } from "./PlaneConnectionSettings";
+import { TaskContextSettings } from "./TaskContextSettings";
 
-export type SettingsCategory = "pi" | "plane" | "report";
+export type SettingsCategory = "pi" | "storage" | "plane" | "report";
 
-const SETTINGS_CATEGORIES: SettingsCategory[] = ["pi", "plane", "report"];
+const SETTINGS_CATEGORIES: SettingsCategory[] = [
+  "pi",
+  "storage",
+  "plane",
+  "report",
+];
 
 interface SettingsPageProps {
   initialCategory?: SettingsCategory;
@@ -41,9 +48,17 @@ export function SettingsPage({
   const selectAdjacentCategory = (
     event: KeyboardEvent<HTMLButtonElement>,
   ) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (
+      event.key !== "ArrowLeft" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "ArrowUp" &&
+      event.key !== "ArrowDown"
+    ) {
+      return;
+    }
     event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const direction =
+      event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
     const currentIndex = SETTINGS_CATEGORIES.indexOf(category);
     const nextCategory =
       SETTINGS_CATEGORIES[
@@ -63,7 +78,7 @@ export function SettingsPage({
         <div>
           <span className="eyebrow">应用设置</span>
           <h1>设置</h1>
-          <p>按分类管理外部连接、本地执行与日报参数。</p>
+          <p>按分类管理任务资料、外部连接、本地执行与日报参数。</p>
         </div>
         <button
           type="button"
@@ -98,6 +113,24 @@ export function SettingsPage({
             <span>
               <strong>PI 设置</strong>
               <small>模型与推理参数</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="settings-tab-storage"
+            aria-controls="settings-panel-storage"
+            aria-selected={category === "storage"}
+            tabIndex={category === "storage" ? 0 : -1}
+            data-settings-category="storage"
+            className={category === "storage" ? "active" : ""}
+            onClick={() => setCategory("storage")}
+            onKeyDown={selectAdjacentCategory}
+          >
+            <HardDrive size={17} />
+            <span>
+              <strong>任务资料</strong>
+              <small>根目录、文件与图片</small>
             </span>
           </button>
           <button
@@ -146,6 +179,8 @@ export function SettingsPage({
         >
           {category === "pi" ? (
             <PISettingsPage engine={engine} onSuccess={onSuccess} />
+          ) : category === "storage" ? (
+            <TaskContextSettings onSuccess={onSuccess} onError={onError} />
           ) : category === "plane" ? (
             <PlaneConnectionSettings
               connected={planeConnected}

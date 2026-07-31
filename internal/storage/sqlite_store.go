@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -28,7 +29,14 @@ CREATE TABLE IF NOT EXISTS workspace_state (
 	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS task_context_settings (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	custom_root TEXT,
+	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
 `
 
 // SQLiteStore is the first persistence slice of the architecture. The UI
@@ -39,6 +47,7 @@ type SQLiteStore struct {
 	appName      string
 	explicitPath string
 	mutex        sync.Mutex
+	writeMutex   sync.Mutex
 	database     *sql.DB
 }
 
@@ -54,16 +63,25 @@ func (s *SQLiteStore) path() (string, error) {
 	if s.explicitPath != "" {
 		return s.explicitPath, nil
 	}
+	dataDirectory, err := s.dataDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDirectory, "database", "btask.db"), nil
+}
+
+func (s *SQLiteStore) dataDirectory() (string, error) {
+	if s.explicitPath != "" {
+		if s.explicitPath == ":memory:" {
+			return "", nil
+		}
+		return filepath.Dir(s.explicitPath), nil
+	}
 	configDirectory, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(
-		configDirectory,
-		s.appName,
-		"database",
-		"btask.db",
-	), nil
+	return filepath.Join(configDirectory, s.appName), nil
 }
 
 func (s *SQLiteStore) Open() error {
@@ -111,6 +129,9 @@ func (s *SQLiteStore) readyDatabase() (*sql.DB, error) {
 }
 
 func (s *SQLiteStore) Load() (string, error) {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+
 	database, err := s.readyDatabase()
 	if err != nil {
 		return "", err
@@ -130,33 +151,59 @@ func (s *SQLiteStore) Load() (string, error) {
 }
 
 func (s *SQLiteStore) Save(payload string) error {
+	contexts, err := decodeTaskContexts(payload)
+	if err != nil {
+		return fmt.Errorf("decode task contexts: %w", err)
+	}
+
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+
 	database, err := s.readyDatabase()
 	if err != nil {
 		return err
 	}
 
-	_, err = database.Exec(
-		`INSERT INTO workspace_state(id, payload, revision, updated_at)
-		 VALUES (1, ?, 1, CURRENT_TIMESTAMP)
-		 ON CONFLICT(id) DO UPDATE SET
-		   payload = excluded.payload,
-		   revision = workspace_state.revision + 1,
-		   updated_at = CURRENT_TIMESTAMP`,
-		payload,
-	)
-	return err
+	return withImmediateWrite(database, func(ctx context.Context, conn *sql.Conn) error {
+		root, err := s.taskContextRootWithConn(ctx, conn)
+		if err != nil {
+			return err
+		}
+		if err := syncTaskContexts(root, contexts); err != nil {
+			return fmt.Errorf("sync task contexts: %w", err)
+		}
+		_, err = conn.ExecContext(
+			ctx,
+			`INSERT INTO workspace_state(id, payload, revision, updated_at)
+			 VALUES (1, ?, 1, CURRENT_TIMESTAMP)
+			 ON CONFLICT(id) DO UPDATE SET
+			   payload = excluded.payload,
+			   revision = workspace_state.revision + 1,
+			   updated_at = CURRENT_TIMESTAMP`,
+			payload,
+		)
+		return err
+	})
 }
 
 func (s *SQLiteStore) Clear() error {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+
 	database, err := s.readyDatabase()
 	if err != nil {
 		return err
 	}
-	_, err = database.Exec(`DELETE FROM workspace_state WHERE id = 1`)
-	return err
+	return withImmediateWrite(database, func(ctx context.Context, conn *sql.Conn) error {
+		_, err := conn.ExecContext(ctx, `DELETE FROM workspace_state WHERE id = 1`)
+		return err
+	})
 }
 
 func (s *SQLiteStore) Close() error {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	if s.database == nil {
@@ -167,3 +214,33 @@ func (s *SQLiteStore) Close() error {
 	return err
 }
 
+func withImmediateWrite(
+	database *sql.DB,
+	operation func(context.Context, *sql.Conn) error,
+) (err error) {
+	ctx := context.Background()
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if _, err := connection.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = connection.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+
+	if err := operation(ctx, connection); err != nil {
+		return err
+	}
+	if _, err := connection.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}

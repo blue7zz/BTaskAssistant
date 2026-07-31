@@ -39,6 +39,13 @@ export interface DailyReportSubmissionResult {
   message?: string;
 }
 
+export interface TaskContextRootInfo {
+  path: string;
+  defaultPath: string;
+  custom: boolean;
+  available: boolean;
+}
+
 interface NativeApp {
   LoadState(): Promise<string>;
   SaveState(payload: string): Promise<void>;
@@ -83,6 +90,10 @@ interface NativeApp {
     runtime: PISettings,
   ): Promise<DailyReportGenerationResult>;
   SelectDailyReportProjectDirectory(): Promise<string>;
+  GetTaskContextRoot(): Promise<TaskContextRootInfo>;
+  SelectTaskContextRoot(): Promise<string>;
+  SetTaskContextRoot(path: string): Promise<TaskContextRootInfo>;
+  OpenTaskContextRoot(): Promise<void>;
   ListPlaneProjects(
     baseUrl: string,
     workspaceSlug: string,
@@ -134,6 +145,14 @@ declare global {
 
 const nativeApp = (): NativeApp | undefined => window.go?.main?.App;
 
+let nativeStateWriteQueue: Promise<void> = Promise.resolve();
+
+function enqueueNativeStateWrite(operation: () => Promise<void>): Promise<void> {
+  const pending = nativeStateWriteQueue.then(operation);
+  nativeStateWriteQueue = pending.catch(() => undefined);
+  return pending;
+}
+
 export const workspaceStorage: StateStorage = {
   async getItem(name) {
     const app = nativeApp();
@@ -146,7 +165,7 @@ export const workspaceStorage: StateStorage = {
   async setItem(name, value) {
     const app = nativeApp();
     if (app) {
-      await app.SaveState(value);
+      await enqueueNativeStateWrite(() => app.SaveState(value));
       return;
     }
     window.localStorage.setItem(name, value);
@@ -154,7 +173,7 @@ export const workspaceStorage: StateStorage = {
   async removeItem(name) {
     const app = nativeApp();
     if (app) {
-      await app.ClearState();
+      await enqueueNativeStateWrite(() => app.ClearState());
       return;
     }
     window.localStorage.removeItem(name);
@@ -283,6 +302,43 @@ export async function selectDailyReportProjectDirectory(): Promise<string> {
   }
   const path = await app.SelectDailyReportProjectDirectory();
   return typeof path === "string" ? path : "";
+}
+
+export function taskContextDirectoryAvailable(): boolean {
+  const app = nativeApp();
+  return Boolean(
+    typeof app?.GetTaskContextRoot === "function" &&
+      typeof app.SelectTaskContextRoot === "function" &&
+      typeof app.SetTaskContextRoot === "function" &&
+      typeof app.OpenTaskContextRoot === "function",
+  );
+}
+
+function requireTaskContextNativeApp(): NativeApp {
+  const app = nativeApp();
+  if (!app || !taskContextDirectoryAvailable()) {
+    throw new Error("任务资料目录只能在 Wails 桌面客户端中使用");
+  }
+  return app;
+}
+
+export async function getTaskContextRoot(): Promise<TaskContextRootInfo> {
+  return requireTaskContextNativeApp().GetTaskContextRoot();
+}
+
+export async function selectTaskContextRoot(): Promise<string> {
+  const path = await requireTaskContextNativeApp().SelectTaskContextRoot();
+  return typeof path === "string" ? path : "";
+}
+
+export async function setTaskContextRoot(
+  path: string,
+): Promise<TaskContextRootInfo> {
+  return requireTaskContextNativeApp().SetTaskContextRoot(path.trim());
+}
+
+export async function openTaskContextRoot(): Promise<void> {
+  await requireTaskContextNativeApp().OpenTaskContextRoot();
 }
 
 export async function generateDailyReport(
