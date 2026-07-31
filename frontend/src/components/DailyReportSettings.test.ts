@@ -206,7 +206,7 @@ describe("Daily report settings", () => {
       );
       setTextareaValue(
         container.querySelector(
-          'textarea[aria-label="日报 AI 附加写作指令"]',
+          'textarea[aria-label="日报 AI 自定义提示词"]',
         ) as HTMLTextAreaElement,
         " 表述精炼 ",
       );

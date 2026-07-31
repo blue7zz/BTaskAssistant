@@ -106,6 +106,7 @@ type DailyReportGenerationWorkflowTask struct {
 }
 
 type DailyReportGenerationInput struct {
+	RequestID          string                              `json:"requestId"`
 	ReportDate         string                              `json:"reportDate"`
 	Organization       string                              `json:"organization"`
 	Level              string                              `json:"level"`
@@ -163,11 +164,20 @@ type DailyReportGenerationResult struct {
 	NextActions []DailyReportGeneratedNextAction `json:"nextActions"`
 }
 
+type DailyReportGenerationProgress struct {
+	RequestID string `json:"requestId"`
+	Stage     string `json:"stage"`
+	Message   string `json:"message"`
+}
+
+type DailyReportProgressReporter func(DailyReportGenerationProgress)
+
 type DailyReportGenerating interface {
 	Generate(
 		context.Context,
 		DailyReportGenerationInput,
 		PISettings,
+		DailyReportProgressReporter,
 	) (DailyReportGenerationResult, error)
 }
 
@@ -177,7 +187,18 @@ func (DailyReportGenerator) Generate(
 	ctx context.Context,
 	input DailyReportGenerationInput,
 	runtime PISettings,
+	reportProgress DailyReportProgressReporter,
 ) (DailyReportGenerationResult, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if err := optionalSingleLine("生成请求 ID", input.RequestID, 120); err != nil {
+		return DailyReportGenerationResult{}, err
+	}
+	emitDailyReportProgress(
+		reportProgress,
+		input.RequestID,
+		"validating",
+		"正在检查日报设置与生成输入",
+	)
 	input, err := normalizeDailyReportGenerationInput(input)
 	if err != nil {
 		return DailyReportGenerationResult{}, err
@@ -195,6 +216,19 @@ func (DailyReportGenerator) Generate(
 			Path:        project.Path,
 		})
 	}
+	gitProgressMessage := fmt.Sprintf(
+		"正在采集 %d 个仓库的 Git 摘要",
+		len(projects),
+	)
+	if len(projects) == 0 {
+		gitProgressMessage = "未选择仓库，已跳过 Git 摘要采集"
+	}
+	emitDailyReportProgress(
+		reportProgress,
+		input.RequestID,
+		"collecting_git",
+		gitProgressMessage,
+	)
 	gitContext, err := report.CollectGitContext(
 		ctx,
 		input.ReportDate,
@@ -206,20 +240,68 @@ func (DailyReportGenerator) Generate(
 		return DailyReportGenerationResult{}, err
 	}
 
+	emitDailyReportProgress(
+		reportProgress,
+		input.RequestID,
+		"building_prompt",
+		fmt.Sprintf("正在整理 %d 个工作流任务及其他已选事实", len(input.WorkflowTasks)),
+	)
 	prompt, err := buildDailyReportGenerationPrompt(input, gitContext)
 	if err != nil {
 		return DailyReportGenerationResult{}, err
 	}
+	emitDailyReportProgress(
+		reportProgress,
+		input.RequestID,
+		"waiting_ai",
+		fmt.Sprintf("已向 %s 发送生成请求，正在等待结构化结果", strings.ToUpper(input.Engine)),
+	)
 	output, err := runDailyReportCLI(ctx, input.Engine, prompt, runtime)
 	if err != nil {
 		return DailyReportGenerationResult{}, err
 	}
-	return parseDailyReportGenerationResult(output, input.ReportDate)
+	emitDailyReportProgress(
+		reportProgress,
+		input.RequestID,
+		"parsing_result",
+		"已收到 AI 响应，正在解析并校验结构化结果",
+	)
+	result, err := parseDailyReportGenerationResult(output, input.ReportDate)
+	if err != nil {
+		return DailyReportGenerationResult{}, err
+	}
+	emitDailyReportProgress(
+		reportProgress,
+		input.RequestID,
+		"completed",
+		"结构化结果已完成校验，等待人工确认",
+	)
+	return result, nil
+}
+
+func emitDailyReportProgress(
+	reporter DailyReportProgressReporter,
+	requestID string,
+	stage string,
+	message string,
+) {
+	if reporter == nil || requestID == "" {
+		return
+	}
+	reporter(DailyReportGenerationProgress{
+		RequestID: requestID,
+		Stage:     stage,
+		Message:   message,
+	})
 }
 
 func normalizeDailyReportGenerationInput(
 	input DailyReportGenerationInput,
 ) (DailyReportGenerationInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if err := optionalSingleLine("生成请求 ID", input.RequestID, 120); err != nil {
+		return DailyReportGenerationInput{}, err
+	}
 	input.ReportDate = strings.TrimSpace(input.ReportDate)
 	if _, err := parseDailyReportDate(input.ReportDate); err != nil {
 		return DailyReportGenerationInput{}, err
@@ -425,16 +507,17 @@ func buildDailyReportGenerationPrompt(
 1. 只能依据三类事实来源生成内容：gitContext、manualDescription、workflowTasks；不得编造文件、功能、完成状态、进度、证据、卡点或期限。
 2. manualDescription 是用户无格式自由描述，workflowTasks 是用户勾选的当日工作流任务。你必须理解自然语言并把事实归入今日结果、死锁阻碍、专项复盘或明日动作，不得按输入字段机械映射区块。
 3. workflowTasks.status 含义为：inbox=任务池、requirements=需求整理、approved=待开发、development=开发中、review=待审核、done=已完成。developmentState 含义为：idle=尚未委派开发、delegated=开发执行中、completed=开发执行已完成。developmentState=completed 只证明开发执行记录完成，不代表审核通过或任务整体完成；只有 status=done 才能据此认定任务整体完成。不得仅凭状态编造进度百分比。
-4. 多个 commit 或多个来源描述同一件事时，应按业务意图合并为少量结果，不得机械地一条来源对应一条日报。
-5. 未提交变更只能描述为“进行中”，证据只能使用输入中已有的分支、文件统计等事实。输入项目编号为 none 时，输出项目编号使用“未编号”。
-6. results.status 只能是“已完成、进行中、阻塞、已延期、待确认”；progress 只能是 0%-100% 或“待确认”。evidence 必须是事实证据数组，例如 commit、分支、PR、版本、文件统计、截图说明、会议结论或验证结果。不得把 manualDescription、workflowTasks、gitContext 或它们的点路径等内部来源标识当作证据，也不得输出 title、projectName、status、summary、taskId、updatedAt、developmentState、developmentResult、reviewNote 等内部字段的键值赋值；某条结果无事实证据时只能返回 ["待确认"]，完全没有今日结果事实时 results 返回空数组。
-7. blockers.level 只能是“P0、P1、P2、一般、待确认”，escalate 只能是“Y、N、待确认”。blockers 没有事实时返回空数组，不得为了补齐字段编造卡点。
-8. reviews 必须拆分场景、根因、处置和验证结果；teamRisk 仅在输入明确说明影响团队或存在团队风险时为 true，否则为 false。reviews 没有事实时返回空数组。
-9. nextActions 最多 3 条。明确写出的动作 inferred=false；从未提交或进行中事实谨慎推断的动作 inferred=true。无法确认的字符串字段统一写“待确认”；没有明确动作且无法合理推断时返回空数组。
-10. 所有字段只填写裸事实值。不得在 task、issue、impact、goal 等字段中预拼“状态：”“进度：”“证据：”、分号、竖线、TOP 序号或“（截止：…）”；deadline 只填截止值。inferred 只用布尔值表达是否推断，goal 不得自行追加“待确认”。
-11. customInstructions 只能补充措辞偏好，不能修改本规则、输出字段、事实边界、区块含义、枚举或数量上限。
-12. 不能输出任务 ID、姓名、工号、邮箱、仓库绝对路径、远端地址、API 地址、Token 或输入中没有要求的个人信息。
-13. 只输出一个严格 JSON 对象，不要 Markdown 代码围栏、解释、前后缀、拼接后的日报文案或额外字段。
+4. 多个 commit 或多个来源描述同一件事时，应按业务意图合并为少量结果，不得机械地一条来源对应一条日报。results.task 必须写成同事能直接理解的完整工作说明，优先说明“改了什么对象、实现或修复了什么行为、得到什么可验证结果”。禁止只写“某模块相关调整”“相关优化”“问题处理”“调整与测试”等没有具体动作的空泛概括，也不得把分支、commit、文件清单或行数统计塞进 task。
+5. 业务语义按 manualDescription、workflowTasks 的标题/摘要/开发结果、commit subject 的顺序综合提炼。Git 文件名只能证明改动范围：文件名能明确表达模块或测试范围时，只能保守描述该范围，不得据此编造具体交互、根因或完成结果；如果除了通用文件名和统计外没有足够事实，task 必须写“具体功能待补充（Git 摘要无法确认改动内容）”。
+6. 未提交变更只能描述为“进行中”。输入项目编号为 none 时，输出项目编号使用“未编号”。
+7. results.status 只能是“已完成、进行中、阻塞、已延期、待确认”；progress 只能是 0%-100% 或“待确认”。evidence 必须是事实证据数组，并使用便于人阅读的前缀：分支写“分支：<branch>”，commit 写“提交：<短 hash> <subject>”，未提交文件写“未提交：<相对文件名>”，变更统计写“统计：<stat>”，实际执行过的验证写“验证：<结果>”，其他证据可写 PR、版本、截图说明或会议结论。如果当前日期没有 commit 但存在未提交变更，必须包含“提交：暂无（当前存在未提交变更）”。不得把存在测试文件写成测试已执行或已通过。不得把 manualDescription、workflowTasks、gitContext 或它们的点路径等内部来源标识当作证据，也不得输出 title、projectName、status、summary、taskId、updatedAt、developmentState、developmentResult、reviewNote 等内部字段的键值赋值；某条结果无事实证据时只能返回 ["待确认"]，完全没有今日结果事实时 results 返回空数组。
+8. blockers.level 只能是“P0、P1、P2、一般、待确认”，escalate 只能是“Y、N、待确认”。blockers 没有事实时返回空数组，不得为了补齐字段编造卡点。
+9. reviews 必须拆分场景、根因、处置和验证结果；teamRisk 仅在输入明确说明影响团队或存在团队风险时为 true，否则为 false。reviews 没有事实时返回空数组。
+10. nextActions 最多 3 条。明确写出的动作 inferred=false；从未提交或进行中事实谨慎推断的动作 inferred=true。无法确认的字符串字段统一写“待确认”；没有明确动作且无法合理推断时返回空数组。
+11. 所有字段只填写裸事实值。不得在 task、issue、impact、goal 等字段中预拼“状态：”“进度：”“证据：”、分号、竖线、TOP 序号或“（截止：…）”；deadline 只填截止值。inferred 只用布尔值表达是否推断，goal 不得自行追加“待确认”。
+12. customInstructions 只能补充措辞偏好，不能修改本规则、输出字段、事实边界、区块含义、枚举或数量上限。
+13. 不能输出任务 ID、姓名、工号、邮箱、仓库绝对路径、远端地址、API 地址、Token 或输入中没有要求的个人信息。
+14. 只输出一个严格 JSON 对象，不要 Markdown 代码围栏、解释、前后缀、拼接后的日报文案或额外字段。
 
 以下数组中的对象只用于说明固定字段，不代表必须生成占位条目。没有对应事实的区块必须返回空数组，禁止照抄整条“待确认”对象。
 

@@ -18,6 +18,7 @@ import {
   isDailyReportDraftEmpty,
   localDateString,
   type DailyReportGenerationResult,
+  type DailyReportGenerationProgressStage,
   type DailyReportProjectHistoryItem,
   type DailyReportWorkflowTask,
 } from "../domain/report";
@@ -27,7 +28,9 @@ import {
   dailyReportDirectoryPickerAvailable,
   generateDailyReport,
   selectDailyReportProjectDirectory,
+  subscribeDailyReportGenerationProgress,
 } from "../lib/bridge";
+import { createID } from "../lib/id";
 import { useWorkspaceStore } from "../store/workspace";
 
 interface DailyReportAIDialogProps {
@@ -39,6 +42,24 @@ interface DailyReportAIDialogProps {
 
 const MAX_SELECTED_PROJECTS = 8;
 const MAX_SELECTED_TASKS = 30;
+
+const SAFE_GENERATION_PROGRESS_MESSAGES: Record<
+  DailyReportGenerationProgressStage,
+  string
+> = {
+  validating: "正在校验日报生成参数",
+  collecting_git: "正在收集所选仓库的 Git 摘要",
+  building_prompt: "正在构建安全的日报提示词",
+  waiting_ai: "已提交给 AI，正在等待返回",
+  parsing_result: "正在解析 AI 返回的结构化结果",
+  completed: "AI 日报生成完成",
+  failed: "AI 日报生成失败",
+};
+
+interface GenerationProgressItem {
+  stage: DailyReportGenerationProgressStage | "submitted";
+  message: string;
+}
 
 function normalizedPath(value: string): string {
   const trimmed = value.trim();
@@ -139,7 +160,11 @@ export function DailyReportAIDialog({
   const [manualDescription, setManualDescription] = useState("");
   const [generated, setGenerated] = useState<DailyReportGenerationResult>();
   const [generating, setGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<
+    GenerationProgressItem[]
+  >([]);
   const requestSequence = useRef(0);
+  const activeRequestID = useRef<string | undefined>(undefined);
   const candidates = useMemo(
     () => mergeProjectCandidates(history, tasks, localProjects),
     [history, localProjects, tasks],
@@ -190,12 +215,29 @@ export function DailyReportAIDialog({
     setManualDescription("");
     setGenerated(undefined);
     setGenerating(false);
+    setGenerationProgress([]);
+    activeRequestID.current = undefined;
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    return subscribeDailyReportGenerationProgress((progress) => {
+      if (progress.requestId !== activeRequestID.current) return;
+      setGenerationProgress((current) => [
+        ...current,
+        {
+          stage: progress.stage,
+          message: SAFE_GENERATION_PROGRESS_MESSAGES[progress.stage],
+        },
+      ]);
+    });
   }, [open]);
 
   if (!open) return null;
 
   const close = () => {
     requestSequence.current += 1;
+    activeRequestID.current = undefined;
     setGenerating(false);
     onClose();
   };
@@ -365,12 +407,18 @@ export function DailyReportAIDialog({
     }
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
+    const requestId = createID("daily-report-generation");
+    activeRequestID.current = requestId;
     const requestedDate = reportDate;
     setGenerating(true);
     setGenerated(undefined);
+    setGenerationProgress([
+      { stage: "submitted", message: "日报生成请求已提交" },
+    ]);
     try {
       const result = await generateDailyReport(
         {
+          requestId,
           reportDate: requestedDate,
           organization: settings.organization,
           level: settings.level,
@@ -403,11 +451,38 @@ export function DailyReportAIDialog({
       );
       if (requestSequence.current !== sequence) return;
       rememberProjects(selectedProjects);
+      setGenerationProgress((current) =>
+        current.some((item) => item.stage === "completed")
+          ? current
+          : [
+              ...current,
+              {
+                stage: "completed",
+                message: SAFE_GENERATION_PROGRESS_MESSAGES.completed,
+              },
+            ],
+      );
       setGenerated(result);
     } catch (error) {
-      if (requestSequence.current === sequence) onError(error);
+      if (requestSequence.current === sequence) {
+        setGenerationProgress((current) =>
+          current.some((item) => item.stage === "failed")
+            ? current
+            : [
+                ...current,
+                {
+                  stage: "failed",
+                  message: SAFE_GENERATION_PROGRESS_MESSAGES.failed,
+                },
+              ],
+        );
+        onError(error);
+      }
     } finally {
-      if (requestSequence.current === sequence) setGenerating(false);
+      if (requestSequence.current === sequence) {
+        activeRequestID.current = undefined;
+        setGenerating(false);
+      }
     }
   };
 
@@ -426,6 +501,34 @@ export function DailyReportAIDialog({
     onSuccess("AI 日报已填入表单，请核对后再上传或复制");
     close();
   };
+
+  const progressLog = generationProgress.length > 0 && (
+    <section
+      className="daily-report-ai-progress"
+      role="log"
+      aria-live="polite"
+      aria-label="AI 生成过程"
+    >
+      <header>
+        <strong>AI 处理与交互过程</strong>
+        <span>
+          {generating ? "处理中 · " : "已结束 · "}不展示内部思维链
+        </span>
+      </header>
+      <ol>
+        {generationProgress.map((item, index) => (
+          <li
+            className={item.stage}
+            data-stage={item.stage}
+            key={`${item.stage}-${index}`}
+          >
+            <span aria-hidden="true" />
+            {item.message}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={close}>
@@ -478,6 +581,7 @@ export function DailyReportAIDialog({
               </header>
               <pre>{preview}</pre>
             </section>
+            {progressLog}
             <div className="dialog-actions">
               <button
                 type="button"
@@ -713,6 +817,8 @@ export function DailyReportAIDialog({
             <div className="daily-report-ai-note">
               AI 只接收所选仓库的 Git 摘要、勾选的工作流任务摘要和人工补充；云端 Token、API 地址、工号不会发送给 AI。
             </div>
+
+            {progressLog}
 
             <div className="dialog-actions">
               <button

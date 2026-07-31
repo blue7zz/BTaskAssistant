@@ -21,8 +21,12 @@ type memoryCredentialStore struct {
 }
 
 func TestNewAppConfiguresDirectoryDialog(t *testing.T) {
-	if NewApp().openDirectoryDialog == nil {
+	app := NewApp()
+	if app.openDirectoryDialog == nil {
 		t.Fatal("expected the Wails directory dialog to be configured")
+	}
+	if app.emitDailyReportProgress == nil {
+		t.Fatal("expected the Wails daily report progress emitter to be configured")
 	}
 }
 
@@ -135,10 +139,18 @@ func (generator *recordingDailyReportGenerator) Generate(
 	ctx context.Context,
 	input engine.DailyReportGenerationInput,
 	runtime engine.PISettings,
+	reportProgress engine.DailyReportProgressReporter,
 ) (engine.DailyReportGenerationResult, error) {
 	generator.input = input
 	generator.runtime = runtime
 	_, generator.deadline = ctx.Deadline()
+	if reportProgress != nil {
+		reportProgress(engine.DailyReportGenerationProgress{
+			RequestID: input.RequestID,
+			Stage:     "waiting_ai",
+			Message:   "已发送生成请求",
+		})
+	}
 	return generator.result, generator.err
 }
 
@@ -162,11 +174,13 @@ func (s *memoryCredentialStore) Delete(account string) error {
 
 func TestGenerateDailyReportDelegatesWithNormalizedRuntime(t *testing.T) {
 	input := engine.DailyReportGenerationInput{
-		ReportDate:   "2026-07-30",
-		Organization: "万象",
-		Level:        "L1",
-		Role:         "FE",
-		Engine:       "pi",
+		RequestID:          "daily-report-app-test",
+		ReportDate:         "2026-07-30",
+		Organization:       "万象",
+		Level:              "L1",
+		Role:               "FE",
+		Engine:             "pi",
+		CustomInstructions: "突出可验证结果，语言简洁",
 	}
 	expected := engine.DailyReportGenerationResult{
 		ReportDate: "2026-07-30",
@@ -180,7 +194,17 @@ func TestGenerateDailyReportDelegatesWithNormalizedRuntime(t *testing.T) {
 		}},
 	}
 	generator := &recordingDailyReportGenerator{result: expected}
-	app := &App{dailyReportGenerator: generator}
+	var progressEvents []engine.DailyReportGenerationProgress
+	app := &App{
+		ctx:                  context.Background(),
+		dailyReportGenerator: generator,
+		emitDailyReportProgress: func(
+			_ context.Context,
+			progress engine.DailyReportGenerationProgress,
+		) {
+			progressEvents = append(progressEvents, progress)
+		},
+	}
 
 	result, err := app.GenerateDailyReport(input, engine.PISettings{})
 	if err != nil {
@@ -190,7 +214,8 @@ func TestGenerateDailyReportDelegatesWithNormalizedRuntime(t *testing.T) {
 		t.Fatalf("unexpected result %#v", result)
 	}
 	if generator.input.ReportDate != input.ReportDate ||
-		generator.input.Engine != "pi" {
+		generator.input.Engine != "pi" ||
+		generator.input.CustomInstructions != input.CustomInstructions {
 		t.Fatalf("unexpected delegated input %#v", generator.input)
 	}
 	if generator.runtime.ThinkingEffort != "xhigh" ||
@@ -199,6 +224,48 @@ func TestGenerateDailyReportDelegatesWithNormalizedRuntime(t *testing.T) {
 	}
 	if !generator.deadline {
 		t.Fatal("expected App to apply a generation deadline")
+	}
+	if len(progressEvents) != 1 ||
+		progressEvents[0].RequestID != input.RequestID ||
+		progressEvents[0].Stage != "waiting_ai" {
+		t.Fatalf("unexpected progress events %#v", progressEvents)
+	}
+}
+
+func TestGenerateDailyReportEmitsSafeFailureProgress(t *testing.T) {
+	input := engine.DailyReportGenerationInput{
+		RequestID:          "daily-report-failure-test",
+		ReportDate:         "2026-07-30",
+		Organization:       "万象",
+		Level:              "L1",
+		Role:               "FE",
+		Engine:             "pi",
+		ManualDescription:  "测试失败回显",
+		CustomInstructions: "不要泄露这段提示词",
+	}
+	generator := &recordingDailyReportGenerator{err: errors.New("secret backend output")}
+	var progressEvents []engine.DailyReportGenerationProgress
+	app := &App{
+		ctx:                  context.Background(),
+		dailyReportGenerator: generator,
+		emitDailyReportProgress: func(
+			_ context.Context,
+			progress engine.DailyReportGenerationProgress,
+		) {
+			progressEvents = append(progressEvents, progress)
+		},
+	}
+
+	_, err := app.GenerateDailyReport(input, engine.PISettings{})
+	if err == nil {
+		t.Fatal("expected generation failure")
+	}
+	if len(progressEvents) != 2 || progressEvents[1].Stage != "failed" {
+		t.Fatalf("unexpected failure progress %#v", progressEvents)
+	}
+	if strings.Contains(progressEvents[1].Message, "secret") ||
+		strings.Contains(progressEvents[1].Message, input.CustomInstructions) {
+		t.Fatalf("failure progress leaked private text %#v", progressEvents[1])
 	}
 }
 

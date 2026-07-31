@@ -64,10 +64,17 @@ describe("Daily report AI dialog", () => {
     await act(async () => root.unmount());
     container.remove();
     delete window.go;
+    delete window.runtime;
     vi.restoreAllMocks();
   });
 
   it("previews generated content before explicitly filling the form", async () => {
+    useWorkspaceStore.setState((state) => ({
+      dailyReportAISettings: {
+        ...state.dailyReportAISettings,
+        customInstructions: "突出可验证结果，语言简洁",
+      },
+    }));
     const generate = vi.fn().mockResolvedValue({
       reportDate: "2026-07-30",
       results: [
@@ -136,6 +143,7 @@ describe("Daily report AI dialog", () => {
       organization: "万象",
       level: "L1",
       role: "FE",
+      customInstructions: "突出可验证结果，语言简洁",
       workflowTasks: [],
       manualDescription: "参加需求评审",
     });
@@ -147,9 +155,10 @@ describe("Daily report AI dialog", () => {
     ).toBe("");
     expect(container.textContent).toContain("确认生成结果");
     expect(container.textContent).toContain("需求评审");
-    expect(container.textContent).toContain(
-      "确认验收边界；已完成；100%；会议纪要",
-    );
+    expect(container.textContent).toContain("功能：确认验收边界");
+    expect(container.textContent).toContain("状态：已完成");
+    expect(container.textContent).toContain("Git / 验证：");
+    expect(container.textContent).toContain("会议纪要");
     expect(container.textContent).toContain("- 无");
 
     await act(async () => {
@@ -175,7 +184,8 @@ describe("Daily report AI dialog", () => {
     expect(filled.results[0]).toMatchObject({
       projectNo: "会议",
       projectName: "需求评审",
-      description: "确认验收边界；已完成；100%；会议纪要",
+      description:
+        "功能：确认验收边界\n  - 状态：已完成\n  - 进度：100%\n  - Git / 验证：\n    - 会议纪要",
     });
     expect(filled.nextActions).toEqual([
       expect.objectContaining({
@@ -189,6 +199,149 @@ describe("Daily report AI dialog", () => {
     );
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(nativeConfirm).not.toHaveBeenCalled();
+  });
+
+  it("shows only safe progress for the active request and keeps it in the preview", async () => {
+    let resolveGeneration!: (value: {
+      reportDate: string;
+      results: never[];
+      blockers: never[];
+      reviews: never[];
+      nextActions: never[];
+    }) => void;
+    const pendingGeneration = new Promise<{
+      reportDate: string;
+      results: never[];
+      blockers: never[];
+      reviews: never[];
+      nextActions: never[];
+    }>((resolve) => {
+      resolveGeneration = resolve;
+    });
+    const generate = vi.fn().mockReturnValue(pendingGeneration);
+    let progressListener: ((payload: unknown) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const eventsOn = vi.fn(
+      (_eventName: string, listener: (payload: unknown) => void) => {
+        progressListener = listener;
+        return unsubscribe;
+      },
+    );
+    window.runtime = { EventsOn: eventsOn };
+    window.go = {
+      main: {
+        App: {
+          SaveState: vi.fn().mockResolvedValue(undefined),
+          GenerateDailyReport: generate,
+        },
+      },
+    } as unknown as typeof window.go;
+
+    await act(async () => {
+      root.render(
+        createElement(DailyReportAIDialog, {
+          open: true,
+          onClose: vi.fn(),
+          onSuccess: vi.fn(),
+          onError: vi.fn(),
+        }),
+      );
+    });
+    await act(async () => {
+      setTextareaValue(
+        container.querySelector(
+          'textarea[aria-label="日报人工补充"]',
+        ) as HTMLTextAreaElement,
+        "完成日报交互",
+      );
+      findButton(container, "生成预览").click();
+    });
+
+    expect(eventsOn).toHaveBeenCalledWith(
+      "daily-report:generation-progress",
+      expect.any(Function),
+    );
+    expect(generate).toHaveBeenCalledTimes(1);
+    const requestId = generate.mock.calls[0][0].requestId as string;
+    expect(requestId).toMatch(/^daily-report-generation_/);
+    const pendingLog = container.querySelector<HTMLElement>(
+      '[role="log"][aria-label="AI 生成过程"]',
+    );
+    expect(pendingLog?.textContent).toContain("日报生成请求已提交");
+
+    await act(async () => {
+      progressListener?.({
+        requestId: "another-request",
+        stage: "validating",
+        message: "不应显示的其他请求",
+      });
+      progressListener?.({
+        requestId,
+        stage: "validating",
+        message: "prompt=/private/secret 提示词和隐藏思维链",
+      });
+      progressListener?.({
+        requestId,
+        stage: "collecting_git",
+        message: "stdout: SECRET_TOKEN task=机密任务 /Users/secret/repo",
+      });
+    });
+
+    expect(pendingLog?.textContent).toContain("正在校验日报生成参数");
+    expect(pendingLog?.textContent).toContain(
+      "正在收集所选仓库的 Git 摘要",
+    );
+    expect(pendingLog?.textContent).not.toContain("不应显示的其他请求");
+    expect(pendingLog?.textContent).not.toContain("/private/secret");
+    expect(pendingLog?.textContent).not.toContain("SECRET_TOKEN");
+    expect(pendingLog?.textContent).not.toContain("机密任务");
+    expect(pendingLog?.textContent).not.toContain("隐藏思维链");
+
+    await act(async () => {
+      progressListener?.({
+        requestId,
+        stage: "parsing_result",
+        message: "正在解析结果",
+      });
+      resolveGeneration({
+        reportDate: "2026-07-30",
+        results: [],
+        blockers: [],
+        reviews: [],
+        nextActions: [],
+      });
+      await pendingGeneration;
+    });
+
+    expect(container.textContent).toContain("确认生成结果");
+    const previewLog = container.querySelector<HTMLElement>(
+      '[role="log"][aria-label="AI 生成过程"]',
+    );
+    expect(previewLog?.textContent).toContain("日报生成请求已提交");
+    expect(previewLog?.textContent).toContain("正在解析 AI 返回的结构化结果");
+    expect(previewLog?.textContent).toContain("AI 日报生成完成");
+
+    await act(async () => {
+      progressListener?.({
+        requestId,
+        stage: "failed",
+        message: "迟到事件中的 stderr 和路径 /Users/late/repo",
+      });
+    });
+    expect(previewLog?.textContent).not.toContain("AI 日报生成失败");
+    expect(previewLog?.textContent).not.toContain("/Users/late/repo");
+
+    await act(async () => {
+      root.render(
+        createElement(DailyReportAIDialog, {
+          open: false,
+          onClose: vi.fn(),
+          onSuccess: vi.fn(),
+          onError: vi.fn(),
+        }),
+      );
+    });
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it("remembers selected projects and refuses to fill a different date", async () => {

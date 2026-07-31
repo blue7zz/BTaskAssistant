@@ -11,6 +11,7 @@ import (
 
 func dailyReportGenerationTestInput() DailyReportGenerationInput {
 	return DailyReportGenerationInput{
+		RequestID:          "daily-report-engine-test",
 		ReportDate:         "2026-07-30",
 		Organization:       "万象",
 		Level:              "L1",
@@ -270,6 +271,10 @@ func TestBuildDailyReportGenerationPromptExcludesLocalIdentityAndPaths(t *testin
 		"附加指令",
 		"不能修改本规则",
 		"三类事实来源",
+		"同事能直接理解的完整工作说明",
+		"禁止只写“某模块相关调整”",
+		"具体功能待补充（Git 摘要无法确认改动内容）",
+		"提交：暂无（当前存在未提交变更）",
 		"所有字段只填写裸事实值",
 		`"customInstructions": "保持简洁"`,
 		`"gitContext"`,
@@ -286,6 +291,7 @@ func TestBuildDailyReportGenerationPromptExcludesLocalIdentityAndPaths(t *testin
 		}
 	}
 	for _, removed := range []string{
+		`"requestId"`,
 		`"taskId"`,
 		`"updatedAt"`,
 		`"supplement"`,
@@ -588,6 +594,7 @@ printf '%s' '{"reportDate":"2026-07-30","results":[{"projectNo":"会议","projec
 	t.Setenv("BTASK_FAKE_PROMPT", promptCopyPath)
 
 	input := dailyReportGenerationTestInput()
+	var progressEvents []DailyReportGenerationProgress
 	result, err := (DailyReportGenerator{}).Generate(
 		context.Background(),
 		input,
@@ -596,12 +603,32 @@ printf '%s' '{"reportDate":"2026-07-30","results":[{"projectNo":"会议","projec
 			ThinkingEffort: "high",
 			TimeoutMinutes: 1,
 		},
+		func(progress DailyReportGenerationProgress) {
+			progressEvents = append(progressEvents, progress)
+		},
 	)
 	if err != nil {
 		t.Fatalf("generate with fake PI: %v", err)
 	}
 	if len(result.Results) != 1 || result.Results[0].Task != "确认验收标准" {
 		t.Fatalf("unexpected generated result %#v", result)
+	}
+	expectedStages := []string{
+		"validating",
+		"collecting_git",
+		"building_prompt",
+		"waiting_ai",
+		"parsing_result",
+		"completed",
+	}
+	if len(progressEvents) != len(expectedStages) {
+		t.Fatalf("unexpected progress events %#v", progressEvents)
+	}
+	for index, stage := range expectedStages {
+		if progressEvents[index].RequestID != input.RequestID ||
+			progressEvents[index].Stage != stage {
+			t.Fatalf("unexpected progress event %d: %#v", index, progressEvents[index])
+		}
 	}
 	arguments, err := os.ReadFile(argumentsPath)
 	if err != nil {
@@ -665,6 +692,7 @@ printf '%s' '{"reportDate":"2026-07-30","results":[],"blockers":[],"reviews":[],
 			ThinkingEffort: "medium",
 			TimeoutMinutes: 1,
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("generate with fake Codex: %v", err)

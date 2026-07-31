@@ -233,13 +233,16 @@ describe("Daily report page", () => {
           'textarea[aria-label="今日结果描述"]',
         ) as HTMLTextAreaElement
       ).value,
-    ).toBe("完成登录页联调；已完成；100%；回归记录");
+    ).toBe(
+      "功能：完成登录页联调\n  - 状态：已完成\n  - 进度：100%\n  - Git / 验证：\n    - 回归记录",
+    );
     expect(
       useWorkspaceStore.getState().dailyReportDrafts["2026-07-30"].results[0],
     ).toMatchObject({
       projectNo: "Y06",
       projectName: "Y06 App",
-      description: "完成登录页联调；已完成；100%；回归记录",
+      description:
+        "功能：完成登录页联调\n  - 状态：已完成\n  - 进度：100%\n  - Git / 验证：\n    - 回归记录",
     });
     expect(onSuccess).toHaveBeenCalledWith(
       "AI 日报已填入表单，请核对后再上传或复制",

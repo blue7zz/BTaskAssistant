@@ -133,7 +133,7 @@ export function SettingsPage({
             <NotebookPen size={17} />
             <span>
               <strong>日报设置</strong>
-              <small>人员资料与云端提交</small>
+              <small>人员资料、AI 提示词与云端提交</small>
             </span>
           </button>
         </nav>

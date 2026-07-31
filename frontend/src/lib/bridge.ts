@@ -11,6 +11,7 @@ import type { TaskStatus } from "../domain/task";
 import type { PISettings } from "../domain/engine";
 import type {
   DailyReportGenerationInput,
+  DailyReportGenerationProgress,
   DailyReportGenerationResult,
   DailyReportSettings,
 } from "../domain/report";
@@ -123,6 +124,10 @@ declare global {
     };
     runtime?: {
       BrowserOpenURL?(url: string): void;
+      EventsOn?(
+        eventName: string,
+        callback: (payload: unknown) => void,
+      ): (() => void) | void;
     };
   }
 }
@@ -228,6 +233,47 @@ export function dailyReportAIAvailable(): boolean {
 
 export function dailyReportDirectoryPickerAvailable(): boolean {
   return typeof nativeApp()?.SelectDailyReportProjectDirectory === "function";
+}
+
+const DAILY_REPORT_GENERATION_PROGRESS_EVENT =
+  "daily-report:generation-progress";
+
+const DAILY_REPORT_GENERATION_PROGRESS_STAGES = new Set([
+  "validating",
+  "collecting_git",
+  "building_prompt",
+  "waiting_ai",
+  "parsing_result",
+  "completed",
+  "failed",
+]);
+
+function isDailyReportGenerationProgress(
+  payload: unknown,
+): payload is DailyReportGenerationProgress {
+  if (!payload || typeof payload !== "object") return false;
+  const candidate = payload as Record<string, unknown>;
+  return (
+    typeof candidate.requestId === "string" &&
+    candidate.requestId.length > 0 &&
+    typeof candidate.stage === "string" &&
+    DAILY_REPORT_GENERATION_PROGRESS_STAGES.has(candidate.stage) &&
+    typeof candidate.message === "string"
+  );
+}
+
+export function subscribeDailyReportGenerationProgress(
+  listener: (progress: DailyReportGenerationProgress) => void,
+): () => void {
+  const runtime = window.runtime;
+  if (typeof runtime?.EventsOn !== "function") return () => undefined;
+  const unsubscribe = runtime.EventsOn(
+    DAILY_REPORT_GENERATION_PROGRESS_EVENT,
+    (payload) => {
+      if (isDailyReportGenerationProgress(payload)) listener(payload);
+    },
+  );
+  return typeof unsubscribe === "function" ? unsubscribe : () => undefined;
 }
 
 export async function selectDailyReportProjectDirectory(): Promise<string> {

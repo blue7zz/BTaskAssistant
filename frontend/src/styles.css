@@ -5417,6 +5417,69 @@ body.panel-resizing .workspace-grid {
   background: #fffaf0;
 }
 
+.daily-report-ai-progress {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: #5d5f68;
+  border: 1px solid #dedbf7;
+  border-radius: 10px;
+  background: #fcfbff;
+}
+
+.daily-report-ai-progress > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #eceaf9;
+}
+
+.daily-report-ai-progress > header strong {
+  color: #4d4e56;
+  font-size: 9px;
+}
+
+.daily-report-ai-progress > header span {
+  color: #8d899e;
+  font-size: 8px;
+}
+
+.daily-report-ai-progress ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+}
+
+.daily-report-ai-progress li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+
+.daily-report-ai-progress li > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8176ed;
+  box-shadow: 0 0 0 3px rgba(129, 118, 237, 0.1);
+}
+
+.daily-report-ai-progress li.completed > span {
+  background: #2d9c71;
+  box-shadow: 0 0 0 3px rgba(45, 156, 113, 0.1);
+}
+
+.daily-report-ai-progress li.failed > span {
+  background: #dc5a60;
+  box-shadow: 0 0 0 3px rgba(220, 90, 96, 0.1);
+}
+
 .daily-report-ai-preview pre {
   max-height: 440px;
   margin: 14px;

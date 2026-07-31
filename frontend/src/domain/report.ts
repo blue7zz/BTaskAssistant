@@ -51,6 +51,7 @@ export interface DailyReportWorkflowTask {
 }
 
 export interface DailyReportGenerationInput {
+  requestId: string;
   reportDate: string;
   organization: string;
   level: string;
@@ -62,6 +63,21 @@ export interface DailyReportGenerationInput {
   projects: DailyReportGenerationProject[];
   workflowTasks: DailyReportWorkflowTask[];
   manualDescription: string;
+}
+
+export type DailyReportGenerationProgressStage =
+  | "validating"
+  | "collecting_git"
+  | "building_prompt"
+  | "waiting_ai"
+  | "parsing_result"
+  | "completed"
+  | "failed";
+
+export interface DailyReportGenerationProgress {
+  requestId: string;
+  stage: DailyReportGenerationProgressStage;
+  message: string;
 }
 
 export type DailyReportGeneratedStatus =
@@ -459,6 +475,8 @@ const GENERATED_STATUSES: readonly DailyReportGeneratedStatus[] = [
 ];
 const INTERNAL_EVIDENCE_FIELD_PATTERN =
   /(?:manualDescription|workflowTasks|gitContext|customInstructions|taskId|updatedAt|developmentState|developmentResult|reviewNote)|(?:^|[^A-Za-z0-9_])["']?(?:title|projectName|status|summary|taskId|updatedAt|developmentState|developmentResult|reviewNote)["']?\s*[:=：]/i;
+const VAGUE_GENERATED_TASK_PATTERN =
+  /^(.*?)(?:相关调整(?:与测试|和测试)?|相关优化|相关修改|相关处理|问题处理|调整与测试)[。.]*$/;
 
 function generatedText(value: unknown, fallback = PENDING_CONFIRMATION): string {
   if (typeof value !== "string") return fallback;
@@ -478,6 +496,16 @@ function generatedStatus(value: unknown): DailyReportGeneratedStatus {
   return GENERATED_STATUSES.includes(normalized as DailyReportGeneratedStatus)
     ? (normalized as DailyReportGeneratedStatus)
     : PENDING_CONFIRMATION;
+}
+
+function generatedTask(value: unknown): string {
+  const normalized = generatedText(value);
+  const vagueMatch = VAGUE_GENERATED_TASK_PATTERN.exec(normalized);
+  if (!vagueMatch) return normalized;
+  const scope = vagueMatch[1].trim();
+  return scope
+    ? `${scope} 的具体功能待补充（Git 摘要无法确认改动内容）`
+    : "具体功能待补充（Git 摘要无法确认改动内容）";
 }
 
 function generatedProgress(value: unknown): string {
@@ -510,6 +538,17 @@ function generatedEvidence(value: unknown): string[] {
   return evidence.length > 0 ? evidence : [PENDING_CONFIRMATION];
 }
 
+function generatedResultDescription(row: DailyReportGeneratedResultRow): string {
+  const evidence = generatedEvidence(row?.evidence);
+  return [
+    `功能：${generatedTask(row?.task)}`,
+    `  - 状态：${generatedStatus(row?.status)}`,
+    `  - 进度：${generatedProgress(row?.progress)}`,
+    "  - Git / 验证：",
+    ...evidence.map((item) => `    - ${item}`),
+  ].join("\n");
+}
+
 function generatedBlockerLevel(
   value: unknown,
 ): DailyReportGeneratedBlockerLevel {
@@ -538,12 +577,7 @@ export function dailyReportDraftFromGenerationResult(
       id: createID("report-project"),
       projectNo: generatedText(row?.projectNo, "未编号"),
       projectName: generatedText(row?.projectName, "未命名"),
-      description: [
-        generatedText(row?.task),
-        generatedStatus(row?.status),
-        generatedProgress(row?.progress),
-        generatedEvidence(row?.evidence).join(" · "),
-      ].join("；"),
+      description: generatedResultDescription(row),
     })),
     blockers: (Array.isArray(result.blockers) ? result.blockers : []).map(
       (row) => ({

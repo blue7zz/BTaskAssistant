@@ -131,7 +131,8 @@ describe("daily report domain", () => {
     expect(draft.results[0]).toMatchObject({
       projectNo: "Y16",
       projectName: "Y16 App",
-      description: "完成日报入口；已完成；100%；commit abc123 · pnpm test",
+      description:
+        "功能：完成日报入口\n  - 状态：已完成\n  - 进度：100%\n  - Git / 验证：\n    - commit abc123\n    - pnpm test",
     });
     expect(draft.results[0].id).toMatch(/^report-project_/);
     expect(draft.reviews[0].id).toMatch(/^report-review_/);
@@ -201,6 +202,17 @@ describe("daily report domain", () => {
           progress: "未知",
           evidence: [],
         },
+        {
+          projectNo: "123",
+          projectName: "123",
+          task: "dialog_manager 相关调整与测试",
+          status: "进行中",
+          progress: "待确认",
+          evidence: [
+            "分支：release/2.10.12",
+            "提交：暂无（当前存在未提交变更）",
+          ],
+        },
       ],
       blockers: [
         {
@@ -255,13 +267,16 @@ describe("daily report domain", () => {
       projectNo: "未编号",
       projectName: "未命名",
       description:
-        "修复日报 预览；待确认；47%；接口返回 status 200 · commit abc123",
+        "功能：修复日报 预览\n  - 状态：待确认\n  - 进度：47%\n  - Git / 验证：\n    - 接口返回 status 200\n    - commit abc123",
     });
     expect(draft.results[1].description).toBe(
-      "核对生成结果；阻塞；12%；待确认",
+      "功能：核对生成结果\n  - 状态：阻塞\n  - 进度：12%\n  - Git / 验证：\n    - 待确认",
     );
     expect(draft.results[2].description).toBe(
-      "确认进度；进行中；待确认；待确认",
+      "功能：确认进度\n  - 状态：进行中\n  - 进度：待确认\n  - Git / 验证：\n    - 待确认",
+    );
+    expect(draft.results[3].description).toBe(
+      "功能：dialog_manager 的具体功能待补充（Git 摘要无法确认改动内容）\n  - 状态：进行中\n  - 进度：待确认\n  - Git / 验证：\n    - 分支：release/2.10.12\n    - 提交：暂无（当前存在未提交变更）",
     );
     expect(draft.blockers[0].description).toBe(
       "等待接口字段确认 | P1 | 联调暂停 | 后端 | 2h | Y",
@@ -297,6 +312,9 @@ describe("daily report domain", () => {
       /(?:status|summary|taskId|updatedAt)\s*[:=：]/i,
     );
     expect(markdown).toContain("接口返回 status 200");
+    expect(markdown).toContain(
+      "- [未编号 | 未命名] 功能：修复日报 预览\n  - 状态：待确认",
+    );
     expect(markdown).not.toMatch(/[\r\n]预览/);
   });
 
@@ -356,6 +374,7 @@ describe("daily report domain", () => {
 
 describe("daily report AI bridge", () => {
   const input: DailyReportGenerationInput = {
+    requestId: "daily-report-test-request",
     reportDate: "2026-07-30",
     organization: "万象",
     level: "L1",

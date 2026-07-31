@@ -23,15 +23,23 @@ type directoryDialogOpener func(
 	wailsruntime.OpenDialogOptions,
 ) (string, error)
 
+const dailyReportGenerationProgressEvent = "daily-report:generation-progress"
+
+type dailyReportProgressEmitter func(
+	context.Context,
+	engine.DailyReportGenerationProgress,
+)
+
 // App exposes the deliberately small native boundary used by the React client.
 // Product decisions stay in the workflow layer; AI engines stay behind adapters.
 type App struct {
-	ctx                  context.Context
-	store                *storage.SQLiteStore
-	credentials          credentials.Store
-	dailyReportGenerator engine.DailyReportGenerating
-	openDirectoryDialog  directoryDialogOpener
-	startupErr           error
+	ctx                     context.Context
+	store                   *storage.SQLiteStore
+	credentials             credentials.Store
+	dailyReportGenerator    engine.DailyReportGenerating
+	emitDailyReportProgress dailyReportProgressEmitter
+	openDirectoryDialog     directoryDialogOpener
+	startupErr              error
 }
 
 func NewApp() *App {
@@ -39,7 +47,17 @@ func NewApp() *App {
 		store:                storage.NewSQLiteStore("BTaskAssistant"),
 		credentials:          credentials.NewSystemStore("BTaskAssistant"),
 		dailyReportGenerator: engine.DailyReportGenerator{},
-		openDirectoryDialog:  wailsruntime.OpenDirectoryDialog,
+		emitDailyReportProgress: func(
+			ctx context.Context,
+			progress engine.DailyReportGenerationProgress,
+		) {
+			wailsruntime.EventsEmit(
+				ctx,
+				dailyReportGenerationProgressEvent,
+				progress,
+			)
+		},
+		openDirectoryDialog: wailsruntime.OpenDirectoryDialog,
 	}
 }
 
@@ -540,8 +558,29 @@ func (a *App) GenerateDailyReport(
 	input engine.DailyReportGenerationInput,
 	runtime engine.PISettings,
 ) (engine.DailyReportGenerationResult, error) {
+	requestID := strings.TrimSpace(input.RequestID)
+	progressEnabled := requestID != "" &&
+		len(requestID) <= 120 &&
+		!strings.ContainsAny(requestID, "\x00\r\n")
+	reportProgress := func(progress engine.DailyReportGenerationProgress) {
+		if !progressEnabled ||
+			progress.RequestID != requestID ||
+			a.ctx == nil ||
+			a.emitDailyReportProgress == nil {
+			return
+		}
+		a.emitDailyReportProgress(a.ctx, progress)
+	}
+	emitFailure := func() {
+		reportProgress(engine.DailyReportGenerationProgress{
+			RequestID: requestID,
+			Stage:     "failed",
+			Message:   "生成失败，已停止本次处理",
+		})
+	}
 	runtime, err := engine.NormalizePISettings(runtime)
 	if err != nil {
+		emitFailure()
 		return engine.DailyReportGenerationResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(
@@ -553,7 +592,12 @@ func (a *App) GenerateDailyReport(
 	if generator == nil {
 		generator = engine.DailyReportGenerator{}
 	}
-	return generator.Generate(ctx, input, runtime)
+	result, err := generator.Generate(ctx, input, runtime, reportProgress)
+	if err != nil {
+		emitFailure()
+		return engine.DailyReportGenerationResult{}, err
+	}
+	return result, nil
 }
 
 // AnalyzeRequirements runs a single structured requirement-interview round.

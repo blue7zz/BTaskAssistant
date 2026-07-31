@@ -320,7 +320,7 @@ export function DailyReportSettings({
           </div>
           <div>
             <strong>AI 生成</strong>
-            <span>控制日报生成引擎、Git 采集范围和附加写作偏好</span>
+            <span>控制日报生成引擎、Git 采集范围和自定义提示词</span>
           </div>
         </div>
 
@@ -454,11 +454,11 @@ export function DailyReportSettings({
 
         <label className="field daily-report-ai-instructions">
           <span>
-            附加写作指令
-            <small>可选，不能覆盖固定公司格式与事实边界</small>
+            自定义提示词
+            <small>保存后会随每次 AI 生成请求传入</small>
           </span>
           <textarea
-            aria-label="日报 AI 附加写作指令"
+            aria-label="日报 AI 自定义提示词"
             value={aiDraft.customInstructions}
             onChange={(event) =>
               setAIDraft((current) => ({
@@ -473,7 +473,7 @@ export function DailyReportSettings({
         <div className="daily-report-fixed-rules" role="note">
           <Info size={16} />
           <span>
-            固定规则已内置：锚点与四段顺序不可修改；Git 事实不得编造；空区块写“无”；明日动作最多 TOP1–3；生成结果必须预览并人工确认。
+            自定义提示词用于调整写作风格和整理偏好。固定规则仍会保留：锚点与四段顺序不可修改；Git 事实不得编造；空区块写“无”；明日动作最多 TOP1–3；生成结果必须预览并人工确认。
           </span>
         </div>
       </section>
