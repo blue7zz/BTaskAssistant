@@ -2,13 +2,24 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 )
 
-func TestPIRequirementAnalysisDoesNotFallbackToOMPBeforeRPC(t *testing.T) {
+func TestPIRequirementAnalysisUsesNativeRPCUtility(t *testing.T) {
+	previous := runNativePIUtility
+	t.Cleanup(func() { runNativePIUtility = previous })
+	called := false
+	runNativePIUtility = func(_ context.Context, request agent.UtilityRequest) (string, error) {
+		called = true
+		if request.Prompt != "fixed prompt" || request.WorkDir == "" {
+			t.Fatalf("unexpected utility request %#v", request)
+		}
+		return "native rpc", nil
+	}
 	output, err := runRequirementCLI(
 		context.Background(),
 		"pi",
@@ -18,8 +29,8 @@ func TestPIRequirementAnalysisDoesNotFallbackToOMPBeforeRPC(t *testing.T) {
 		nil,
 		PISettings{},
 	)
-	if output != "" || !errors.Is(err, ErrPIUtilityRPCUnavailable) {
-		t.Fatalf("expected native PI RPC unavailable error, output %q error %v", output, err)
+	if err != nil || output != "native rpc" || !called {
+		t.Fatalf("expected native PI RPC result, output %q error %v", output, err)
 	}
 }
 

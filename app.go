@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
 	"github.com/blue7zz/BTaskAssistant/internal/plane"
@@ -40,6 +41,7 @@ type dailyReportProgressEmitter func(
 type App struct {
 	ctx                     context.Context
 	store                   *storage.SQLiteStore
+	agentService            agent.AgentAPI
 	credentials             credentials.Store
 	dailyReportGenerator    engine.DailyReportGenerating
 	emitDailyReportProgress dailyReportProgressEmitter
@@ -49,7 +51,7 @@ type App struct {
 }
 
 func NewApp() *App {
-	return &App{
+	app := &App{
 		store:                storage.NewSQLiteStore("BTaskAssistant"),
 		credentials:          credentials.NewSystemStore("BTaskAssistant"),
 		dailyReportGenerator: engine.DailyReportGenerator{},
@@ -66,6 +68,14 @@ func NewApp() *App {
 		openDirectoryDialog: wailsruntime.OpenDirectoryDialog,
 		openPath:            openPathInFileManager,
 	}
+	app.agentService = agent.NewService(app.store, agent.ServiceOptions{
+		Emit: func(event agent.Event) {
+			if app.ctx != nil {
+				wailsruntime.EventsEmit(app.ctx, agent.EventName, event)
+			}
+		},
+	})
+	return app
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -73,10 +83,18 @@ func (a *App) startup(ctx context.Context) {
 	a.startupErr = a.store.Open()
 	if a.startupErr == nil {
 		_ = a.store.ReconcileTaskContexts()
+		if a.agentService != nil {
+			a.startupErr = a.agentService.RecoverInterrupted()
+		}
 	}
 }
 
 func (a *App) shutdown(_ context.Context) {
+	if a.agentService != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = a.agentService.Close(ctx)
+		cancel()
+	}
 	_ = a.store.Close()
 }
 
@@ -172,6 +190,78 @@ func (a *App) ReadTaskWorkspaceFile(
 		return taskspace.FilePreview{}, a.startupErr
 	}
 	return a.store.ReadTaskWorkspaceFile(taskID, path)
+}
+
+func (a *App) ListAgentSessions(
+	taskID string,
+) ([]storage.AgentSessionRecord, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Sessions(taskID)
+}
+
+func (a *App) ListAgentMessages(
+	taskID string,
+	sessionID string,
+) ([]storage.AgentMessageRecord, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Messages(taskID, sessionID)
+}
+
+func (a *App) ListExecutionRuns(
+	taskID string,
+	sessionID string,
+) ([]storage.ExecutionRunRecord, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Runs(taskID, sessionID)
+}
+
+func (a *App) CreateAgentSession(
+	request agent.CreateSessionRequest,
+) (storage.AgentSessionRecord, error) {
+	if a.startupErr != nil {
+		return storage.AgentSessionRecord{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return storage.AgentSessionRecord{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.CreateSession(a.appContext(), request)
+}
+
+func (a *App) SendAgentPrompt(
+	request agent.PromptRequest,
+) (storage.ExecutionRunRecord, error) {
+	if a.startupErr != nil {
+		return storage.ExecutionRunRecord{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return storage.ExecutionRunRecord{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.SendPrompt(a.appContext(), request)
+}
+
+func (a *App) AbortAgentRun(request agent.AbortRequest) error {
+	if a.startupErr != nil {
+		return a.startupErr
+	}
+	if a.agentService == nil {
+		return errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Abort(a.appContext(), request)
 }
 
 func (a *App) SelectTaskContextRoot() (string, error) {
@@ -673,10 +763,17 @@ func (a *App) AnalyzePlaneCandidate(
 	if strings.TrimSpace(sourceMarkdown) == "" {
 		return engine.CandidateAnalysis{}, errors.New("候选来源不能为空")
 	}
-	if _, err := engine.NormalizePISettings(settings); err != nil {
+	normalized, err := engine.NormalizePISettings(settings)
+	if err != nil {
 		return engine.CandidateAnalysis{}, err
 	}
-	return engine.CandidateAnalysis{}, engine.ErrPIUtilityRPCUnavailable
+	settings = normalized
+	ctx, cancel := context.WithTimeout(
+		a.appContext(),
+		time.Duration(settings.TimeoutMinutes)*time.Minute+15*time.Second,
+	)
+	defer cancel()
+	return engine.AnalyzePlaneCandidateWithPI(ctx, sourceMarkdown, settings)
 }
 
 // GenerateDailyReport produces a structured candidate from read-only Git facts,

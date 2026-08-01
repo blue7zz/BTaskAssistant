@@ -339,6 +339,50 @@ func TestGovernanceRepositoriesPersistLifecycleAndEnforceScope(t *testing.T) {
 	}
 }
 
+func TestInterruptActiveAgentActivityPreservesHistoryAndMarksActiveRows(t *testing.T) {
+	store := newNormalizedRepositoryStore(t)
+	seedNormalizedTask(t, store, "task_interrupted")
+	session := repositorySession("task_interrupted", "session-interrupted")
+	session.State = "running"
+	if err := store.UpsertAgentSession(session); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	run := repositoryRun("task_interrupted", session.ID, "run-interrupted")
+	run.State = "running"
+	if err := store.UpsertExecutionRun(run); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	content := "partial"
+	message := AgentMessageRecord{
+		ID: "message-interrupted", TaskID: "task_interrupted", SessionID: session.ID,
+		RunID: &run.ID, Role: "assistant", Kind: "text", Status: "streaming",
+		Content: &content, Sequence: 1, CreatedAt: repositoryTestTime,
+	}
+	if err := store.UpsertAgentMessage(message); err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+
+	interruptedAt := "2026-08-01T08:05:00Z"
+	if err := store.InterruptActiveAgentActivity(interruptedAt, "应用已重启"); err != nil {
+		t.Fatalf("interrupt activity: %v", err)
+	}
+	storedSession, err := store.AgentSession("task_interrupted", session.ID)
+	if err != nil || storedSession.State != "interrupted" || storedSession.ErrorMessage == nil {
+		t.Fatalf("unexpected interrupted session %#v, %v", storedSession, err)
+	}
+	storedRun, err := store.ExecutionRun("task_interrupted", run.ID)
+	if err != nil || storedRun.State != "interrupted" || storedRun.FinishedAt == nil {
+		t.Fatalf("unexpected interrupted run %#v, %v", storedRun, err)
+	}
+	messages, err := store.AgentMessages("task_interrupted", session.ID)
+	if err != nil || len(messages) != 1 || messages[0].Status != "error" || messages[0].Content == nil {
+		t.Fatalf("unexpected interrupted messages %#v, %v", messages, err)
+	}
+	if err := store.InterruptActiveAgentActivity(interruptedAt, "应用已重启"); err != nil {
+		t.Fatalf("repeat interruption must be idempotent: %v", err)
+	}
+}
+
 func TestNormalizedRepositoriesRejectUnsafeStoredPaths(t *testing.T) {
 	store := newNormalizedRepositoryStore(t)
 	seedNormalizedTask(t, store, "task_paths_repo")

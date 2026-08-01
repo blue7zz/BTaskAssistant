@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 )
 
 const (
@@ -392,7 +395,31 @@ func runRequirementCLI(
 	settings PISettings,
 ) (string, error) {
 	if analyst == "pi" {
-		return "", ErrPIUtilityRPCUnavailable
+		images := make([]agent.UtilityImage, 0, len(attachments))
+		for _, attachment := range attachments {
+			content, err := os.ReadFile(attachment.Path)
+			if err != nil {
+				return "", fmt.Errorf("读取 PI 需求图片失败: %w", err)
+			}
+			mimeType := http.DetectContentType(content)
+			switch mimeType {
+			case "image/png", "image/jpeg", "image/gif", "image/webp":
+			default:
+				return "", errors.New("需求图片格式不受 PI 支持")
+			}
+			images = append(images, agent.UtilityImage{
+				Data: base64.StdEncoding.EncodeToString(content), MIMEType: mimeType,
+			})
+		}
+		output, err := runNativePIUtility(ctx, agent.UtilityRequest{
+			Prompt: prompt, WorkDir: workDir, Model: settings.Model,
+			ThinkingLevel: settings.ThinkingEffort, Images: images,
+			MaxOutputBytes: maxRequirementOutputBytes,
+		})
+		if err != nil {
+			return "", fmt.Errorf("PI 需求分析失败: %w", err)
+		}
+		return output, nil
 	}
 	if analyst != "codex" {
 		return "", fmt.Errorf("不支持的需求分析器 %q", analyst)

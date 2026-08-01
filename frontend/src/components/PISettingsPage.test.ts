@@ -80,7 +80,7 @@ describe("PI settings page", () => {
       timeoutMinutes: 5,
     });
     expect(onSuccess).toHaveBeenCalledWith(
-      "PI 设置已保存，将在原生 RPC 接入后使用",
+      "PI 设置已保存，将在新建 PI 会话时应用",
     );
   });
 });

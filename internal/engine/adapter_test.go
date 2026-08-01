@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,19 +17,17 @@ func TestNativePIProbeUsesIsolatedAgentDirectory(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "pi-agent-dir.txt")
 	sessionCapturePath := filepath.Join(t.TempDir(), "pi-session-dir.txt")
 	piPath := filepath.Join(binDirectory, "pi")
-	script := `#!/bin/sh
+	script := fmt.Sprintf(`#!/bin/sh
 set -eu
-printf '%s' "$PI_CODING_AGENT_DIR" > "$BTASK_PI_AGENT_DIR_CAPTURE"
-printf '%s' "$PI_CODING_AGENT_SESSION_DIR" > "$BTASK_PI_SESSION_DIR_CAPTURE"
-printf '%s\n' '0.82.1'
-`
+printf '%%s' "$PI_CODING_AGENT_DIR" > %q
+printf '%%s' "$PI_CODING_AGENT_SESSION_DIR" > %q
+printf '%%s\n' '0.82.1'
+`, capturePath, sessionCapturePath)
 	if err := os.WriteFile(piPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDirectory)
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(t.TempDir(), "global-pi-agent"))
-	t.Setenv("BTASK_PI_AGENT_DIR_CAPTURE", capturePath)
-	t.Setenv("BTASK_PI_SESSION_DIR_CAPTURE", sessionCapturePath)
 
 	path, version, err := nativePICommandDetails()
 	if err != nil {
@@ -65,7 +64,7 @@ func TestNativePIProbeRejectsBrokenExecutable(t *testing.T) {
 	}
 }
 
-func TestStatusesExposeNativePIWithoutClaimingRPCAnalysis(t *testing.T) {
+func TestStatusesExposeNativePIRPCAnalysis(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake PI probe uses a POSIX shell")
 	}
@@ -80,7 +79,7 @@ func TestStatusesExposeNativePIWithoutClaimingRPCAnalysis(t *testing.T) {
 		t.Fatalf("unexpected statuses %#v", statuses)
 	}
 	pi := statuses[0]
-	if pi.ID != "pi" || pi.Label != "PI" || !pi.Configured || pi.RequirementAnalysis || pi.CommandPath != piPath {
+	if pi.ID != "pi" || pi.Label != "PI" || !pi.Configured || !pi.RequirementAnalysis || pi.CommandPath != piPath {
 		t.Fatalf("unexpected native PI status %#v", pi)
 	}
 	if strings.Contains(strings.ToLower(pi.Description), "oh-my-pi") || strings.Contains(strings.ToLower(pi.Description), "omp") {

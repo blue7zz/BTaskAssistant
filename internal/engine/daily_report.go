@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 	"github.com/blue7zz/BTaskAssistant/internal/report"
 )
 
@@ -545,7 +546,15 @@ func runDailyReportCLI(
 	runtime PISettings,
 ) (string, error) {
 	if analyst == "pi" {
-		return "", ErrPIUtilityRPCUnavailable
+		output, err := runNativePIUtility(ctx, agent.UtilityRequest{
+			Prompt: prompt, Model: runtime.Model,
+			ThinkingLevel:  runtime.ThinkingEffort,
+			MaxOutputBytes: maxDailyReportOutputBytes,
+		})
+		if err != nil {
+			return "", fmt.Errorf("PI 日报生成失败: %w", err)
+		}
+		return output, nil
 	}
 	if analyst != "codex" {
 		return "", fmt.Errorf("不支持的日报生成器 %q", analyst)

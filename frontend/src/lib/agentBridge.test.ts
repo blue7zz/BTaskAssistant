@@ -1,0 +1,161 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentEvent } from "../domain/agent";
+import {
+  agentClient,
+  parseAgentEvent,
+  resetBrowserAgentMockForTests,
+} from "./agentBridge";
+
+const VALID_EVENT: AgentEvent = {
+  version: 1,
+  eventId: "event_1",
+  sequence: 1,
+  kind: "message.delta",
+  taskId: "task_a",
+  sessionId: "session_a",
+  runId: "run_a",
+  occurredAt: "2026-08-01T00:00:00Z",
+  payload: { messageId: "message_a", delta: "内容" },
+};
+
+describe("PI agent bridge", () => {
+  beforeEach(() => {
+    delete window.go;
+    delete window.runtime;
+    resetBrowserAgentMockForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    resetBrowserAgentMockForTests();
+    delete window.go;
+    delete window.runtime;
+    vi.restoreAllMocks();
+  });
+
+  it("accepts only complete v1 event envelopes", () => {
+    expect(parseAgentEvent(VALID_EVENT)).toEqual(VALID_EVENT);
+    expect(parseAgentEvent({ ...VALID_EVENT, version: 2 })).toBeUndefined();
+    expect(parseAgentEvent({ ...VALID_EVENT, sequence: 1.5 })).toBeUndefined();
+    expect(parseAgentEvent({ ...VALID_EVENT, payload: [] })).toBeUndefined();
+    expect(parseAgentEvent({ ...VALID_EVENT, taskId: "" })).toBeUndefined();
+  });
+
+  it("keeps deterministic browser sessions and messages isolated by task", async () => {
+    vi.useFakeTimers();
+    const events: AgentEvent[] = [];
+    const unsubscribe = agentClient.subscribe((event) => events.push(event));
+    const first = await agentClient.createSession({
+      taskId: "task_a",
+      title: "任务 A · PI",
+      mode: "ask",
+      model: "",
+      thinkingLevel: "xhigh",
+    });
+    const second = await agentClient.createSession({
+      taskId: "task_b",
+      title: "任务 B · PI",
+      mode: "ask",
+      model: "",
+      thinkingLevel: "xhigh",
+    });
+
+    await agentClient.sendPrompt({
+      taskId: "task_a",
+      sessionId: first.id,
+      message: "第一行\u2028第二行",
+    });
+    await vi.runAllTimersAsync();
+
+    const firstMessages = await agentClient.listMessages("task_a", first.id);
+    const secondMessages = await agentClient.listMessages("task_b", second.id);
+    expect(firstMessages).toHaveLength(2);
+    expect(firstMessages[0].content).toBe("第一行\u2028第二行");
+    expect(firstMessages[1]).toMatchObject({
+      role: "assistant",
+      status: "complete",
+      content: "浏览器模拟回复：第一行\u2028第二行",
+    });
+    expect(secondMessages).toEqual([]);
+    expect(events.some((event) => event.kind === "agent.settled")).toBe(true);
+    expect(events.every((event) => event.version === 1)).toBe(true);
+    unsubscribe();
+  });
+
+  it("aborts only the matching browser run", async () => {
+    vi.useFakeTimers();
+    const session = await agentClient.createSession({
+      taskId: "task_abort",
+      title: "中止测试",
+      mode: "ask",
+      model: "",
+      thinkingLevel: "medium",
+    });
+    const run = await agentClient.sendPrompt({
+      taskId: "task_abort",
+      sessionId: session.id,
+      message: "请停止",
+    });
+
+    await expect(
+      agentClient.abortRun({
+        taskId: "task_other",
+        sessionId: session.id,
+        runId: run.id,
+      }),
+    ).rejects.toThrow("没有匹配的活动 PI 运行");
+    await agentClient.abortRun({
+      taskId: "task_abort",
+      sessionId: session.id,
+      runId: run.id,
+    });
+    await vi.runAllTimersAsync();
+
+    const messages = await agentClient.listMessages(
+      "task_abort",
+      session.id,
+    );
+    expect(messages.at(-1)?.status).toBe("cancelled");
+  });
+
+  it("delegates to Wails and drops malformed runtime events", async () => {
+    const listSessions = vi.fn().mockResolvedValue([]);
+    let runtimeListener: ((payload: unknown) => void) | undefined;
+    const runtimeUnsubscribe = vi.fn();
+    window.go = {
+      main: {
+        App: {
+          ListAgentSessions: listSessions,
+          ListAgentMessages: vi.fn().mockResolvedValue([]),
+          ListExecutionRuns: vi.fn().mockResolvedValue([]),
+          CreateAgentSession: vi.fn(),
+          SendAgentPrompt: vi.fn(),
+          AbortAgentRun: vi.fn(),
+        },
+      },
+    } as unknown as typeof window.go;
+    window.runtime = {
+      EventsOn: vi.fn((_name, listener) => {
+        runtimeListener = listener;
+        return runtimeUnsubscribe;
+      }),
+    };
+    const listener = vi.fn();
+    const unsubscribe = agentClient.subscribe(listener);
+
+    await agentClient.listSessions("task_native");
+    runtimeListener?.({ ...VALID_EVENT, version: 3 });
+    runtimeListener?.(VALID_EVENT);
+    unsubscribe();
+
+    expect(agentClient.runtimeMode()).toBe("native");
+    expect(listSessions).toHaveBeenCalledWith("task_native");
+    expect(window.runtime.EventsOn).toHaveBeenCalledWith(
+      "agent:event",
+      expect.any(Function),
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(VALID_EVENT);
+    expect(runtimeUnsubscribe).toHaveBeenCalledTimes(1);
+  });
+});

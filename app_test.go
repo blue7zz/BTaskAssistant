@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
@@ -24,6 +25,11 @@ type memoryCredentialStore struct {
 
 func TestNewAppConfiguresDirectoryDialog(t *testing.T) {
 	app := NewApp()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = app.agentService.Close(ctx)
+	})
 	if app.openDirectoryDialog == nil {
 		t.Fatal("expected the Wails directory dialog to be configured")
 	}
@@ -32,6 +38,9 @@ func TestNewAppConfiguresDirectoryDialog(t *testing.T) {
 	}
 	if app.emitDailyReportProgress == nil {
 		t.Fatal("expected the Wails daily report progress emitter to be configured")
+	}
+	if app.agentService == nil {
+		t.Fatal("expected the native PI agent service to be configured")
 	}
 }
 

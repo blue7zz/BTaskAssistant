@@ -2,12 +2,13 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 )
 
 func dailyReportGenerationTestInput() DailyReportGenerationInput {
@@ -569,7 +570,15 @@ func repeatedJSONItem(item string, count int) string {
 	return strings.TrimSuffix(strings.Repeat(item+",", count), ",")
 }
 
-func TestDailyReportGeneratorWaitsForNativePIRPCWithoutOMPFallback(t *testing.T) {
+func TestDailyReportGeneratorUsesNativePIRPCUtility(t *testing.T) {
+	previous := runNativePIUtility
+	t.Cleanup(func() { runNativePIUtility = previous })
+	runNativePIUtility = func(_ context.Context, request agent.UtilityRequest) (string, error) {
+		if !strings.Contains(request.Prompt, "系统生成的输入包") {
+			t.Fatalf("unexpected PI utility prompt %q", request.Prompt)
+		}
+		return `{"reportDate":"2026-07-30","results":[],"blockers":[],"reviews":[],"nextActions":[]}`, nil
+	}
 	input := dailyReportGenerationTestInput()
 	var progressEvents []DailyReportGenerationProgress
 	_, err := (DailyReportGenerator{}).Generate(
@@ -580,11 +589,11 @@ func TestDailyReportGeneratorWaitsForNativePIRPCWithoutOMPFallback(t *testing.T)
 			progressEvents = append(progressEvents, progress)
 		},
 	)
-	if !errors.Is(err, ErrPIUtilityRPCUnavailable) {
-		t.Fatalf("expected native PI RPC unavailable error, got %v", err)
+	if err != nil {
+		t.Fatalf("native PI RPC generation failed: %v", err)
 	}
 	if len(progressEvents) == 0 ||
-		progressEvents[len(progressEvents)-1].Stage != "waiting_ai" {
+		progressEvents[len(progressEvents)-1].Stage != "completed" {
 		t.Fatalf("unexpected progress events %#v", progressEvents)
 	}
 }

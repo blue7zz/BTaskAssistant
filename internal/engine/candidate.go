@@ -1,15 +1,17 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 )
 
-var ErrPIUtilityRPCUnavailable = errors.New(
-	"原生 PI RPC 将在阶段 2 接入；当前不会调用 OMP，请改用 Codex 或人工整理",
-)
+const maxCandidateSourceBytes = 512 * 1024
 
 type CandidateAnalysis struct {
 	Mode            string   `json:"mode"`
@@ -18,6 +20,43 @@ type CandidateAnalysis struct {
 	KeyPoints       []string `json:"keyPoints"`
 	OpenQuestions   []string `json:"openQuestions"`
 	AnalyzedAt      string   `json:"analyzedAt"`
+}
+
+func AnalyzePlaneCandidateWithPI(
+	ctx context.Context,
+	sourceMarkdown string,
+	settings PISettings,
+) (CandidateAnalysis, error) {
+	sourceMarkdown = strings.TrimSpace(sourceMarkdown)
+	if sourceMarkdown == "" {
+		return CandidateAnalysis{}, errors.New("候选来源不能为空")
+	}
+	if len(sourceMarkdown) > maxCandidateSourceBytes {
+		return CandidateAnalysis{}, errors.New("候选来源超过 512 KiB")
+	}
+	prompt := `你是 BTaskAssistant 的只读候选提炼器。
+只能根据下方来源整理候选，不得虚构事实，不得执行工具或修改文件。
+只返回一个 JSON object，不要 Markdown 代码块：
+{"title":"简洁标题","summaryMarkdown":"完整候选正文","keyPoints":[],"openQuestions":[]}
+
+来源：
+` + sourceMarkdown
+	output, err := runNativePIUtility(ctx, agent.UtilityRequest{
+		Prompt: prompt, Model: settings.Model,
+		ThinkingLevel: settings.ThinkingEffort, MaxOutputBytes: 1024 * 1024,
+	})
+	if err != nil {
+		return CandidateAnalysis{}, fmt.Errorf("PI 候选提炼失败: %w", err)
+	}
+	analysis, err := parseCandidateAnalysis(output)
+	if err != nil {
+		return CandidateAnalysis{}, err
+	}
+	analysis.Mode = "pi"
+	if strings.TrimSpace(analysis.AnalyzedAt) == "" {
+		analysis.AnalyzedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	return analysis, nil
 }
 
 func parseCandidateAnalysis(output string) (CandidateAnalysis, error) {

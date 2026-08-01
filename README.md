@@ -12,10 +12,11 @@ BTaskAssistant 是一个本地优先、人工把关的 AI 开发任务工作流�
 - 使用接近 macOS 备忘录的富文本体验编辑任务正文；Markdown
   是持久化真相，可在富文本和源码模式间切换，并支持粘贴、拖放图片。
 - 通过 Personal Access Token 从 Plane 项目分页收集工作项；固定脚本负责去重和保留原文。
-  原生 PI 候选生成等待阶段 2 RPC 接入，任何候选仍必须人工确认后才能创建正式任务。
+  桌面端可用隔离的原生 PI RPC 提炼候选，任何候选仍必须人工确认后才能创建正式任务。
 - 保存 Plane PAT 后自动发现工作区项目并以下拉框选择，不再要求手工查找或粘贴 Project UUID。
 - 为任务保存原始说明、聊天记录、项目现状和文件内容等需求来源。
-- 需求访谈保留 PI 与 Codex 标识；阶段 1 仅 Codex 只读分析可用，原生 PI 多轮访谈等待阶段 2 RPC 接入。
+- 任务右侧工作台提供任务级原生 PI Session、增量消息历史、流式回答和停止操作；阶段 2 固定为无工具隔离模式。
+- 需求访谈保留 PI 与 Codex 标识；PI 固定分析使用独立的无工具 utility Session，不与任务聊天历史混用。
 - 访谈问题区分阻塞、重要和可选级别，支持回答、暂时跳过、排除范围、交叉复查和带风险强制推进。
 - AI 草稿更新先作为候选展示，只有用户采纳后才进入带 `[S1]` 来源标记的实时需求草稿。
 - 正式需求文档保留项目观察、用户确认记录、未确认事项和强制推进策略。
@@ -51,7 +52,7 @@ flowchart TD
 - 前端：React 19 + TypeScript + Vite
 - 状态：Zustand
 - 本地数据：SQLite；浏览器模式回退到 `localStorage`
-- AI 边界：`internal/engine.Adapter`
+- AI 边界：`internal/engine` 固定分析与 `internal/agent` 原生 PI RPC 会话
 - 富文本：MDXEditor（Markdown 原生）
 - 外部来源：Plane REST API；PAT 保存在系统凭据库
 
@@ -74,7 +75,7 @@ pnpm install
 pnpm dev
 ```
 
-打开终端中显示的本地地址。浏览器模式可以人工走通完整工作流，数据保存在当前浏览器；PI / Codex 需求分析需要 Wails 桌面客户端提供原生只读执行边界。
+打开终端中显示的本地地址。浏览器模式可以人工走通完整工作流，数据保存在当前浏览器；PI 会话使用确定性 Mock，不启动本机 CLI，也不模拟物理 Session 文件。PI / Codex 真实分析需要 Wails 桌面客户端提供原生执行边界。
 
 ### 运行 Wails 桌面客户端
 
@@ -111,9 +112,11 @@ go test ./internal/...
 
 ## 当前边界
 
-桌面端会在隔离的 `PI_CODING_AGENT_DIR` 下探测原生 `pi`，不会读取或复制 `~/.pi/agent`。
-阶段 1 不启动 PI；Plane 候选提炼、PI 需求访谈和 PI 日报生成会明确提示等待阶段 2 的原生 RPC 接入，
-不会回退调用 `omp`。Codex 需求访谈继续使用 `read-only` 沙箱。任何 AI 都不能批准需求或推进任务状态。
+桌面端会以严格 LF JSONL 启动 `pi --mode rpc`，用 `get_state` 完成启动探针，并把配置和 Session
+隔离到当前任务的 `.btask` 目录；不会读取或复制 `~/.pi/agent`。阶段 2 的任务会话和固定 utility
+分析均使用 `--no-tools`，不开放文件、Shell 或审批能力，也不会回退调用 `omp`。真实模型调用需要
+显式凭据；无凭据只保证本机 PI 版本、进程和协议探针可用。Codex 需求访谈继续使用 `read-only`
+沙箱。任何 AI 都不能批准需求或推进任务状态。
 
 开发阶段仍采用复制已确认提示词、在外部执行并记录真实结果的方式。浏览器预览不启动本机 AI CLI。
 

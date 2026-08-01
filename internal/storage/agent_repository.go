@@ -344,6 +344,58 @@ func (s *SQLiteStore) UpsertAgentMessage(record AgentMessageRecord) error {
 	})
 }
 
+// UpsertAgentMessageAndUpdateSession persists a newly allocated message
+// sequence together with the owning session cursor.
+func (s *SQLiteStore) UpsertAgentMessageAndUpdateSession(
+	record AgentMessageRecord,
+	session AgentSessionRecord,
+) error {
+	if err := validateAgentMessageRecord(record); err != nil {
+		return err
+	}
+	if err := validateAgentSessionRecord(session); err != nil {
+		return err
+	}
+	if record.TaskID != session.TaskID || record.SessionID != session.ID ||
+		record.Sequence != session.LastSequence {
+		return errors.New("agent message and session sequence do not match")
+	}
+	return s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		if _, err := connection.ExecContext(ctx, `
+			INSERT INTO agent_messages(
+				id, task_id, session_id, run_id, role, kind, status, content,
+				content_ref, sequence, pi_entry_id, created_at, completed_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.ID,
+			record.TaskID,
+			record.SessionID,
+			record.RunID,
+			record.Role,
+			record.Kind,
+			record.Status,
+			record.Content,
+			record.ContentRef,
+			record.Sequence,
+			record.PIEntryID,
+			record.CreatedAt,
+			record.CompletedAt,
+		); err != nil {
+			return err
+		}
+		result, err := connection.ExecContext(ctx, `
+			UPDATE agent_sessions
+			   SET last_sequence = ?, updated_at = ?, last_active_at = ?
+			 WHERE task_id = ? AND id = ?`,
+			session.LastSequence,
+			session.UpdatedAt,
+			session.LastActiveAt,
+			session.TaskID,
+			session.ID,
+		)
+		return requireScopedWrite(result, err, "agent session")
+	})
+}
+
 func (s *SQLiteStore) AgentMessages(taskID string, sessionID string) ([]AgentMessageRecord, error) {
 	if err := validateScopedID(taskID, sessionID, "agent session"); err != nil {
 		return nil, err
@@ -396,6 +448,70 @@ func (s *SQLiteStore) AppendAgentEvent(record AgentEventRecord) error {
 			record.OccurredAt,
 		)
 		return err
+	})
+}
+
+// AppendAgentEventAndUpdateSession reserves the session sequence and appends
+// its event in one SQLite transaction. Wails emitters can therefore publish
+// only after both durable records agree.
+func (s *SQLiteStore) AppendAgentEventAndUpdateSession(
+	record AgentEventRecord,
+	session AgentSessionRecord,
+) error {
+	if err := validateAgentEventRecord(record); err != nil {
+		return err
+	}
+	if err := validateAgentSessionRecord(session); err != nil {
+		return err
+	}
+	if record.TaskID != session.TaskID || record.SessionID != session.ID ||
+		record.Sequence != session.LastSequence {
+		return errors.New("agent event and session sequence do not match")
+	}
+	return s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		if _, err := connection.ExecContext(ctx, `
+			INSERT INTO agent_events(
+				event_id, version, task_id, session_id, run_id, tool_call_id,
+				sequence, kind, payload_json, payload_ref, occurred_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.EventID,
+			record.Version,
+			record.TaskID,
+			record.SessionID,
+			record.RunID,
+			record.ToolCallID,
+			record.Sequence,
+			record.Kind,
+			record.PayloadJSON,
+			record.PayloadRef,
+			record.OccurredAt,
+		); err != nil {
+			return err
+		}
+		result, err := connection.ExecContext(ctx, `
+			UPDATE agent_sessions
+			   SET external_session_path = ?, external_session_id = ?, title = ?,
+			       mode = ?, model = ?, thinking_level = ?, resource_policy = ?,
+			       state = ?, last_entry_id = ?, last_sequence = ?, updated_at = ?,
+			       last_active_at = ?, error_message = ?
+			 WHERE task_id = ? AND id = ?`,
+			session.ExternalSessionPath,
+			session.ExternalSessionID,
+			session.Title,
+			session.Mode,
+			session.Model,
+			session.ThinkingLevel,
+			session.ResourcePolicy,
+			session.State,
+			session.LastEntryID,
+			session.LastSequence,
+			session.UpdatedAt,
+			session.LastActiveAt,
+			session.ErrorMessage,
+			session.TaskID,
+			session.ID,
+		)
+		return requireScopedWrite(result, err, "agent session")
 	})
 }
 
@@ -494,6 +610,43 @@ func (s *SQLiteStore) ToolCall(taskID string, toolCallID string) (ToolCallRecord
 		       args_ref, output_summary, output_ref, is_error, started_at,
 		       finished_at
 		  FROM tool_calls WHERE task_id = ? AND id = ?`, taskID, toolCallID))
+}
+
+// InterruptActiveAgentActivity repairs process-owned states after an app
+// restart without deleting completed messages or PI session files.
+func (s *SQLiteStore) InterruptActiveAgentActivity(
+	interruptedAt string,
+	reason string,
+) error {
+	if strings.TrimSpace(interruptedAt) == "" || strings.TrimSpace(reason) == "" {
+		return errors.New("agent interruption timestamp and reason are required")
+	}
+	return s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		if _, err := connection.ExecContext(ctx, `
+			UPDATE agent_messages
+			   SET status = 'error', completed_at = COALESCE(completed_at, ?)
+			 WHERE status IN ('pending', 'streaming')`, interruptedAt); err != nil {
+			return err
+		}
+		if _, err := connection.ExecContext(ctx, `
+			UPDATE execution_runs
+			   SET state = 'interrupted', finished_at = COALESCE(finished_at, ?),
+			       error_message = ?
+			 WHERE state IN ('queued', 'running', 'waiting_permission', 'stopping')`,
+			interruptedAt,
+			reason,
+		); err != nil {
+			return err
+		}
+		_, err := connection.ExecContext(ctx, `
+			UPDATE agent_sessions
+			   SET state = 'interrupted', updated_at = ?, error_message = ?
+			 WHERE state IN ('starting', 'running', 'stopping')`,
+			interruptedAt,
+			reason,
+		)
+		return err
+	})
 }
 
 func (s *SQLiteStore) withRepositoryWrite(

@@ -3,10 +3,11 @@ package engine
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/blue7zz/BTaskAssistant/internal/agent"
 )
 
 var ErrNotConfigured = errors.New("AI 引擎尚未配置")
@@ -22,9 +23,8 @@ type Result struct {
 	TraceID string `json:"traceId"`
 }
 
-// Adapter is the only contract the workflow layer may use for PI or Codex.
-// The first release intentionally leaves command details unconfigured instead
-// of guessing a CLI protocol.
+// Adapter keeps fixed workflow analysis behind a small engine boundary. Native
+// PI interactive sessions use internal/agent's explicit RPC protocol instead.
 type Adapter interface {
 	Name() string
 	Run(context.Context, Request) (Result, error)
@@ -49,7 +49,7 @@ func Statuses() []Status {
 			ID:                  "pi",
 			Label:               "PI",
 			Configured:          piErr == nil,
-			RequirementAnalysis: false,
+			RequirementAnalysis: piErr == nil,
 			Development:         false,
 			Description:         nativePIDescription(piErr),
 			CommandPath:         piPath,
@@ -81,62 +81,16 @@ func commandDetails(name string) (string, string, error) {
 }
 
 func nativePICommandDetails() (string, string, error) {
-	path, err := exec.LookPath("pi")
-	if err != nil {
-		return "", "", err
-	}
-	directory, err := os.MkdirTemp("", "btask-pi-probe-*")
-	if err != nil {
-		return path, "", err
-	}
-	defer os.RemoveAll(directory)
-	if err := os.Chmod(directory, 0o700); err != nil {
-		return path, "", err
-	}
-	sessionDirectory := directory + string(os.PathSeparator) + "sessions"
-	if err := os.Mkdir(sessionDirectory, 0o700); err != nil {
-		return path, "", err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, path, "--version")
-	command.Dir = directory
-	isolatedEnvironment := environmentWithOverride(
-		os.Environ(),
-		"PI_CODING_AGENT_DIR",
-		directory,
-	)
-	command.Env = environmentWithOverride(
-		isolatedEnvironment,
-		"PI_CODING_AGENT_SESSION_DIR",
-		sessionDirectory,
-	)
-	output, err := command.Output()
-	if ctx.Err() != nil {
-		return path, "", ctx.Err()
-	}
-	if err != nil {
-		return path, "", err
-	}
-	return path, strings.TrimSpace(string(output)), nil
-}
-
-func environmentWithOverride(environment []string, key string, value string) []string {
-	prefix := key + "="
-	result := make([]string, 0, len(environment)+1)
-	for _, item := range environment {
-		if !strings.HasPrefix(item, prefix) {
-			result = append(result, item)
-		}
-	}
-	return append(result, prefix+value)
+	return agent.ProbeInstalledPI(ctx)
 }
 
 func nativePIDescription(err error) string {
 	if err != nil {
 		return "原生 PI CLI 未安装；仍可人工整理需求或使用 Codex。"
 	}
-	return "已检测到原生 PI；RPC 分析与任务会话将在阶段 2 接入。"
+	return "已检测到原生 PI RPC；任务会话和无工具分析可用，模型调用需要显式凭据。"
 }
 
 func requirementEngineDescription(label string, err error) string {

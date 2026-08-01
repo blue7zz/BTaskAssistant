@@ -1,9 +1,11 @@
 import {
+  Bot,
   CalendarClock,
   FileText,
   Pencil,
   Tag,
 } from "lucide-react";
+import { useState } from "react";
 import {
   STATUS_META,
   type Task,
@@ -11,6 +13,7 @@ import {
 } from "../domain/task";
 import { useWorkspaceStore } from "../store/workspace";
 import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
+import { TaskAgentWorkbench } from "./TaskAgentWorkbench";
 
 interface ManualTaskDetailProps {
   task: Task;
@@ -42,6 +45,8 @@ export function ManualTaskDetail({
   onError,
 }: ManualTaskDetailProps) {
   const updateTaskRecord = useWorkspaceStore((state) => state.updateTaskRecord);
+  const [activeView, setActiveView] = useState<"record" | "pi">("record");
+  const [piOpened, setPIOpened] = useState(false);
 
   const run = (action: () => void, message: string) => {
     try {
@@ -56,9 +61,15 @@ export function ManualTaskDetail({
     <section className="manual-task-detail">
       <header className="manual-task-header">
         <div>
-          <span className="eyebrow">纯手工记录</span>
+          <span className="eyebrow">
+            {activeView === "record" ? "纯手工记录" : "原生 PI 会话"}
+          </span>
           <h2>{task.title}</h2>
-          <p>按项目分类和状态整理，正文内容完全由你填写。</p>
+          <p>
+            {activeView === "record"
+              ? "按项目分类和状态整理，正文内容完全由你填写。"
+              : "与当前任务绑定的独立 Session；本阶段不开放任何工具。"}
+          </p>
         </div>
         <div className="manual-task-meta">
           <div className="manual-task-meta-row">
@@ -88,7 +99,37 @@ export function ManualTaskDetail({
         </div>
       </header>
 
-      <div className="manual-task-scroll">
+      <nav className="manual-task-tabs" role="tablist" aria-label="任务工作台">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "record"}
+          className={activeView === "record" ? "active" : ""}
+          onClick={() => setActiveView("record")}
+        >
+          <FileText size={14} />
+          记录
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "pi"}
+          className={activeView === "pi" ? "active" : ""}
+          onClick={() => {
+            setPIOpened(true);
+            setActiveView("pi");
+          }}
+        >
+          <Bot size={14} />
+          PI
+        </button>
+      </nav>
+
+      <div
+        className="manual-task-scroll"
+        role="tabpanel"
+        hidden={activeView !== "record"}
+      >
         <section className="manual-record-card manual-text-card">
           <header>
             <FileText size={18} />
@@ -129,6 +170,19 @@ export function ManualTaskDetail({
           </details>
         )}
       </div>
+      {piOpened && (
+        <div
+          className="manual-pi-pane"
+          role="tabpanel"
+          hidden={activeView !== "pi"}
+        >
+          <TaskAgentWorkbench
+            key={task.id}
+            taskId={task.id}
+            taskTitle={task.title}
+          />
+        </div>
+      )}
     </section>
   );
 }
