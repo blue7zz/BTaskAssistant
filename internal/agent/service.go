@@ -59,12 +59,22 @@ type activeRun struct {
 	assistant        storage.AgentMessageRecord
 	assistantContent string
 	assistantStarted bool
+	reasoningChars   int
+	pendingDeltas    []pendingDelta
+	pendingDeltaSize int
+	deltaTimer       *time.Timer
 	errorMessage     string
 	stopRequested    bool
 	tools            map[string]storage.ToolCallRecord
 	toolArgs         map[string]json.RawMessage
 	permissions      map[string]*pendingPermission
 	receipts         map[string]permissionReceipt
+}
+
+type pendingDelta struct {
+	kind             string
+	delta            string
+	accumulatedChars int
 }
 
 type pendingPermission struct {

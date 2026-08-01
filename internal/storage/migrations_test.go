@@ -121,8 +121,8 @@ func TestMigrationRunnerCreatesFreshDatabase(t *testing.T) {
 	}
 }
 
-func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v3.db")
+func TestMigrationRunnerUpgradesV4ToV5WithoutReplayingEarlierMigrations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v4.db")
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -131,8 +131,8 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 	if err := configureDatabase(database); err != nil {
 		t.Fatal(err)
 	}
-	if err := runMigrations(database, schemaMigrations[:3]); err != nil {
-		t.Fatalf("create v3 fixture: %v", err)
+	if err := runMigrations(database, schemaMigrations[:4]); err != nil {
+		t.Fatalf("create v4 fixture: %v", err)
 	}
 	if _, err := database.Exec(`
 		INSERT INTO workspace_state(id, payload) VALUES (1, '{"state":{"tasks":[]}}');
@@ -164,11 +164,17 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 		) VALUES ('request-v3', 'task-v3-permission', 'session-v3', 'run-v3', 'tool-v3',
 		          'task.resource.read', 'resource-v3', 'read resource', 'low', 'allowed',
 		          '2026-08-01T08:00:00Z', '2026-08-01T08:00:01Z', 'policy');
-		INSERT INTO permission_grants(
+			INSERT INTO permission_grants(
 			id, task_id, capability, target_pattern, scope, decision, risk_ceiling,
 			created_at, created_by
-		) VALUES ('grant-v3', 'task-v3-permission', 'task.resource.read', '*', 'task',
-		          'allow', 'low', '2026-08-01T08:00:00Z', 'user')
+			) VALUES ('grant-v3', 'task-v3-permission', 'task.resource.read', '*', 'task',
+			          'allow', 'low', '2026-08-01T08:00:00Z', 'user');
+			INSERT INTO legacy_task_migrations(
+				task_id, source_revision, legacy_path, target_workspace_id,
+				state, started_at, completed_at
+			) VALUES ('task-v3-permission', 7, '/legacy/task-v3-permission',
+			          'workspace-v3-permission', 'completed',
+			          '2026-08-01T07:59:00Z', '2026-08-01T08:00:00Z')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -179,13 +185,13 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 	store := NewSQLiteStoreAt(path)
 	t.Cleanup(func() { _ = store.Close() })
 	if err := store.Open(); err != nil {
-		t.Fatalf("upgrade v3 database: %v", err)
+		t.Fatalf("upgrade v4 database: %v", err)
 	}
 	database, err = store.readyDatabase()
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSchemaVersion(t, database, 4)
+	assertSchemaVersion(t, database, currentSchemaVersion)
 	for _, table := range []string{"message_attachments", "resource_references", "requirement_proposals"} {
 		var count int
 		if err := database.QueryRow(
@@ -195,7 +201,7 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 		}
 	}
 	var migrationCount int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 4 {
+	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != currentSchemaVersion {
 		t.Fatalf("unexpected migration count %d, error %v", migrationCount, err)
 	}
 	var payload string
@@ -208,6 +214,66 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 	}
 	if err := database.QueryRow(`SELECT scope FROM permission_grants WHERE id = 'grant-v3'`).Scan(&grantScope); err != nil || grantScope != "task" {
 		t.Fatalf("v3 permission grant was not preserved: %q, %v", grantScope, err)
+	}
+	var migrationState, completedAt string
+	if err := database.QueryRow(`
+		SELECT state, completed_at
+		  FROM legacy_task_migrations
+		 WHERE task_id = 'task-v3-permission'`,
+	).Scan(&migrationState, &completedAt); err != nil || migrationState != "completed" || completedAt != "2026-08-01T08:00:00Z" {
+		t.Fatalf("v3 legacy migration completion was not preserved: %q %q, %v", migrationState, completedAt, err)
+	}
+	for _, object := range []struct {
+		typeName string
+		name     string
+	}{
+		{"index", "agent_messages_task_session_sequence"},
+		{"index", "legacy_task_migrations_completion"},
+		{"trigger", "legacy_task_migrations_completion_insert"},
+		{"trigger", "legacy_task_migrations_completion_update"},
+	} {
+		var count int
+		if err := database.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?`,
+			object.typeName,
+			object.name,
+		).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("missing v5 %s %q: count %d, error %v", object.typeName, object.name, count, err)
+		}
+	}
+}
+
+func TestV5LegacyMigrationCompletionConstraint(t *testing.T) {
+	store := NewSQLiteStoreAt(filepath.Join(t.TempDir(), "completion.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	database, err := store.readyDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO task_workspaces(
+			task_id, workspace_id, root_path, schema_version,
+			manifest_revision, state, created_at, updated_at
+		) VALUES ('task_completion', 'workspace-completion', '/tasks/task_completion',
+		          1, 1, 'ready', 'now', 'now')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO legacy_task_migrations(
+			task_id, source_revision, legacy_path, target_workspace_id,
+			state, started_at
+		 ) VALUES ('task_completion', 1, '/legacy', 'workspace-completion',
+		           'completed', 'now')`,
+		`INSERT INTO legacy_task_migrations(
+			task_id, source_revision, legacy_path, target_workspace_id,
+			state, started_at, completed_at
+		 ) VALUES ('task_completion', 1, '/legacy', 'workspace-completion',
+		           'failed', 'now', 'now')`,
+	} {
+		if _, err := database.Exec(statement); err == nil ||
+			!strings.Contains(err.Error(), "completion state is inconsistent") {
+			t.Fatalf("inconsistent completion state was accepted: %v", err)
+		}
 	}
 }
 

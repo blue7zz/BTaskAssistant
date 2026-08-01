@@ -1,9 +1,11 @@
 package taskspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -162,5 +164,33 @@ func TestWriteArtifactRejectsSymlinkTarget(t *testing.T) {
 	content, err := os.ReadFile(outside)
 	if err != nil || string(content) != "outside" {
 		t.Fatal("artifact write followed a symlink")
+	}
+}
+
+func TestAtomicArtifactWriteCleansTemporaryFileAfterDiskFailure(t *testing.T) {
+	rootPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rootPath, "artifacts", "reports"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	_, err = writeAtomicFileWithRename(
+		root,
+		"artifacts/reports/full.md",
+		[]byte("content that must not become visible"),
+		func(string, string) error { return syscall.ENOSPC },
+	)
+	if !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("disk-full rename failure was not returned: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rootPath, "artifacts", "reports", "full.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed artifact became visible: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(rootPath, "artifacts", "reports"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed artifact left temporary files: %#v, %v", entries, err)
 	}
 }

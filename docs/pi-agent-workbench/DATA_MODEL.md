@@ -366,6 +366,9 @@ v4 已由 migration runner 实现，空库和 v3 升级都会顺序执行；重�
 
 记录每个旧任务的 source_revision、legacy path、target workspace、state、warnings、started_at、completed_at。状态为 pending、running、completed、failed。失败后可重试，不删除旧数据。
 
+v5 增加 `(state, completed_at, task_id)` 索引，并用 INSERT/UPDATE trigger 保证：
+`completed` 必须有 `completed_at`，其他状态不得带完成时间。已有记录和旧文件均保留。
+
 ## 5. 消息与事件写入
 
 - user message 在 prompt 被 PI preflight 接受后标记 complete；预提交 UI bubble 可保持 pending。
@@ -378,11 +381,12 @@ v4 已由 migration runner 实现，空库和 v3 升级都会顺序执行；重�
 
 ## 6. 分页
 
-GetAgentHistoryPage 使用 opaque cursor，内部包含 session_id、sequence、message_id 和方向，不使用 OFFSET。
+GetAgentHistoryPage 先校验 task/session，再使用 exclusive `beforeSequence` 游标，不使用 OFFSET。
+Bridge 将 sequence 序列化为字符串；该游标只在当前已校验 Session 中解释。
 
 - 首次默认返回最新一页。
 - 加载更早内容用 exclusive before cursor。
-- limit 默认 50，最大 200。
+- limit 默认 60，最大 200。
 - 返回 nextCursor/hasOlder。
 - UI 以 message id 去重。
 - reasoning 和 tool 大输出按需读取，不随每页全量返回。

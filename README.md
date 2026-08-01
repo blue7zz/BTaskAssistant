@@ -15,7 +15,8 @@ BTaskAssistant 是一个本地优先、人工把关的 AI 开发任务工作流�
   桌面端可用隔离的原生 PI RPC 提炼候选，任何候选仍必须人工确认后才能创建正式任务。
 - 保存 Plane PAT 后自动发现工作区项目并以下拉框选择，不再要求手工查找或粘贴 Project UUID。
 - 为任务保存原始说明、聊天记录、项目现状和文件内容等需求来源。
-- 任务右侧工作台提供任务级原生 PI Session、增量消息历史、流式回答和停止操作；阶段 2 固定为无工具隔离模式。
+- 任务右侧工作台提供任务级原生 PI Session、分页历史、流式回答、Steer、Follow-up、停止与显式恢复；切换任务时会清空旧页面状态并拒绝跨任务事件。
+- Ask / Plan / Agent 使用 BTask 自有工具和权限门禁；上下文、附件、产物、权限、运行记录及 Git worktree 均按任务隔离。
 - 需求访谈保留 PI 与 Codex 标识；PI 固定分析使用独立的无工具 utility Session，不与任务聊天历史混用。
 - 访谈问题区分阻塞、重要和可选级别，支持回答、暂时跳过、排除范围、交叉复查和带风险强制推进。
 - AI 草稿更新先作为候选展示，只有用户采纳后才进入带 `[S1]` 来源标记的实时需求草稿。
@@ -112,13 +113,18 @@ go test ./internal/...
 
 ## 当前边界
 
-桌面端会以严格 LF JSONL 启动 `pi --mode rpc`，用 `get_state` 完成启动探针，并把配置和 Session
-隔离到当前任务的 `.btask` 目录；不会读取或复制 `~/.pi/agent`。阶段 2 的任务会话和固定 utility
-分析均使用 `--no-tools`，不开放文件、Shell 或审批能力，也不会回退调用 `omp`。真实模型调用需要
-显式凭据；无凭据只保证本机 PI 版本、进程和协议探针可用。Codex 需求访谈继续使用 `read-only`
-沙箱。任何 AI 都不能批准需求或推进任务状态。
+桌面端使用已验证的原生 PI `0.82.x`，以严格 LF JSONL 启动 `pi --mode rpc`，用 `get_state`
+和 BTask gate 心跳完成启动探针。配置、Session、上下文、运行日志和受控产物都位于当前任务目录；
+启动参数关闭全局扩展、技能、提示词模板、主题、上下文自动发现、内建工具和在线包发现，不读取或
+复制 `~/.pi/agent`，也不会回退调用 `omp`。
 
-开发阶段仍采用复制已确认提示词、在外部执行并记录真实结果的方式。浏览器预览不启动本机 AI CLI。
+PI 仅能调用 BTask 显式注册的任务资源、artifact、worktree 和 Shell 工具。Go 后端校验
+task/session/run、模式、任务状态、nonce、路径和授权回执；未知工具、门禁失效、越界路径和隐藏的
+Git push/发布动作失败关闭。该机制是应用级软边界，不是操作系统沙箱；PI 与工具仍以当前用户权限
+运行。任何 AI 都不能批准需求、推进任务状态、自动提交、自动推送、创建 PR、合并或发布。
+
+工具输出摘要进入 SQLite，较大正文写入任务运行目录并按需读取；当前完整工具输出落盘上限为
+12 MiB，UI 单次懒加载最多 2 MiB。浏览器预览使用确定性 Mock，不启动本机 AI CLI。
 
 Plane PAT 不写入 SQLite、前端状态或日志，而是保存到 macOS Keychain、Windows Credential
 Manager 或 Linux Secret Service。远端 HTTP 地址会被拒绝，只有 HTTPS 和本机回环地址可以接收 PAT。
@@ -134,4 +140,6 @@ Plane 收集箱只要求两项连接信息：
 目前不能从实例根地址枚举工作区，因此服务地址需要包含工作区路径。PAT 只会
 保存在运行客户端的这台电脑的系统凭据库；发布包和 Git 仓库不包含令牌。
 
-详见 [完整目标架构](docs/SOFTWARE_ARCHITECTURE.md)、[MVP 落地架构](docs/ARCHITECTURE.md) 和 [第一版范围](docs/MVP_SCOPE.md)。
+详见 [完整目标架构](docs/SOFTWARE_ARCHITECTURE.md)、[MVP 落地架构](docs/ARCHITECTURE.md)、
+[PI Agent 工作台](docs/PI_AGENT_WORKBENCH.md)、[权限边界](docs/PERMISSIONS.md)、
+[数据迁移](docs/DATA_MIGRATION.md) 和 [第一版范围](docs/MVP_SCOPE.md)。

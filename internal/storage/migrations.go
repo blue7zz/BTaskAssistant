@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 type migration struct {
 	version    int
@@ -340,6 +340,29 @@ var schemaMigrations = []migration{
 			)`,
 			`CREATE INDEX requirement_proposals_task_state
 			 ON requirement_proposals(task_id, state, created_at)`,
+		},
+	},
+	{
+		version: 5,
+		statements: []string{
+			`CREATE INDEX agent_messages_task_session_sequence
+			 ON agent_messages(task_id, session_id, sequence DESC)`,
+			`CREATE INDEX legacy_task_migrations_completion
+			 ON legacy_task_migrations(state, completed_at, task_id)`,
+			`CREATE TRIGGER legacy_task_migrations_completion_insert
+			 BEFORE INSERT ON legacy_task_migrations
+			 WHEN (NEW.state = 'completed' AND NEW.completed_at IS NULL) OR
+			      (NEW.state != 'completed' AND NEW.completed_at IS NOT NULL)
+			 BEGIN
+				SELECT RAISE(ABORT, 'legacy migration completion state is inconsistent');
+			 END`,
+			`CREATE TRIGGER legacy_task_migrations_completion_update
+			 BEFORE UPDATE OF state, completed_at ON legacy_task_migrations
+			 WHEN (NEW.state = 'completed' AND NEW.completed_at IS NULL) OR
+			      (NEW.state != 'completed' AND NEW.completed_at IS NOT NULL)
+			 BEGIN
+				SELECT RAISE(ABORT, 'legacy migration completion state is inconsistent');
+			 END`,
 		},
 	},
 }

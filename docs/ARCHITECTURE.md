@@ -20,7 +20,10 @@ flowchart TD
     Bridge --> Policy["Go 状态机"]
     Bridge --> Storage["本地 SQLite"]
     Bridge --> Plane["Plane REST API"]
-    Policy -. "受限接入" .-> Engines["PI / Codex 适配器"]
+    Bridge --> Agent["任务级 PI Supervisor"]
+    Agent --> Taskspace["Task Workspace / Git worktree"]
+    Agent --> Gate["权限策略与 BTask gate"]
+    Policy -. "受限接入" .-> Engines["固定 PI / Codex 分析适配器"]
 ```
 
 | 层 | 位置 | 职责 |
@@ -32,6 +35,10 @@ flowchart TD
 | Go 领域 | `internal/workflow` | 桌面端最终状态转换校验 |
 | 存储 | `internal/storage` | SQLite 初始化、迁移、工作区快照与任务上下文目录 |
 | AI 边界 | `internal/engine` | PI / Codex 结构化需求分析、只读权限和配置状态 |
+| Agent 会话 | `internal/agent` | 原生 PI RPC、Session、稳定事件、恢复、资源和门禁编排 |
+| 任务空间 | `internal/taskspace` | 每任务目录、附件、产物、旧数据迁移和路径安全 |
+| 权限与执行 | `internal/permissions`、`internal/execution` | 能力分类、授权作用域、受控 Shell 和进程停止 |
+| Git 隔离 | `internal/gitrepo` | 仓库绑定、独立 worktree、状态和有界 Diff |
 | 外部收集 | `internal/plane` | HTTPS、PAT 鉴权、分页、去重前标准化 |
 | 凭据 | `internal/credentials` | 系统凭据库；令牌不进入 SQLite |
 
@@ -48,7 +55,7 @@ flowchart TD
 Plane 集成按两层处理：
 
 1. Go 固定脚本使用 `X-API-Key` 调用 REST API，负责 HTTPS 校验、分页、去重、字段标准化和原文保留。
-2. 本机 OMP 仅在用户点击时，以无工具模式提炼标题、正文、关键信息和待确认问题。
+2. 本机原生 PI 仅在用户点击时，以隔离的无工具 utility Session 提炼标题、正文、关键信息和待确认问题。
 
 连接配置只暴露工作区页面地址和 PAT。后端从 URL 提取 workspace slug，
 鉴权成功后返回项目列表供用户选择；内部 UUID 不要求手填。PAT 按 Plane
@@ -84,18 +91,24 @@ Plane 集成按两层处理：
 │   └── btask.db
 └── tasks/
     └── <task-id>/
-        ├── context.json
-        ├── files/
-        └── images/
+        ├── .btask/
+        │   ├── manifest.json
+        │   ├── resources.json
+        │   ├── pi-agent/
+        │   └── pi-sessions/
+        ├── context/
+        ├── sources/
+        ├── attachments/
+        ├── artifacts/
+        ├── repos/
+        └── runs/
 ```
 
-第一版先把完整工作区保存到 `workspace_state` 的版本化 JSON 字段中，并启用
-WAL、外键和写入等待。SQLite 是恢复真相；每次保存还会按稳定的任务 ID 将
-完整 `Task` 聚合通过临时文件替换同步到独立的 `context.json`，内容包括基础
-信息、来源、需求、开发记录、审核记录和回收站状态。文件类需求来源会落到
-`files/`，任务 JSON 内有效的 data URL 图片会按内容哈希落到 `images/`；未变化
-的应用管理文件不会重复写入。用户自行放入任务目录的其他文件和图片不会被
-自动扫描、覆盖或删除。
+完整前端工作区仍保存在 `workspace_state` 的版本化 JSON 字段中；PI 工作台的
+workspace、resource、session、message、event、run、tool、permission、Git binding、
+artifact 和 requirement proposal 使用 schema v5 的规范化表。SQLite 是状态恢复真相；
+任务目录保存可读上下文、不可变来源、附件、PI Session、运行日志、工具大输出和产物。
+旧 `context.json`、`files/`、`images/` 采用 copy-first 方式迁移并继续保留，不会被自动删除。
 
 `projectPath` 仍只引用用户选择的代码仓库，不会把仓库复制到任务目录；PAT、
 Token 等凭据也不进入任务目录。移入回收站、恢复、永久删除任务以及清空工作区
@@ -109,23 +122,24 @@ Token 等凭据也不进入任务目录。移入回收站、恢复、永久删�
 文件。浏览器预览没有 Wails Bridge，因而只回退到 `localStorage`，不提供物理
 任务目录。
 
-## AI 适配器策略
+## AI 与 Agent 边界
 
-`internal/engine.Adapter` 和结构化 `RequirementAnalyzer` 是允许接入 PI 或 Codex 的边界。
-收集阶段允许 OMP 在无工具模式下做候选提炼；需求访谈阶段使用固定 JSON 输入包和输出协议：
+`internal/engine.Adapter` 和结构化 `RequirementAnalyzer` 负责固定的一次性分析；
+`internal/agent.Service` 负责右侧任务级 Agent 工作台。收集和需求访谈使用固定 JSON 输入包：
 
-- PI 关闭规则、扩展、技能、会话、LSP 和终端，只开放 `read`、`grep`、`glob`。
+- PI utility Session 关闭扩展、技能、上下文自动发现和工具，不与任务聊天 Session 混用。
 - Codex 使用临时会话和 `read-only` 沙箱。
 - 用户补充的 PNG、JPEG、WebP 和 GIF 会从本地 data URL 提取成临时只读附件，分析结束后立即删除。
 - 未绑定本地目录时，两者只分析用户选择的资料。
 - 原生调用统一限制输入、输出和三分钟超时；失败只会把访谈标记为受阻。
 
-开发执行仍未启用，因为以下信息尚未完成：
+任务级 Agent 只启动原生 `pi --mode rpc`。Supervisor 关闭 PI 的全局资源与内建工具，
+显式加载由应用内嵌并校验的 BTask gate Extension；稳定事件先落 SQLite，再进入有界
+Wails 队列。Ask、Plan、Agent 的工具集合、任务状态、路径与授权由 Go 判断，React 只展示。
 
-- 完整 OMP RPC 事件、工具审批与恢复协议；
-- Codex 的具体委托与恢复方式；
-- 项目工作目录、权限和环境变量边界；
-- 中断、超时、失败重试和进程恢复规则；
-- 输出如何映射为可信的开发结果或审核证据。
+每个详情页以 `taskId` 作为最外层上下文边界：Session、消息、引用、权限、工具、运行、
+worktree 和异步响应必须同时匹配当前 task/session。切换任务会取消订阅并清空上一任务的
+组件状态，迟到事件和迟到请求结果会被丢弃。Agent 完成或测试通过不会改变任务主状态。
 
-这些内容确认前，开发工作台只提供“复制确认提示词”和“记录真实结果”。
+这是应用级软边界：PI、Extension、Git 和 Shell 仍使用当前操作系统用户权限。第一版不开放
+自动提交、push、PR、合并、发布、多 Agent 并行或跨任务全局记忆。

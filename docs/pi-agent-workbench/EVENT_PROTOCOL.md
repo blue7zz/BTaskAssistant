@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-React 不直接消费 PI 原始 RPC。internal/agent/event_mapper.go 把当前 PI 版本映射为版本化 BTask 事件，SQLite 先保存稳定事件，Wails 再发送。
+React 不直接消费 PI 原始 RPC。`internal/agent/service_events.go` 把当前 PI 版本映射为版本化 BTask 事件，SQLite 先保存稳定事件，Wails 再发送。
 
 第一版只使用一个 Wails channel：
 

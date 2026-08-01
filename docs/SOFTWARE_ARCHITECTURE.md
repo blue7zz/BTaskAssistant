@@ -1,8 +1,10 @@
 # BTaskAssistant 客户端软件架构
 
-> 状态：架构草案 v0.1  
-> 日期：2026-07-25  
-> 适用范围：桌面客户端第一版及后续演进
+> 状态：第一版落地架构 v1.0
+>
+> 更新日期：2026-08-01
+>
+> 适用范围：当前桌面客户端和任务级原生 PI Agent 工作台
 
 ## 1. 文档目的
 
@@ -53,7 +55,7 @@ BTaskAssistant 是一个面向 AI 辅助开发的本地任务工作流客户端�
 | 长列表 | TanStack Virtual | 任务、日志、资料片段等长列表虚拟化 |
 | 本地数据库 | SQLite | 任务、资料索引、版本、运行记录和事件日志 |
 | 本地文件存储 | 文件系统内容寻址存储 | 原始文档、图片、解析产物和导出文件 |
-| AI 主执行器 | oh-my-pi / OMP RPC | 需求分析、提示词生成、开发和审查 |
+| AI 主执行器 | 原生 PI 0.82.x RPC | 任务级聊天、计划、受控开发和固定分析 |
 | AI 可选执行器 | Codex CLI 适配器 | 开发和修复执行 |
 | 项目版本管理 | 系统 Git CLI | 分支、worktree、diff、提交和状态检查 |
 | 日志 | Go 结构化日志 | 客户端诊断、执行器日志、崩溃恢复 |
@@ -117,7 +119,7 @@ flowchart TB
     FILES[(Local Material Store)]
     PARSER[Material Processing Pipeline]
     EXEC[Executor Supervisor]
-    PI[OMP RPC Process]
+    PI[Native PI RPC Process]
     CODEX[Codex CLI Process]
     GIT[Git and Worktree Adapter]
     OS[OS Integration]
@@ -169,9 +171,8 @@ AI 执行器不嵌入 UI，统一由 `ExecutorSupervisor` 管理。
 
 ```text
 BTaskAssistant Go Process
-├── OMP RPC Process: requirement-analysis
-├── OMP RPC Process: development
-├── OMP RPC Process: review
+├── Native PI RPC Process: task session
+├── Native PI RPC Process: isolated utility analysis
 └── Codex CLI Process: optional development run
 ```
 
@@ -188,7 +189,7 @@ BTaskAssistant Go Process
 
 ### 5.3 不使用终端模拟
 
-PI 接入使用 OMP 的无头 RPC 模式，通过标准输入输出交换 JSON 消息和事件。不得通过模拟键盘、解析彩色终端文本或依赖终端窗口完成集成。
+PI 接入使用原生 `pi --mode rpc`，通过标准输入输出交换严格 LF JSONL 消息和事件。不得通过模拟键盘、解析彩色终端文本或依赖终端窗口完成集成，也不得回退到 `omp`。
 
 Codex 如果没有稳定 RPC 协议，则由独立 CLI 适配器封装，CLI 输出只能在适配层解析，不能泄漏到领域层。
 
@@ -366,38 +367,34 @@ type Executor interface {
 实现：
 
 ```text
-Executor
-├── OMPExecutor
-├── CodexExecutor
-└── ManualExecutor
+Executor boundary
+├── Native PI task Session supervisor
+├── Isolated PI/Codex utility analyzer
+└── Manual external-result recorder
 ```
 
-### 9.2 OMP 适配器
+### 9.2 原生 PI 适配器
 
-`OMPExecutor` 负责：
+`internal/agent.Service` 负责：
 
-- 启动和检测本地 OMP。
-- 以 RPC 模式创建会话。
-- 发送明确的 Skill 或阶段提示词。
-- 解析 JSON 响应和流式事件。
-- 处理结构化提问、工具审批和取消。
-- 保存 OMP 会话 ID，支持恢复。
-- 将 OMP 事件转换成内部统一事件。
+- 探测已验证的本地 PI 0.82.x 并启动 RPC Session。
+- 将配置、Session 和 cwd 隔离到当前 Task Workspace。
+- 解析、限制和持久化请求、响应与流式事件。
+- 处理 Steer、Follow-up、停止、显式恢复和历史对账。
+- 只加载应用内嵌的 BTask gate 与自有工具。
+- 将原生 PI 事件转换为带 task/session/run 标识的稳定事件。
 
 不同阶段必须使用独立会话和工具策略：
 
-| 阶段 | 写文件 | 运行命令 | 子 Agent | 说明 |
+| 模式 | 写文件 | 运行命令 | 子 Agent | 说明 |
 | --- | --- | --- | --- | --- |
-| 资料提取 | 否 | 否 | 否 | 只处理已批准输入 |
-| 需求分析 | 否 | 只读命令 | 否 | 严禁修改项目 |
-| 提示词生成 | 否 | 否 | 否 | 只读取批准需求版本 |
-| 开发 | 是 | 是 | 人工启用 | 限制在指定项目和 worktree |
-| 审查 | 默认否 | 测试和 Git 命令 | 可启用 reviewer | 独立于开发会话 |
-| 定向修复 | 是 | 是 | 默认否 | 只能处理已批准 Finding |
+| Ask | 否 | 否 | 否 | 读取当前任务上下文与已绑定 worktree |
+| Plan | 仅 artifacts | 否 | 否 | 生成计划、报告或需求 proposal |
+| Agent | 受控 worktree/artifacts | 需策略允许或审批 | 否 | 仅在 development 状态开放修改能力 |
 
 ### 9.3 Codex 适配器
 
-`CodexExecutor` 与 OMP 使用相同的 `RunRequest` 和 `RunArtifacts`，但内部独立处理：
+Codex 继续用于固定需求分析或人工外部委托记录，不复用 PI Session，也不能绕过相同的工作流人工门禁。其适配边界独立处理：
 
 - CLI 参数。
 - 会话恢复。
@@ -424,7 +421,7 @@ acceptance_criteria:
   - AC-001
 verification_commands:
   - go test ./...
-executor: omp
+executor: pi
 ```
 
 执行器只能读取该版本，不得从零散聊天中重新推导需求。
@@ -449,33 +446,28 @@ AI 审查结果不能自动触发完成；自动定向修复最多执行固定�
 ### 11.1 应用数据目录
 
 ```text
-BTaskAssistantData/
+BTaskAssistant/
 ├── database/
 │   └── btask.db
-├── tasks/
-│   └── <task-id>/
-│       ├── context.json
-│       ├── files/
-│       └── images/
-├── materials/
-│   ├── objects/<sha256>
-│   └── previews/
-├── runs/
-│   └── <execution-run-id>/
-│       ├── events.jsonl
-│       ├── stdout.log
-│       ├── stderr.log
-│       └── artifacts/
-├── exports/
-├── backups/
-└── logs/
+└── tasks/
+    └── <task-id>/
+        ├── .btask/
+        │   ├── manifest.json
+        │   ├── resources.json
+        │   ├── pi-agent/
+        │   └── pi-sessions/
+        ├── context/
+        ├── sources/
+        ├── attachments/
+        ├── artifacts/
+        ├── repos/
+        └── runs/<run-id>/
 ```
 
-每个任务使用稳定任务 ID 建立独立目录。当前纵向切片把完整 `Task` 聚合写入
-`context.json`，将文件类来源的文本内容写入 `files/`，并将任务中的 data URL
-图片按内容哈希写入 `images/`；标题或项目名称变化不重命名目录。用户也可以在
-任务目录中补充其他文件和图片，应用不会自动删除这些内容。`projectPath` 只是
-外部代码仓库引用，项目代码和系统凭据均不复制到任务目录。
+每个任务使用稳定 `task_id` 建立独立目录。`context/` 由系统投影，`sources/` 和
+`attachments/` 保存不可覆盖的输入，`artifacts/` 保存 PI 生成内容，`repos/` 只包含
+为该任务创建的 Git worktree，`runs/` 保存原始审计帧、stderr、结果和工具大输出。
+标题变化不重命名目录，系统凭据不进入任务目录。
 
 任务资料根目录是独立的应用设置，默认位于系统用户配置目录，也可以从设置页
 迁移到用户选择的新空目录。迁移复制整个目录并在切换配置前校验当前任务快照，
@@ -483,49 +475,17 @@ BTaskAssistantData/
 归档，后续如需清理必须提供单独且明确的用户操作。未来拆分原始资料和执行产物
 时，任务目录继续保存其完整清单和来源关系，全局内容寻址对象只承担去重存储。
 
-原始资料采用 SHA-256 内容寻址存储：
+附件和产物记录大小与 SHA-256；不可变输入按内容哈希命名或校验。当前实现按任务保存，
+不建立跨任务全局内容池，避免去重机制意外形成跨任务可见性。
 
-- 数据库保存元数据和逻辑文件名。
-- 相同内容默认只保存一份。
-- 资料新版本创建新的内容对象。
-- 已被批准需求引用的对象不可静默替换。
+### 11.2 当前 SQLite schema v5
 
-### 11.2 SQLite 表建议
-
-```text
-projects
-project_commands
-project_rules
-
-tasks
-task_events
-
-task_material_links
-source_materials
-material_versions
-material_fragments
-material_processing_jobs
-material_extractions
-
-requirement_revisions
-requirement_facts
-requirement_questions
-requirement_approvals
-
-prompt_revisions
-prompt_approvals
-
-execution_runs
-execution_events
-execution_artifacts
-
-review_rounds
-review_findings
-review_decisions
-
-app_settings
-schema_migrations
-```
+`workspace_state` 保留现有 Task 聚合；任务级工作台使用 `task_workspaces`、
+`task_resources`、`agent_sessions`、`agent_messages`、`agent_events`、`execution_runs`、
+`tool_calls`、`permission_requests`、`permission_grants`、`git_bindings`、
+`workspace_artifacts`、`legacy_task_migrations`、`message_attachments`、
+`resource_references` 和 `requirement_proposals`。复合外键把 task/session/run/tool
+关系锁定在同一任务。schema v5 增加历史分页索引、旧迁移完成索引和完成时间一致性触发器。
 
 ### 11.3 数据一致性
 
@@ -556,7 +516,10 @@ schema_migrations
 │   ├── 资料
 │   ├── 需求
 │   ├── 开发提示词
-│   ├── 执行
+│   ├── PI Agent 工作台
+│   │   ├── Session 与分页消息
+│   │   ├── Context / Files / Changes / Runs
+│   │   └── 工具与权限卡片
 │   ├── 审查
 │   └── 历史事件
 ├── 项目管理
@@ -566,11 +529,12 @@ schema_migrations
 
 ### 12.2 状态划分
 
-Zustand 只管理前端交互状态和缓存：
+Zustand 只管理任务工作流和全局设置；PI 消息、工具输出和运行流不写入全量持久化快照。
+`TaskAgentWorkbench` 按当前 `taskId` 在组件内维护一页会话投影：
 
 - 当前选中的任务和资料。
 - 页面筛选条件。
-- 正在流式显示的执行事件。
+- 正在流式显示的有界执行事件和分页消息。
 - 弹窗和面板状态。
 - 乐观 UI 的短期状态。
 
@@ -616,25 +580,29 @@ React 组件不能直接导入 Wails 生成代码。`WailsAppBridge` 封装真�
 
 ### 13.1 后端到前端
 
-Go 通过 Wails Runtime Events 推送统一事件：
+Go 通过 Wails Runtime Events 推送 `agent:event`：
 
 ```ts
-type AppEvent =
-  | { type: "task.updated"; taskId: string; revision: number }
-  | { type: "material.progress"; materialId: string; progress: number; stage: string }
-  | { type: "run.started"; runId: string; executor: string }
-  | { type: "run.output"; runId: string; stream: "stdout" | "stderr"; text: string }
-  | { type: "run.tool_call"; runId: string; toolCall: ToolCallView }
-  | { type: "run.approval_required"; runId: string; approval: ApprovalView }
-  | { type: "run.finished"; runId: string; status: string }
-  | { type: "review.updated"; reviewRoundId: string };
+type AgentEvent = {
+  version: 1;
+  eventId: string;
+  sequence: number;
+  kind: string;
+  taskId: string;
+  sessionId: string;
+  runId?: string;
+  toolCallId?: string;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+};
 ```
 
 ### 13.2 事件可靠性
 
 UI 事件不是持久化消息队列。前端重新打开或漏掉事件后，必须调用查询 API 从 SQLite 恢复最终状态。
 
-执行器原始事件先写入运行日志，再转换并广播，保证崩溃后可以诊断。
+稳定事件先写入 SQLite，再进入有界投递队列；补充运行日志失败不会重复广播已经持久化的事件。
+文本 delta 每 100 ms 或 32 KiB 批量持久化；队列达到 1024 条或 8 MiB 时失败关闭当前运行。
 
 ---
 
@@ -660,7 +628,7 @@ Git 适配器负责：
 - 记录基准 commit。
 - 在人工批准后合并或保留分支。
 
-第一版默认每个开发运行使用独立 worktree，避免 AI 直接污染用户主工作区。用户可以在项目设置中关闭，但必须看到风险提示。
+第一版的 Agent 开发只能使用显式绑定后创建的任务独立 worktree，不提供关闭隔离后直接修改原始工作区的开关。
 
 ---
 
@@ -686,7 +654,7 @@ API Key 和令牌不得写入 SQLite 明文，使用系统凭据存储：
 - 需求分析阶段不开放写文件能力。
 - 开发阶段限制工作目录。
 - 危险命令需要明确审批。
-- 工具审批结果保存作用域：单次、当前运行或项目规则。
+- 工具审批结果保存作用域：仅本次、当前 Session、当前任务或可撤销永久规则；关键风险只能逐次确认。
 - 日志写入前对 API Key、Token 和常见凭据格式脱敏。
 
 ### 15.4 文件安全
@@ -714,21 +682,17 @@ API Key 和令牌不得写入 SQLite 明文，使用系统凭据存储：
 运行状态恢复规则：
 
 ```text
-进程仍存在且协议可重连 → 尝试恢复
-进程不存在但会话可恢复 → 标记 PAUSED，等待人工恢复
-进程不存在且不可恢复   → 标记 INTERRUPTED
+应用重启发现活动运行     → 原子标记 INTERRUPTED，保留消息、日志和权限审计
+PI Session 文件仍存在    → 用户点击恢复后 switch_session + get_state + get_entries 对账
+PI Session 文件丢失      → 保留 SQLite 历史并显示不可恢复错误，不创建同名替代文件
 ```
 
 系统不得因为重新启动就自动重复执行 AI 开发任务。
 
-### 16.2 安全模式
+### 16.2 已知恢复边界
 
-连续启动崩溃时提供安全模式：
-
-- 不自动启动 AI 子进程。
-- 暂停资料后台解析。
-- 禁用第三方扩展。
-- 允许导出数据库、日志和诊断信息。
+当前不实现跨进程重连、自动重放工具、连续崩溃安全模式或自动清理孤立 worktree。
+恢复必须由用户显式触发；未完成权限请求会过期或取消，Session/任务授权不会因重启扩大。
 
 ---
 
@@ -740,7 +704,7 @@ API Key 和令牌不得写入 SQLite 明文，使用系统凭据存储：
 - 应用服务事务测试。
 - SQLite Repository 集成测试。
 - 资料解析器金样测试。
-- OMP/Codex 协议录制回放测试。
+- 原生 PI/Codex 协议与事件映射测试。
 - 子进程取消和崩溃恢复测试。
 - Git worktree 集成测试。
 
@@ -802,7 +766,7 @@ GitHub Actions 至少包含：
 
 ---
 
-## 19. 推荐目录结构
+## 19. 长期目录结构参考
 
 ```text
 BTaskAssistant/
@@ -845,7 +809,7 @@ BTaskAssistant/
 │   │   ├── filestore/
 │   │   ├── parsers/
 │   │   ├── executors/
-│   │   │   ├── omp/
+│   │   │   ├── pi/
 │   │   │   ├── codex/
 │   │   │   └── manual/
 │   │   ├── git/
@@ -856,7 +820,7 @@ BTaskAssistant/
 │   ├── SOFTWARE_ARCHITECTURE.md
 │   ├── PRODUCT_REQUIREMENTS.md
 │   ├── DATA_MODEL.md
-│   ├── OMP_RPC_INTEGRATION.md
+│   ├── PI_AGENT_WORKBENCH.md
 │   └── ADR/
 ├── scripts/
 ├── go.mod
@@ -868,7 +832,8 @@ BTaskAssistant/
 
 ## 20. 实施顺序
 
-不按时间估算，按依赖顺序实施：
+任务级 PI 工作台的实际阶段与验收以 `docs/pi-agent-workbench/IMPLEMENTATION_PLAN.md`
+为准；阶段 0–7 已按依赖顺序落地。下列条目保留为更长期产品演进参考：
 
 ### 阶段一：客户端基础
 
@@ -894,9 +859,9 @@ BTaskAssistant/
 - 人工批准和版本冻结。
 - PromptRevision。
 
-### 阶段四：OMP 集成
+### 阶段四：原生 PI 集成
 
-- OMP 发现和诊断。
+- PI 发现和诊断。
 - RPC 进程管理。
 - 流式事件。
 - 需求分析 Skill。
@@ -929,14 +894,14 @@ BTaskAssistant/
 | UI | React + TypeScript + Vite |
 | 后端 | Go 单机应用内核 |
 | 前后端通信 | Wails Typed Bindings + Runtime Events |
-| 数据 | SQLite + 本地内容寻址文件存储 |
+| 数据 | SQLite schema v5 + 每任务本地文件空间 |
 | 工作模式 | Local-first、单用户 |
-| 主 AI 执行器 | OMP RPC |
+| 主 AI 执行器 | 原生 PI RPC，不回退 OMP |
 | 可选执行器 | Codex CLI Adapter |
 | AI 权限 | 按阶段显式限制 |
 | 流程控制 | Go 状态机，AI 无审批权限 |
 | 版本策略 | 需求、提示词、执行和审查全部保留历史 |
-| 开发隔离 | 默认 Git worktree |
+| 开发隔离 | 显式绑定的任务独立 Git worktree |
 | 最终完成 | 只允许人工确认 |
 
 本架构的核心不是让 Agent 自动接管开发，而是建立一套可靠的控制面：**资料可追溯、需求可冻结、执行可替换、过程可恢复、结果可审查、最终由人工决定。**

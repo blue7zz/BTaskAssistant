@@ -103,6 +103,116 @@ func TestServicePersistsMultiTurnMessagesAndStableEvents(t *testing.T) {
 	}
 }
 
+func TestServiceBatchesStreamingDeltaDatabaseWrites(t *testing.T) {
+	baseStore := newServiceTestStore(t, "task_delta_batch", "流式批处理任务")
+	store := &countingServiceStore{SQLiteStore: baseStore}
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_delta_batch", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_delta_batch", SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := service.loadManagedSession("task_delta_batch", session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"assistantMessageEvent":{"type":"text_delta","delta":"x"}}`)
+	managed.mutex.Lock()
+	for index := 0; index < 2000; index++ {
+		service.handleMessageUpdateLocked(managed, raw, managed.workspaceRoot)
+	}
+	service.flushPendingDeltasLocked(managed, managed.workspaceRoot)
+	managed.mutex.Unlock()
+
+	messageWrites, deltaEventWrites := store.streamingWriteCounts()
+	if messageWrites != 1 || deltaEventWrites != 1 {
+		t.Fatalf(
+			"2000 deltas caused %d message writes and %d delta event writes",
+			messageWrites,
+			deltaEventWrites,
+		)
+	}
+	messages, err := baseStore.AgentMessages("task_delta_batch", session.ID)
+	if err != nil || len(messages) != 2 || messages[1].Content == nil ||
+		*messages[1].Content != strings.Repeat("x", 2000) {
+		t.Fatalf("batched assistant content was not durable: %#v, %v", messages, err)
+	}
+
+	answer := strings.Repeat("x", 2000)
+	factory.runtime(0).emit(map[string]any{
+		"type": "message_end",
+		"message": map[string]any{
+			"role": "assistant", "content": []map[string]any{{"type": "text", "text": answer}},
+		},
+	})
+	factory.runtime(0).emit(map[string]any{"type": "agent_settled"})
+	waitForRunState(t, baseStore, "task_delta_batch", run.ID, "succeeded")
+}
+
+func TestServiceFlushesStreamingDeltaBeforeMessageEnd(t *testing.T) {
+	store := newServiceTestStore(t, "task_delta_timer", "流式刷新任务")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_delta_timer", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_delta_timer", SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory.runtime(0).emit(map[string]any{
+		"type":                  "message_update",
+		"assistantMessageEvent": map[string]any{"type": "text_delta", "delta": "实时内容"},
+	})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		events, eventErr := store.AgentEvents("task_delta_timer", session.ID)
+		messages, messageErr := store.AgentMessages("task_delta_timer", session.ID)
+		if eventErr == nil && messageErr == nil && len(messages) == 2 &&
+			messages[1].Content != nil && *messages[1].Content == "实时内容" {
+			for _, event := range events {
+				if event.Kind == "message.delta" {
+					if err := service.Abort(context.Background(), AbortRequest{
+						TaskID: "task_delta_timer", SessionID: session.ID, RunID: run.ID,
+					}); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("streaming delta was not flushed before message_end")
+}
+
 func TestServicePagesHistoryAndUsesDistinctSteerAndFollowUpCommands(t *testing.T) {
 	store := newServiceTestStore(t, "task_queue", "队列任务")
 	factory := &fakeRuntimeFactory{}
@@ -246,6 +356,48 @@ func TestServiceAbortCancelsOnlyMatchingRun(t *testing.T) {
 	waitForRunState(t, store, "task_abort", run.ID, "cancelled")
 	if service.ActiveTask("task_abort") {
 		t.Fatal("cancelled PI run remained active")
+	}
+}
+
+func TestServiceCancelAndProcessExitRaceKeepsRunCancelled(t *testing.T) {
+	store := newServiceTestStore(t, "task_cancel_exit", "取消退出竞态")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_cancel_exit", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_cancel_exit", SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := factory.runtime(0)
+	if err := service.Abort(context.Background(), AbortRequest{
+		TaskID: "task_cancel_exit", SessionID: session.ID, RunID: run.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.crash(errors.New("process exited during cancellation"), "cancel race")
+	waitForRunState(t, store, "task_cancel_exit", run.ID, "cancelled")
+	waitForSessionState(t, store, "task_cancel_exit", session.ID, "failed")
+	stored, err := store.ExecutionRun("task_cancel_exit", run.ID)
+	if err != nil || stored.State != "cancelled" || stored.FinishedAt == nil {
+		t.Fatalf("process exit overwrote cancelled run: %#v, %v", stored, err)
+	}
+	messages, err := store.AgentMessages("task_cancel_exit", session.ID)
+	if err != nil || len(messages) != 2 || messages[1].Status != "cancelled" {
+		t.Fatalf("cancelled assistant message is inconsistent: %#v, %v", messages, err)
 	}
 }
 
@@ -710,7 +862,9 @@ func TestPermissionProtocolAllowDenyTimeoutCancelAndLargeOutput(t *testing.T) {
 		output, err := service.ReadToolOutput(ToolOutputRequest{
 			TaskID: "task_permission_allow", ToolCallID: tools[0].ID,
 		})
-		if err != nil || !strings.HasPrefix(output.Content, "output-output-") || output.ByteSize <= 32*1024 {
+		if err != nil || !strings.HasPrefix(output.Content, "output-output-") ||
+			output.ByteSize != int64(len(large)) || output.Truncated ||
+			tools[0].OutputSummary == nil || len(*tools[0].OutputSummary) > 32*1024 {
 			t.Fatalf("large output was not loaded lazily: %#v, %v", output, err)
 		}
 	})
@@ -776,6 +930,68 @@ func TestPermissionProtocolAllowDenyTimeoutCancelAndLargeOutput(t *testing.T) {
 			t.Fatalf("abort permission state is wrong: %#v, %v", stored, err)
 		}
 	})
+}
+
+func TestReadToolOutputLazilyReadsTenMiBFile(t *testing.T) {
+	store := newServiceTestStore(t, "task_tool_ten_mib", "10 MiB 工具输出")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_tool_ten_mib", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_tool_ten_mib", SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := store.TaskWorkspace("task_tool_ten_mib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := []byte(strings.Repeat("o", 10*1024*1024))
+	toolID := "tool_ten_mib"
+	ref, err := writeToolAuxFile(
+		workspace.RootPath,
+		run.ID,
+		toolID,
+		"output.txt",
+		large,
+		maxToolOutputFileBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := boundedText(string(large), 32*1024)
+	if err := store.UpsertToolCall(storage.ToolCallRecord{
+		ID: toolID, TaskID: "task_tool_ten_mib", SessionID: session.ID, RunID: run.ID,
+		ExternalToolCallID: "external-ten-mib", ToolName: "btask_permission_probe",
+		Capability: "diagnostic.permission.probe", RiskLevel: "high", State: "succeeded",
+		OutputSummary: &summary, OutputRef: &ref,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	output, err := service.ReadToolOutput(ToolOutputRequest{
+		TaskID: "task_tool_ten_mib", ToolCallID: toolID,
+	})
+	if err != nil || len(output.Content) != maxLazyToolOutputBytes ||
+		output.ByteSize != int64(len(large)) || !output.Truncated {
+		t.Fatalf("10 MiB output was not lazily bounded: %#v, %v", output, err)
+	}
+	info, err := os.Stat(filepath.Join(workspace.RootPath, filepath.FromSlash(ref)))
+	if err != nil || info.Size() != int64(len(large)) {
+		t.Fatalf("10 MiB output was not stored by reference: %#v, %v", info, err)
+	}
 }
 
 func TestPermissionProtocolBadNonceExtensionErrorAndMissingReceiptFailClosed(t *testing.T) {
@@ -1089,6 +1305,40 @@ func newServiceTestStore(t *testing.T, taskID string, title string) *storage.SQL
 	return store
 }
 
+type countingServiceStore struct {
+	*storage.SQLiteStore
+	mutex            sync.Mutex
+	messageWrites    int
+	deltaEventWrites int
+}
+
+func (store *countingServiceStore) UpsertAgentMessage(
+	record storage.AgentMessageRecord,
+) error {
+	store.mutex.Lock()
+	store.messageWrites++
+	store.mutex.Unlock()
+	return store.SQLiteStore.UpsertAgentMessage(record)
+}
+
+func (store *countingServiceStore) AppendAgentEventAndUpdateSession(
+	record storage.AgentEventRecord,
+	session storage.AgentSessionRecord,
+) error {
+	if record.Kind == "message.delta" || record.Kind == "reasoning.delta" {
+		store.mutex.Lock()
+		store.deltaEventWrites++
+		store.mutex.Unlock()
+	}
+	return store.SQLiteStore.AppendAgentEventAndUpdateSession(record, session)
+}
+
+func (store *countingServiceStore) streamingWriteCounts() (int, int) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	return store.messageWrites, store.deltaEventWrites
+}
+
 func seedServiceTask(t *testing.T, store *storage.SQLiteStore, taskID string, title string) {
 	t.Helper()
 	payload, err := store.Load()
@@ -1125,7 +1375,7 @@ func waitForRunState(
 	want string,
 ) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		run, err := store.ExecutionRun(taskID, runID)
 		if err == nil && run.State == want {

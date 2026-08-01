@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -67,6 +69,54 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	}
 	if value, err := store.Load(); err != nil || value != `{"version":1}` {
 		t.Fatalf("unexpected round trip value %q and error %v", value, err)
+	}
+}
+
+func TestSQLiteStoreReportsDatabaseLockAndRetriesWithoutMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "locked.db")
+	store := NewSQLiteStoreAt(path)
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Save(`{"version":1}`); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.readyDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`PRAGMA busy_timeout = 20`); err != nil {
+		t.Fatal(err)
+	}
+	revision := workspaceRevision(t, store)
+
+	blocker, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = blocker.Close() })
+	connection, err := blocker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+		t.Fatal(err)
+	}
+	lockedErr := store.Save(`{"version":2}`)
+	if lockedErr == nil || !strings.Contains(strings.ToLower(lockedErr.Error()), "locked") {
+		t.Fatalf("database lock was not reported clearly: %v", lockedErr)
+	}
+	if workspaceRevision(t, store) != revision {
+		t.Fatal("failed locked write changed workspace revision")
+	}
+	if value, err := store.Load(); err != nil || value != `{"version":1}` {
+		t.Fatalf("failed locked write changed data: %q, %v", value, err)
+	}
+	if _, err := connection.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(`{"version":2}`); err != nil {
+		t.Fatalf("retry after releasing lock failed: %v", err)
 	}
 }
 

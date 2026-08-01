@@ -61,7 +61,8 @@ pi \
 - 用户明确选择的模型凭据由现有 OS credential store 或后续专用设置提供；不得复制或记录全局 auth.json。
 - 需要继承某个全局 PI 资源时，必须成为可见、可撤销的任务设置，并重新启动 Session。
 
-阶段 2 若尚未启用任何工具，可以进一步使用 --no-tools。阶段 3 起需加载 BTask custom tools，因此使用 --no-builtin-tools。
+固定 utility Session 使用 `--no-tools`；任务聊天 Session 始终加载 BTask custom tools，
+因此使用 `--no-builtin-tools` 并要求 gate 探针成功。
 
 ## 3. 可用性判定
 
@@ -80,7 +81,7 @@ gate handshake：
 - Extension 在 session_start 后发出 RPC Extension UI setStatus 请求，statusKey 固定为 btask-gate，statusText 包含协议版本和 nonce。
 - Supervisor 只在 nonce、版本和显式 Extension 路径全部匹配后开放 custom writer/shell 工具。
 - 超时、extension_error、重载、Session 切换后缺少新 handshake 都失败关闭。
-- 阶段 2 的 no-tools Session 和固定 utility Session 不加载工具，可在 get_state 成功后 ready；阶段 3 起只要加载 read/artifact 等 custom tool，握手就是 ready 的必要条件。
+- 固定 utility Session 不加载工具，可在 get_state 成功后 ready；任务聊天 Session 加载 read/artifact/worktree 等 custom tool，握手始终是 ready 的必要条件。
 - 该握手用于检测配置和实现错误，不是密码学或操作系统安全边界。
 
 本机隔离探针证实：启动后 stdout 不主动发送首帧；get_state、get_messages、get_entries、get_commands 可响应。即使 --no-extensions，0.82.1 的 get_commands 仍可出现临时内置 llama command，不能把“命令列表非空”等同于用户资源泄漏或 gate 成功。
@@ -213,7 +214,7 @@ RPC Extension UI 请求：
 - select、confirm、input、editor：阻塞并等待相同 id 的 extension_ui_response。
 - notify、setStatus、setWidget、setTitle、set_editor_text：fire-and-forget。
 
-阶段 3 的固定资源门禁使用 `input` 作为 Extension 与 Go 的结构化桥。请求 title 固定为 `btask-gate`，placeholder 是 JSON，至少包含：
+固定资源门禁使用 `input` 作为 Extension 与 Go 的结构化桥。请求 title 固定为 `btask-gate`，placeholder 是 JSON，至少包含：
 
 - version、nonce
 - taskId、sessionId、mode
@@ -223,7 +224,7 @@ RPC Extension UI 请求：
 
 Go 只在存在活动 run、toolCallId 已由同名 allowlist 工具启动、身份字段全部匹配时执行；回复使用同 id 的 `extension_ui_response`。Ask 只注册 list/read，Plan/Agent 才注册受控 artifact writer。未知工具、错 nonce、跨任务资源、非法路径或 writer 身份不匹配均失败关闭。
 
-阶段 4 在此固定桥上增加人工审批。届时 BTask gate Extension 在 tool_call 中生成结构化 permission envelope，并使用 confirm 请求等待 BTask 决策。Envelope 至少包含：
+BTask gate Extension 在 tool_call 中生成结构化 permission envelope，并使用 confirm 请求等待 BTask 决策。Envelope 至少包含：
 
 - version
 - nonce

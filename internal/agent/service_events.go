@@ -16,7 +16,10 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
 
-const maxToolOutputFileBytes = 4 * 1024 * 1024
+const (
+	maxToolOutputFileBytes = 12 * 1024 * 1024
+	deltaFlushInterval     = 100 * time.Millisecond
+)
 
 var secretTextPattern = regexp.MustCompile(`(?i)(token|pat|password|secret|api[_-]?key|authorization|cookie|credential|private[_-]?key)(\s*[:=]\s*)([^\s,;]+)`)
 var secretHeaderPattern = regexp.MustCompile(`(?im)(authorization|cookie)(\s*:\s*)[^\r\n]+`)
@@ -145,27 +148,22 @@ func (service *Service) handleMessageUpdateLocked(
 		managed.run.assistantContent += delta.Delta
 		content := managed.run.assistantContent
 		managed.run.assistant.Content = &content
-		if err := service.store.UpsertAgentMessage(managed.run.assistant); err != nil {
-			managed.run.errorMessage = sanitizeError(err.Error(), workspaceRoot)
-			return
-		}
 		accumulated := startChars
 		for _, part := range splitUTF8(delta.Delta, maxEventTextBytes) {
 			accumulated += utf8.RuneCountInString(part)
-			_ = service.emitLocked(managed, "message.delta", managed.run.record.ID, "", map[string]any{
-				"messageId":        managed.run.assistant.ID,
-				"delta":            part,
-				"accumulatedChars": accumulated,
-			})
+			service.queueDeltaLocked(managed, "message.delta", part, accumulated, workspaceRoot)
 		}
 	case "thinking_delta":
 		service.ensureAssistantMessageLocked(managed)
 		for _, part := range splitUTF8(delta.Delta, maxEventTextBytes) {
-			_ = service.emitLocked(managed, "reasoning.delta", managed.run.record.ID, "", map[string]any{
-				"messageId":        managed.run.assistant.ID,
-				"delta":            part,
-				"accumulatedChars": utf8.RuneCountInString(part),
-			})
+			managed.run.reasoningChars += utf8.RuneCountInString(part)
+			service.queueDeltaLocked(
+				managed,
+				"reasoning.delta",
+				part,
+				managed.run.reasoningChars,
+				workspaceRoot,
+			)
 		}
 	case "error":
 		message := strings.TrimSpace(delta.Reason)
@@ -179,6 +177,89 @@ func (service *Service) handleMessageUpdateLocked(
 	default:
 		// Tool-call deltas are followed by a typed tool_execution_start event,
 		// which is the authoritative allowlist decision point.
+	}
+}
+
+func (service *Service) queueDeltaLocked(
+	managed *managedSession,
+	kind string,
+	delta string,
+	accumulatedChars int,
+	workspaceRoot string,
+) {
+	if managed.run == nil || delta == "" {
+		return
+	}
+	run := managed.run
+	lastIndex := len(run.pendingDeltas) - 1
+	if lastIndex >= 0 && run.pendingDeltas[lastIndex].kind == kind &&
+		len(run.pendingDeltas[lastIndex].delta)+len(delta) <= maxEventTextBytes {
+		run.pendingDeltas[lastIndex].delta += delta
+		run.pendingDeltas[lastIndex].accumulatedChars = accumulatedChars
+	} else {
+		run.pendingDeltas = append(run.pendingDeltas, pendingDelta{
+			kind: kind, delta: delta, accumulatedChars: accumulatedChars,
+		})
+	}
+	run.pendingDeltaSize += len(delta)
+	if run.pendingDeltaSize >= maxEventTextBytes {
+		service.flushPendingDeltasLocked(managed, workspaceRoot)
+		return
+	}
+	if run.deltaTimer != nil {
+		return
+	}
+	runID := run.record.ID
+	run.deltaTimer = time.AfterFunc(deltaFlushInterval, func() {
+		managed.mutex.Lock()
+		defer managed.mutex.Unlock()
+		if managed.run == nil || managed.run.record.ID != runID {
+			return
+		}
+		service.flushPendingDeltasLocked(managed, workspaceRoot)
+	})
+}
+
+func (service *Service) flushPendingDeltasLocked(
+	managed *managedSession,
+	workspaceRoot string,
+) {
+	if managed.run == nil {
+		return
+	}
+	run := managed.run
+	if run.deltaTimer != nil {
+		run.deltaTimer.Stop()
+		run.deltaTimer = nil
+	}
+	if len(run.pendingDeltas) == 0 {
+		run.pendingDeltaSize = 0
+		return
+	}
+	pending := run.pendingDeltas
+	run.pendingDeltas = nil
+	run.pendingDeltaSize = 0
+	hasText := false
+	for _, item := range pending {
+		if item.kind == "message.delta" {
+			hasText = true
+			break
+		}
+	}
+	if hasText {
+		content := run.assistantContent
+		run.assistant.Content = &content
+		if err := service.store.UpsertAgentMessage(run.assistant); err != nil {
+			run.errorMessage = sanitizeError(err.Error(), workspaceRoot)
+			return
+		}
+	}
+	for _, item := range pending {
+		_ = service.emitLocked(managed, item.kind, run.record.ID, "", map[string]any{
+			"messageId":        run.assistant.ID,
+			"delta":            item.delta,
+			"accumulatedChars": item.accumulatedChars,
+		})
 	}
 }
 
@@ -209,6 +290,7 @@ func (service *Service) handleMessageEndLocked(
 		return
 	}
 	service.ensureAssistantMessageLocked(managed)
+	service.flushPendingDeltasLocked(managed, managed.workspaceRoot)
 	if content != "" && len(content) <= maxMessageBytes {
 		managed.run.assistantContent = content
 	}
@@ -243,6 +325,7 @@ func (service *Service) ensureAssistantMessageLocked(managed *managedSession) {
 	managed.run.assistant = message
 	managed.run.assistantContent = ""
 	managed.run.assistantStarted = true
+	managed.run.reasoningChars = 0
 	_ = service.emitLocked(managed, "message.start", managed.run.record.ID, "", map[string]any{
 		"messageId": message.ID, "role": "assistant", "kind": "text",
 	})
@@ -252,6 +335,7 @@ func (service *Service) completeAssistantLocked(managed *managedSession, status 
 	if managed.run == nil || !managed.run.assistantStarted {
 		return
 	}
+	service.flushPendingDeltasLocked(managed, managed.workspaceRoot)
 	message := &managed.run.assistant
 	if message.Status != "streaming" && message.Status != "pending" {
 		return

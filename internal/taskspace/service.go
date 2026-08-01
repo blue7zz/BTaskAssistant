@@ -792,6 +792,15 @@ func validateManifest(manifest Manifest, taskID string) error {
 }
 
 func writeAtomicFile(root *os.Root, name string, content []byte) (bool, error) {
+	return writeAtomicFileWithRename(root, name, content, root.Rename)
+}
+
+func writeAtomicFileWithRename(
+	root *os.Root,
+	name string,
+	content []byte,
+	rename func(string, string) error,
+) (bool, error) {
 	if err := rejectCaseCollision(root, filepath.Dir(name), filepath.Base(name)); err != nil {
 		return false, err
 	}
@@ -835,7 +844,7 @@ func writeAtomicFile(root *os.Root, name string, content []byte) (bool, error) {
 	if err := temporary.Close(); err != nil {
 		return false, err
 	}
-	if err := root.Rename(temporaryName, name); err != nil {
+	if err := rename(temporaryName, name); err != nil {
 		return false, err
 	}
 	removeTemporary = false
