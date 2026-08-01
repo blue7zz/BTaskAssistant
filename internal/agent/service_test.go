@@ -126,6 +126,9 @@ func TestServiceAbortCancelsOnlyMatchingRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !service.ActiveTask("task_abort") || service.ActiveTask("task_other") {
+		t.Fatal("active task registry did not match the running PI request")
+	}
 	if err := service.Abort(context.Background(), AbortRequest{
 		TaskID: "task_abort", SessionID: session.ID, RunID: "wrong-run",
 	}); err == nil {
@@ -137,6 +140,9 @@ func TestServiceAbortCancelsOnlyMatchingRun(t *testing.T) {
 		t.Fatalf("abort run: %v", err)
 	}
 	waitForRunState(t, store, "task_abort", run.ID, "cancelled")
+	if service.ActiveTask("task_abort") {
+		t.Fatal("cancelled PI run remained active")
+	}
 }
 
 func TestServiceAllowsOnlyOneActiveRunPerTaskAcrossSessions(t *testing.T) {
@@ -226,6 +232,52 @@ func TestServiceStopsToolsOutsideTheTaskGateAllowlist(t *testing.T) {
 	if err != nil || stored.ErrorMessage == nil ||
 		!strings.Contains(*stored.ErrorMessage, "未允许") {
 		t.Fatalf("unexpected task-gate failure %#v, %v", stored, err)
+	}
+}
+
+func TestServiceRejectsWorktreeMutationAndShellOutsideAgentMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+		tool string
+		args map[string]any
+	}{
+		{name: "ask shell", mode: "ask", tool: "btask_shell", args: map[string]any{"command": "go test ./...", "cwd": ".", "timeoutSeconds": 30}},
+		{name: "plan worktree write", mode: "plan", tool: "btask_write_worktree_file", args: map[string]any{"path": "new.go", "content": "package main\n"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			taskID := "task_mode_" + strings.ReplaceAll(test.mode, "-", "_")
+			store := newServiceTestStore(t, taskID, test.name)
+			factory := &fakeRuntimeFactory{}
+			service := NewService(store, ServiceOptions{RuntimeFactory: factory, RequestTimeout: time.Second})
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				_ = service.Close(ctx)
+			})
+			session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+				TaskID: taskID, Mode: test.mode,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := service.SendPrompt(context.Background(), PromptRequest{
+				TaskID: taskID, SessionID: session.ID, Message: "hold",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			factory.runtime(0).emit(map[string]any{
+				"type": "tool_execution_start", "toolCallId": "mode-tool",
+				"toolName": test.tool, "args": test.args,
+			})
+			waitForRunState(t, store, taskID, run.ID, "failed")
+			tools, err := service.ToolCalls(taskID, session.ID)
+			if err != nil || len(tools) != 1 || tools[0].Capability != "unexpected.tool" || tools[0].RiskLevel != "critical" {
+				t.Fatalf("mode-rejected tool was not audited fail-closed: %#v, %v", tools, err)
+			}
+		})
 	}
 }
 

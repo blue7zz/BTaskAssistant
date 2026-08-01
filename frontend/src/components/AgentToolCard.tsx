@@ -5,6 +5,7 @@ import type { AgentToolCall, AgentToolOutput } from "../domain/agent";
 interface AgentToolCardProps {
   tool: AgentToolCall;
   loadOutput?: () => Promise<AgentToolOutput>;
+  onStop?: () => Promise<void> | void;
 }
 
 const STATE_LABELS: Record<AgentToolCall["state"], string> = {
@@ -36,11 +37,12 @@ function durationText(tool: AgentToolCall): string {
   return `${(milliseconds / 1000).toFixed(1)} 秒`;
 }
 
-export function AgentToolCard({ tool, loadOutput }: AgentToolCardProps) {
+export function AgentToolCard({ tool, loadOutput, onStop }: AgentToolCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [output, setOutput] = useState<AgentToolOutput>();
   const [loadingOutput, setLoadingOutput] = useState(false);
   const [outputError, setOutputError] = useState("");
+  const [stopping, setStopping] = useState(false);
 
   const toggleDetails = async () => {
     const nextExpanded = !expanded;
@@ -65,32 +67,58 @@ export function AgentToolCard({ tool, loadOutput }: AgentToolCardProps) {
     }
   };
 
+  const stop = async () => {
+    if (!onStop || stopping) return;
+    setStopping(true);
+    setOutputError("");
+    try {
+      await onStop();
+    } catch (reason) {
+      setOutputError(reason instanceof Error ? reason.message : "停止 Shell 工具失败");
+    } finally {
+      setStopping(false);
+    }
+  };
+
   return (
     <article
       className={`agent-governance-card agent-tool-card risk-${tool.riskLevel}`}
       aria-label={`工具调用 ${tool.toolName}`}
     >
-      <button
-        type="button"
-        className="agent-tool-summary"
-        aria-expanded={expanded}
-        onClick={() => void toggleDetails()}
-      >
-        <span className="agent-governance-icon">
-          <Wrench size={13} />
-        </span>
-        <span>
-          <strong>{tool.toolName}</strong>
-          <small>{tool.capability} · {tool.target || "未声明目标"}</small>
-        </span>
-        <span className={`agent-risk-badge risk-${tool.riskLevel}`}>
-          {RISK_LABELS[tool.riskLevel]}
-        </span>
-        <span className={`agent-state-badge state-${tool.state}`}>
-          {STATE_LABELS[tool.state]}
-        </span>
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-      </button>
+      <div className="agent-tool-summary-row">
+        <button
+          type="button"
+          className="agent-tool-summary"
+          aria-expanded={expanded}
+          onClick={() => void toggleDetails()}
+        >
+          <span className="agent-governance-icon">
+            <Wrench size={13} />
+          </span>
+          <span>
+            <strong>{tool.toolName}</strong>
+            <small>{tool.capability} · {tool.target || "未声明目标"}</small>
+          </span>
+          <span className={`agent-risk-badge risk-${tool.riskLevel}`}>
+            {RISK_LABELS[tool.riskLevel]}
+          </span>
+          <span className={`agent-state-badge state-${tool.state}`}>
+            {STATE_LABELS[tool.state]}
+          </span>
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </button>
+        {onStop && (
+          <button
+            type="button"
+            className="button secondary compact agent-tool-stop"
+            disabled={stopping}
+            onClick={() => void stop()}
+          >
+            {stopping ? <LoaderCircle className="spin" size={11} /> : null}
+            {stopping ? "停止中" : "停止"}
+          </button>
+        )}
+      </div>
 
       {expanded && (
         <div className="agent-tool-details">

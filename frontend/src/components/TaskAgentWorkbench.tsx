@@ -1,10 +1,12 @@
 import {
   AlertTriangle,
+  Activity,
   AtSign,
   Bot,
   ExternalLink,
   FileText,
   FolderOpen,
+  GitBranch,
   Image as ImageIcon,
   LoaderCircle,
   MessageSquare,
@@ -38,7 +40,9 @@ import type {
 } from "../domain/agent";
 import { agentClient, type AgentClient } from "../lib/agentBridge";
 import { useWorkspaceStore } from "../store/workspace";
+import { AgentChangesPanel } from "./AgentChangesPanel";
 import { AgentPermissionCard } from "./AgentPermissionCard";
+import { AgentRunsPanel } from "./AgentRunsPanel";
 import { AgentToolCard } from "./AgentToolCard";
 
 interface TaskAgentWorkbenchProps {
@@ -158,6 +162,9 @@ export function TaskAgentWorkbench({
   client = agentClient,
 }: TaskAgentWorkbenchProps) {
   const piSettings = useWorkspaceStore((state) => state.piSettings);
+  const taskStatus = useWorkspaceStore(
+    (state) => state.tasks.find((task) => task.id === taskId)?.status ?? "inbox",
+  );
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -172,7 +179,11 @@ export function TaskAgentWorkbench({
   const [artifacts, setArtifacts] = useState<AgentResource[]>([]);
   const [mentionOptions, setMentionOptions] = useState<AgentResource[]>([]);
   const [selectedResources, setSelectedResources] = useState<AgentResource[]>([]);
-  const [resourcePanel, setResourcePanel] = useState<"resources" | "artifacts">("resources");
+  const [resourcePanel, setResourcePanel] = useState<
+    "resources" | "artifacts" | "changes" | "runs"
+  >("resources");
+  const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+  const [runRefreshVersion, setRunRefreshVersion] = useState(0);
   const [preview, setPreview] = useState<AgentResourcePreview>();
   const [previewResource, setPreviewResource] = useState<AgentResource>();
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -356,6 +367,8 @@ export function TaskAgentWorkbench({
     setPreview(undefined);
     setPreviewResource(undefined);
     setResourcePanel("resources");
+    setGitRefreshVersion(0);
+    setRunRefreshVersion(0);
     setDragActive(false);
     setActiveRunId("");
     setError("");
@@ -398,6 +411,12 @@ export function TaskAgentWorkbench({
         void reloadGovernance(event.sessionId, epoch).catch((reason) => {
           if (epoch === epochRef.current) setError(errorText(reason));
         });
+      }
+      if (event.kind === "git.changed") {
+        setGitRefreshVersion((current) => current + 1);
+      }
+      if (event.kind === "run.state") {
+        setRunRefreshVersion((current) => current + 1);
       }
 
       const messageId = payloadString(event.payload, "messageId");
@@ -741,6 +760,23 @@ export function TaskAgentWorkbench({
     }
   };
 
+  const stopToolExecution = async (tool: AgentToolCall) => {
+    if (!client.stopToolExecution) {
+      setError("当前客户端不支持单独停止 Shell 工具");
+      return;
+    }
+    try {
+      await client.stopToolExecution({
+        taskId,
+        sessionId: tool.sessionId,
+        runId: tool.runId,
+        toolCallId: tool.id,
+      });
+    } catch (reason) {
+      setError(errorText(reason));
+    }
+  };
+
   const activeSession = sessions.find(
     (session) => session.id === selectedSessionId,
   );
@@ -783,7 +819,7 @@ export function TaskAgentWorkbench({
           <span>
             {client.runtimeMode() === "browser-mock"
               ? "浏览器模拟，不启动本机 PI"
-              : "原生 PI RPC · BTask 权限门禁 · 无 Shell/Git"}
+              : "原生 PI RPC · 任务 worktree · 受控 Shell"}
           </span>
         </div>
         <div className="agent-session-list">
@@ -864,7 +900,7 @@ export function TaskAgentWorkbench({
             <div className="agent-security-boundary" role="note">
               <ShieldAlert size={13} />
               <span>
-                BTask 提供应用级软权限边界，并非操作系统沙箱；本阶段未开放 Shell 与 Git 执行。
+                BTask 提供应用级软权限边界，并非操作系统沙箱；仅 Agent + development 可修改任务 worktree 或申请 Shell，Git 推送、合并与 PR 未开放。
               </span>
             </div>
           )}
@@ -918,13 +954,18 @@ export function TaskAgentWorkbench({
                   })
                   : undefined
               }
+              onStop={
+                tool.toolName === "btask_shell" && tool.state === "running"
+                  ? () => stopToolExecution(tool)
+                  : undefined
+              }
             />
           ))}
           {!loading && selectedSessionId && messages.length === 0 && !hasGovernance && (
             <div className="agent-chat-empty">
               <Bot size={26} />
               <strong>开始当前任务的第一轮对话</strong>
-              <p>PI 可读取当前任务资源；Plan/Agent 仅可写入受控 artifacts。</p>
+              <p>PI 可读取当前任务资源与已绑定 worktree；Plan 可写 artifacts，Agent 在开发中任务可申请受控开发工具。</p>
             </div>
           )}
           {!loading && !selectedSessionId && (
@@ -1091,38 +1132,99 @@ export function TaskAgentWorkbench({
 
       <aside className="agent-resource-panel" aria-label="当前任务上下文和文件">
         <header>
-          <div><FolderOpen size={15} /><span><strong>上下文与文件</strong><small>仅当前任务</small></span></div>
+          <div>
+            {resourcePanel === "changes" ? (
+              <GitBranch size={15} />
+            ) : resourcePanel === "runs" ? (
+              <Activity size={15} />
+            ) : (
+              <FolderOpen size={15} />
+            )}
+            <span>
+              <strong>
+                {resourcePanel === "changes"
+                  ? "Git 变更"
+                  : resourcePanel === "runs"
+                    ? "运行历史"
+                    : "上下文与文件"}
+              </strong>
+              <small>仅当前任务</small>
+            </span>
+          </div>
         </header>
         <div className="agent-resource-tabs">
           <button
             type="button"
             className={resourcePanel === "resources" ? "active" : ""}
             onClick={() => setResourcePanel("resources")}
-          >资源 {resources.length}</button>
+          >
+            资源 {resources.length}
+          </button>
           <button
             type="button"
             className={resourcePanel === "artifacts" ? "active" : ""}
             onClick={() => setResourcePanel("artifacts")}
-          >Artifacts {artifacts.length}</button>
+          >
+            Artifacts {artifacts.length}
+          </button>
+          <button
+            type="button"
+            className={resourcePanel === "changes" ? "active" : ""}
+            onClick={() => setResourcePanel("changes")}
+          >
+            变更
+          </button>
+          <button
+            type="button"
+            className={resourcePanel === "runs" ? "active" : ""}
+            onClick={() => setResourcePanel("runs")}
+          >
+            运行
+          </button>
         </div>
-        <div className="agent-resource-list">
-          {(resourcePanel === "resources" ? resources : artifacts).map((resource) => (
-            <button
-              type="button"
-              key={resource.id}
-              className={previewResource?.id === resource.id ? "active" : ""}
-              onClick={() => void showPreview(resource)}
-            >
-              {resource.mimeType?.startsWith("image/") ? <ImageIcon size={13} /> : <FileText size={13} />}
-              <span><strong>{resourceName(resource)}</strong><small>{resource.kind} · {formatBytes(resource.byteSize)}</small></span>
-              {resource.proposalState && <em>{resource.proposalState}</em>}
-            </button>
-          ))}
-          {(resourcePanel === "resources" ? resources : artifacts).length === 0 && (
-            <p>当前任务暂无{resourcePanel === "resources" ? "可引用资源" : " artifacts"}。</p>
-          )}
-        </div>
-        {previewResource && (
+        {(resourcePanel === "resources" || resourcePanel === "artifacts") && (
+          <div className="agent-resource-list">
+            {(resourcePanel === "resources" ? resources : artifacts).map((resource) => (
+              <button
+                type="button"
+                key={resource.id}
+                className={previewResource?.id === resource.id ? "active" : ""}
+                onClick={() => void showPreview(resource)}
+              >
+                {resource.mimeType?.startsWith("image/") ? (
+                  <ImageIcon size={13} />
+                ) : (
+                  <FileText size={13} />
+                )}
+                <span>
+                  <strong>{resourceName(resource)}</strong>
+                  <small>{resource.kind} · {formatBytes(resource.byteSize)}</small>
+                </span>
+                {resource.proposalState && <em>{resource.proposalState}</em>}
+              </button>
+            ))}
+            {(resourcePanel === "resources" ? resources : artifacts).length === 0 && (
+              <p>当前任务暂无{resourcePanel === "resources" ? "可引用资源" : " artifacts"}。</p>
+            )}
+          </div>
+        )}
+        {resourcePanel === "changes" && (
+          <AgentChangesPanel
+            taskId={taskId}
+            taskStatus={taskStatus}
+            client={client}
+            refreshVersion={gitRefreshVersion}
+          />
+        )}
+        {resourcePanel === "runs" && (
+          <AgentRunsPanel
+            taskId={taskId}
+            sessionId={selectedSessionId}
+            client={client}
+            refreshVersion={runRefreshVersion}
+          />
+        )}
+        {(resourcePanel === "resources" || resourcePanel === "artifacts") && previewResource && (
           <section className="agent-resource-preview">
             <header>
               <span><strong>{resourceName(previewResource)}</strong><small>{previewResource.logicalPath}</small></span>

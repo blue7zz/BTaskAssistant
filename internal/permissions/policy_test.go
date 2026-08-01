@@ -234,8 +234,112 @@ func TestPolicyModeAndTaskStatusHardLimits(t *testing.T) {
 	}
 }
 
+func TestWorktreeToolClassificationAndModeGates(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []struct {
+		name       string
+		tool       string
+		args       string
+		capability string
+		risk       RiskLevel
+		readOnly   bool
+		mutating   bool
+	}{
+		{name: "list", tool: "btask_list_worktree_files", args: `{"query":"go","limit":25}`, capability: "task.worktree.list", risk: RiskLow, readOnly: true},
+		{name: "read", tool: "btask_read_worktree_file", args: `{"path":"internal/app.go"}`, capability: "task.worktree.read", risk: RiskLow, readOnly: true},
+		{name: "write", tool: "btask_write_worktree_file", args: `{"path":"internal/new.go","content":"package internal\\n"}`, capability: "task.worktree.write", risk: RiskMedium, mutating: true},
+		{name: "edit", tool: "btask_edit_worktree_file", args: `{"path":"internal/app.go","oldText":"old","newText":"new","replaceAll":false}`, capability: "task.worktree.write", risk: RiskMedium, mutating: true},
+		{name: "delete", tool: "btask_delete_worktree_file", args: `{"path":"internal/old.go"}`, capability: "task.worktree.delete", risk: RiskMedium, mutating: true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			classification := ClassifyTool(ToolInput{
+				TaskID: "task_a", ToolName: test.tool, Args: json.RawMessage(test.args),
+			})
+			if classification.Capability != test.capability || classification.RiskLevel != test.risk ||
+				classification.ReadOnly != test.readOnly || classification.Mutating != test.mutating ||
+				classification.HardDenyReason != "" {
+				t.Fatalf("unexpected worktree classification %#v", classification)
+			}
+			request := Request{
+				RequestID: "request_" + test.name, TaskID: "task_a", SessionID: "session_a",
+				RunID: "run_a", ToolCallID: "tool_a", ToolName: test.tool,
+				Mode: "ask", TaskStatus: "development", GateValid: true, Classification: classification,
+			}
+			decision := Evaluate(request, nil, now)
+			if test.readOnly {
+				if decision.Outcome != OutcomeAllow {
+					t.Fatalf("read-only worktree tool was not allowed in Ask: %#v", decision)
+				}
+				return
+			}
+			if decision.Outcome != OutcomeDeny || !decision.HardDeny {
+				t.Fatalf("mutating worktree tool was not denied in Ask: %#v", decision)
+			}
+			request.Mode = "plan"
+			if decision = Evaluate(request, nil, now); decision.Outcome != OutcomeDeny || !decision.HardDeny {
+				t.Fatalf("mutating worktree tool was not denied in Plan: %#v", decision)
+			}
+			request.Mode = "agent"
+			if decision = Evaluate(request, nil, now); decision.Outcome != OutcomeAllow {
+				t.Fatalf("development Agent worktree tool was not allowed: %#v", decision)
+			}
+			request.TaskStatus = "review"
+			if decision = Evaluate(request, nil, now); decision.Outcome != OutcomeDeny || !decision.HardDeny {
+				t.Fatalf("worktree mutation outside development was not denied: %#v", decision)
+			}
+		})
+	}
+}
+
+func TestShellToolShowsCommandAndCWDAndBlocksHiddenGitSideEffects(t *testing.T) {
+	ordinary := ClassifyTool(ToolInput{
+		TaskID: "task_a", ToolName: "btask_shell",
+		Args: json.RawMessage(`{"command":"go test ./internal/...","cwd":"backend","timeoutSeconds":120}`),
+	})
+	if ordinary.HardDenyReason != "" || ordinary.Capability != "shell.execute" || ordinary.RiskLevel != RiskMedium ||
+		ordinary.Target != "go test ./internal/...\n[cwd: backend]" {
+		t.Fatalf("ordinary Shell classification mismatch: %#v", ordinary)
+	}
+	for _, command := range []string{
+		"git add .", "git commit -m hidden", "git push origin main", "git merge topic",
+		"git worktree remove ../other", "gh pr create --fill", "pnpm publish",
+	} {
+		classification := ClassifyTool(ToolInput{
+			TaskID: "task_a", ToolName: "btask_shell",
+			Args: json.RawMessage(`{"command":` + quoteJSON(command) + `,"cwd":".","timeoutSeconds":30}`),
+		})
+		if classification.HardDenyReason == "" {
+			t.Fatalf("hidden Git/publish action was accepted: %q %#v", command, classification)
+		}
+	}
+	credential := ClassifyTool(ToolInput{
+		TaskID: "task_a", ToolName: "btask_shell",
+		Args: json.RawMessage(`{"command":"cat ~/.ssh/id_rsa","cwd":".","timeoutSeconds":30}`),
+	})
+	if credential.HardDenyReason == "" || strings.Contains(credential.Target, "id_rsa") {
+		t.Fatalf("credential-bearing Shell target was not redacted: %#v", credential)
+	}
+	push, err := ClassifyGit([]string{"push", "--force", "origin", "topic"}, "task-worktree:task_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{
+		RequestID: "request_push", TaskID: "task_a", SessionID: "session_a",
+		RunID: "run_a", ToolCallID: "tool_push", ToolName: "git_push",
+		Mode: "agent", TaskStatus: "development", GateValid: true, Classification: push,
+	}
+	decision := Evaluate(request, nil, time.Now())
+	if decision.Outcome != OutcomeAsk || len(decision.AllowedScopes) != 1 || decision.AllowedScopes[0] != ScopeOnce {
+		t.Fatalf("push was not constrained to one-time confirmation: %#v", decision)
+	}
+}
+
 func TestPathClassifierRejectsTraversalWindowsSymlinkAndCaseAlias(t *testing.T) {
-	for _, value := range []string{"../escape", "/tmp/out", `C:\\temp\\out`, `\\\\server\\share`, `safe/../escape`, `.ssh/id_rsa`, "safe//out"} {
+	for _, value := range []string{
+		"../escape", "/tmp/out", `C:\\temp\\out`, `\\\\server\\share`, "safe/../escape",
+		`.ssh/id_rsa`, "safe//out", "safe/file:stream", "safe/con.txt", "safe/name. ", "safe/control\x1f.txt",
+	} {
 		if _, err := NormalizeRelativePath(value); err == nil {
 			t.Fatalf("unsafe path %q was accepted", value)
 		}

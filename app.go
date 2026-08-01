@@ -14,6 +14,8 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/agent"
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
+	"github.com/blue7zz/BTaskAssistant/internal/execution"
+	"github.com/blue7zz/BTaskAssistant/internal/gitrepo"
 	"github.com/blue7zz/BTaskAssistant/internal/plane"
 	"github.com/blue7zz/BTaskAssistant/internal/report"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
@@ -42,6 +44,8 @@ type App struct {
 	ctx                     context.Context
 	store                   *storage.SQLiteStore
 	agentService            agent.AgentAPI
+	gitService              *gitrepo.Service
+	executionService        *execution.Service
 	credentials             credentials.Store
 	dailyReportGenerator    engine.DailyReportGenerating
 	emitDailyReportProgress dailyReportProgressEmitter
@@ -68,7 +72,11 @@ func NewApp() *App {
 		openDirectoryDialog: wailsruntime.OpenDirectoryDialog,
 		openPath:            openPathInFileManager,
 	}
+	app.gitService = gitrepo.NewService(app.store)
+	app.executionService = execution.NewService()
 	app.agentService = agent.NewService(app.store, agent.ServiceOptions{
+		GitService:       app.gitService,
+		ExecutionService: app.executionService,
 		Emit: func(event agent.Event) {
 			if app.ctx != nil {
 				wailsruntime.EventsEmit(app.ctx, agent.EventName, event)
@@ -427,6 +435,113 @@ func (a *App) AbortAgentRun(request agent.AbortRequest) error {
 		return errors.New("PI 会话服务未初始化")
 	}
 	return a.agentService.Abort(a.appContext(), request)
+}
+
+func (a *App) StopAgentToolExecution(request execution.StopRequest) error {
+	if a.startupErr != nil {
+		return a.startupErr
+	}
+	if a.agentService == nil {
+		return errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.StopToolExecution(request)
+}
+
+func (a *App) SelectGitRepository() (string, error) {
+	if a.ctx == nil {
+		return "", errors.New("桌面客户端尚未初始化")
+	}
+	openDirectoryDialog := a.openDirectoryDialog
+	if openDirectoryDialog == nil {
+		openDirectoryDialog = wailsruntime.OpenDirectoryDialog
+	}
+	selected, err := openDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title:           "选择任务的本地 Git 仓库",
+		ResolvesAliases: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("选择本地 Git 仓库目录失败: %w", err)
+	}
+	if strings.TrimSpace(selected) == "" {
+		return "", nil
+	}
+	absolute, err := filepath.Abs(selected)
+	if err != nil {
+		return "", fmt.Errorf("解析所选 Git 仓库目录失败: %w", err)
+	}
+	return filepath.Clean(absolute), nil
+}
+
+func (a *App) BindGitRepository(
+	request gitrepo.BindRequest,
+) (storage.GitBindingRecord, error) {
+	if a.startupErr != nil {
+		return storage.GitBindingRecord{}, a.startupErr
+	}
+	if a.gitService == nil {
+		return storage.GitBindingRecord{}, errors.New("Git worktree 服务未初始化")
+	}
+	return a.gitService.Bind(a.appContext(), request)
+}
+
+func (a *App) GetTaskGitStatus(taskID string) (gitrepo.StatusView, error) {
+	if a.startupErr != nil {
+		return gitrepo.StatusView{}, a.startupErr
+	}
+	if a.gitService == nil {
+		return gitrepo.StatusView{}, errors.New("Git worktree 服务未初始化")
+	}
+	return a.gitService.Status(a.appContext(), taskID)
+}
+
+func (a *App) GetTaskFileDiff(taskID string, path string) (gitrepo.FileDiffView, error) {
+	if a.startupErr != nil {
+		return gitrepo.FileDiffView{}, a.startupErr
+	}
+	if a.gitService == nil {
+		return gitrepo.FileDiffView{}, errors.New("Git worktree 服务未初始化")
+	}
+	return a.gitService.Diff(a.appContext(), taskID, path)
+}
+
+func (a *App) CommitTaskGitChanges(
+	request gitrepo.CommitRequest,
+) (gitrepo.CommitResult, error) {
+	if a.startupErr != nil {
+		return gitrepo.CommitResult{}, a.startupErr
+	}
+	if a.gitService == nil {
+		return gitrepo.CommitResult{}, errors.New("Git worktree 服务未初始化")
+	}
+	return a.gitService.Commit(a.appContext(), request)
+}
+
+func (a *App) CleanupTaskGitWorktree(
+	request gitrepo.CleanupRequest,
+) (storage.GitBindingRecord, error) {
+	if a.startupErr != nil {
+		return storage.GitBindingRecord{}, a.startupErr
+	}
+	if a.gitService == nil {
+		return storage.GitBindingRecord{}, errors.New("Git worktree 服务未初始化")
+	}
+	if (a.agentService != nil && a.agentService.ActiveTask(request.TaskID)) ||
+		(a.executionService != nil && a.executionService.ActiveTask(request.TaskID)) {
+		return storage.GitBindingRecord{}, errors.New("当前任务仍有 PI 或 Shell 在运行，拒绝清理 worktree")
+	}
+	return a.gitService.Cleanup(a.appContext(), request)
+}
+
+func (a *App) RecoverTaskGitWorktree(
+	request gitrepo.RecoverRequest,
+) (storage.GitBindingRecord, error) {
+	if a.startupErr != nil {
+		return storage.GitBindingRecord{}, a.startupErr
+	}
+	if a.gitService == nil {
+		return storage.GitBindingRecord{}, errors.New("Git worktree 服务未初始化")
+	}
+	return a.gitService.Recover(a.appContext(), request)
 }
 
 func (a *App) SelectTaskContextRoot() (string, error) {

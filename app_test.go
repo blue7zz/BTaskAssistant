@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/blue7zz/BTaskAssistant/internal/credentials"
 	"github.com/blue7zz/BTaskAssistant/internal/engine"
+	"github.com/blue7zz/BTaskAssistant/internal/execution"
+	"github.com/blue7zz/BTaskAssistant/internal/gitrepo"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -127,6 +130,135 @@ func TestSelectTaskContextRootPreservesDialogError(t *testing.T) {
 	_, err := app.SelectTaskContextRoot()
 	if !errors.Is(err, dialogErr) {
 		t.Fatalf("expected the dialog error to be preserved, got %v", err)
+	}
+}
+
+func TestSelectGitRepositoryUsesDedicatedDialogAndAllowsCancellation(t *testing.T) {
+	app := newTaskContextTestApp(t)
+	selectedRoot := t.TempDir()
+	app.openDirectoryDialog = func(
+		ctx context.Context,
+		options wailsruntime.OpenDialogOptions,
+	) (string, error) {
+		if ctx != app.ctx {
+			t.Fatal("Git repository dialog did not receive the Wails context")
+		}
+		if options.Title != "选择任务的本地 Git 仓库" || !options.ResolvesAliases {
+			t.Fatalf("unexpected Git repository dialog options %#v", options)
+		}
+		if options.CanCreateDirectories {
+			t.Fatal("Git repository dialog must not offer to create a non-repository directory")
+		}
+		return filepath.Join(selectedRoot, "."), nil
+	}
+	selected, err := app.SelectGitRepository()
+	if err != nil || selected != filepath.Clean(selectedRoot) {
+		t.Fatalf("select Git repository: path %q, error %v", selected, err)
+	}
+
+	app.openDirectoryDialog = func(context.Context, wailsruntime.OpenDialogOptions) (string, error) {
+		return "", nil
+	}
+	selected, err = app.SelectGitRepository()
+	if err != nil || selected != "" {
+		t.Fatalf("cancel Git repository selection: path %q, error %v", selected, err)
+	}
+}
+
+func gitWorkbenchTestCommand(t *testing.T, directory string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", directory}, args...)...)
+	command.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
+}
+
+func newGitWorkbenchTestApp(t *testing.T) (*App, string) {
+	t.Helper()
+	repository := filepath.Join(t.TempDir(), "source")
+	if err := os.Mkdir(repository, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitWorkbenchTestCommand(t, repository, "init")
+	gitWorkbenchTestCommand(t, repository, "config", "user.name", "BTask App Test")
+	gitWorkbenchTestCommand(t, repository, "config", "user.email", "btask-app@example.invalid")
+	if err := os.WriteFile(filepath.Join(repository, "README.md"), []byte("baseline\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitWorkbenchTestCommand(t, repository, "add", "README.md")
+	gitWorkbenchTestCommand(t, repository, "commit", "-m", "initial")
+	gitWorkbenchTestCommand(t, repository, "remote", "add", "origin", "https://example.invalid/team/app.git")
+
+	store := storage.NewSQLiteStoreAt(filepath.Join(t.TempDir(), "btask.db"))
+	if _, err := store.SetTaskContextRoot(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(`{"state":{"tasks":[{"id":"task_git_app","title":"Git worktree","status":"development","revision":1,"evidence":[]}]}}`); err != nil {
+		t.Fatal(err)
+	}
+	executionService := execution.NewService()
+	app := &App{
+		ctx:              context.Background(),
+		store:            store,
+		gitService:       gitrepo.NewService(store),
+		executionService: executionService,
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = executionService.Close(ctx)
+		_ = store.Close()
+	})
+	return app, repository
+}
+
+func TestGitWorkbenchAppMethodsBindDiffCommitCleanupAndRecover(t *testing.T) {
+	app, repository := newGitWorkbenchTestApp(t)
+	sourceStatus := gitWorkbenchTestCommand(t, repository, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	binding, err := app.BindGitRepository(gitrepo.BindRequest{
+		TaskID: "task_git_app", SourcePath: repository,
+	})
+	if err != nil || binding.WorktreePath == nil || binding.Branch == nil {
+		t.Fatalf("bind Git repository: %#v, %v", binding, err)
+	}
+	if got := gitWorkbenchTestCommand(t, repository, "status", "--porcelain=v1", "-z", "--untracked-files=all"); got != sourceStatus {
+		t.Fatalf("source worktree changed during bind: %q != %q", got, sourceStatus)
+	}
+	if err := os.WriteFile(filepath.Join(*binding.WorktreePath, "README.md"), []byte("task change\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, err := app.GetTaskGitStatus("task_git_app")
+	if err != nil || len(status.Files) != 1 || status.RemoteURL != "https://example.invalid/team/app.git" {
+		t.Fatalf("unexpected app Git status %#v, %v", status, err)
+	}
+	diff, err := app.GetTaskFileDiff("task_git_app", "README.md")
+	if err != nil || !strings.Contains(diff.Unstaged, "task change") {
+		t.Fatalf("unexpected app Git diff %#v, %v", diff, err)
+	}
+	committed, err := app.CommitTaskGitChanges(gitrepo.CommitRequest{
+		TaskID: "task_git_app", Message: "test(Git工作区): 验证应用接线",
+		ExpectedSnapshot: status.Snapshot, Confirmed: true,
+	})
+	if err != nil || committed.Commit == binding.BaselineCommit || len(committed.Status.Files) != 0 {
+		t.Fatalf("unexpected app Git commit %#v, %v", committed, err)
+	}
+	if source, readErr := os.ReadFile(filepath.Join(repository, "README.md")); readErr != nil || string(source) != "baseline\n" {
+		t.Fatalf("task commit changed source worktree: %q, %v", source, readErr)
+	}
+	archived, err := app.CleanupTaskGitWorktree(gitrepo.CleanupRequest{TaskID: "task_git_app", Confirmed: true})
+	if err != nil || archived.State != "archived" {
+		t.Fatalf("cleanup task worktree: %#v, %v", archived, err)
+	}
+	recovered, err := app.RecoverTaskGitWorktree(gitrepo.RecoverRequest{TaskID: "task_git_app", Confirmed: true})
+	if err != nil || recovered.State != "ready" {
+		t.Fatalf("recover task worktree: %#v, %v", recovered, err)
+	}
+	finalStatus, err := app.GetTaskGitStatus("task_git_app")
+	if err != nil || finalStatus.Head != committed.Commit || len(finalStatus.Files) != 0 {
+		t.Fatalf("recovered status mismatch %#v, %v", finalStatus, err)
 	}
 }
 

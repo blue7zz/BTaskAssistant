@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var windowsVolume = regexp.MustCompile(`^[A-Za-z]:`)
@@ -29,6 +30,17 @@ func NormalizeRelativePath(value string) (string, error) {
 		if segment == "" || segment == "." || segment == ".." {
 			return "", errors.New("path contains an empty, dot, or traversal segment")
 		}
+		if strings.ContainsRune(segment, ':') || strings.HasSuffix(segment, " ") || strings.HasSuffix(segment, ".") {
+			return "", errors.New("path contains a Windows-unsafe segment")
+		}
+		for _, character := range segment {
+			if unicode.IsControl(character) {
+				return "", errors.New("path contains a control character")
+			}
+		}
+		if windowsReservedSegment(segment) {
+			return "", errors.New("path contains a Windows reserved name")
+		}
 		if credentialSegment(segment) {
 			return "", errors.New("credential paths are not allowed")
 		}
@@ -38,6 +50,16 @@ func NormalizeRelativePath(value string) (string, error) {
 		return "", errors.New("path is not canonical")
 	}
 	return normalized, nil
+}
+
+func windowsReservedSegment(segment string) bool {
+	base := strings.ToUpper(strings.SplitN(segment, ".", 2)[0])
+	switch base {
+	case "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return true
+	default:
+		return false
+	}
 }
 
 func ResolveWithinRoot(root string, relative string, allowMissingFinal bool) (string, error) {

@@ -100,6 +100,8 @@ export interface AgentRun {
   id: string;
   taskId: string;
   sessionId: string;
+  gitBindingId?: string;
+  baselineCommit?: string;
   mode: string;
   state: string;
   eventsPath: string;
@@ -260,4 +262,99 @@ export interface AbortAgentRunRequest {
   taskId: string;
   sessionId: string;
   runId: string;
+}
+
+export interface StopAgentToolExecutionRequest {
+  taskId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+}
+
+export interface GitBinding {
+  id: string;
+  taskId: string;
+  sourcePath: string;
+  sourceRealPath: string;
+  commonGitDir: string;
+  worktreePath?: string;
+  branch?: string;
+  baselineCommit: string;
+  sourceBranch?: string;
+  sourceDirtyAtBind: boolean;
+  state:
+    | "creating"
+    | "ready"
+    | "missing"
+    | "cleanup_failed"
+    | "archived"
+    | string;
+  createdAt: string;
+  updatedAt: string;
+  errorMessage?: string;
+}
+
+export interface GitChangedFile {
+  path: string;
+  originalPath?: string;
+  status:
+    | "modified"
+    | "added"
+    | "deleted"
+    | "renamed"
+    | "copied"
+    | "untracked"
+    | "conflicted"
+    | string;
+  indexStatus: string;
+  worktreeStatus: string;
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface TaskGitStatus {
+  bound: boolean;
+  binding: GitBinding;
+  remoteUrl?: string;
+  head?: string;
+  snapshot?: string;
+  files: GitChangedFile[];
+  aheadOfBaseline: number;
+  behindBaseline: number;
+  errorMessage?: string;
+}
+
+export interface TaskFileDiff {
+  taskId: string;
+  path: string;
+  status: string;
+  staged: string;
+  unstaged: string;
+  added: number;
+  removed: number;
+  binary: boolean;
+  truncated: boolean;
+  byteSize: number;
+}
+
+export interface BindGitRepositoryRequest {
+  taskId: string;
+  sourcePath: string;
+}
+
+export interface CommitTaskGitChangesRequest {
+  taskId: string;
+  message: string;
+  expectedSnapshot: string;
+  confirmed: boolean;
+}
+
+export interface CommitTaskGitChangesResult {
+  commit: string;
+  status: TaskGitStatus;
+}
+
+export interface GitWorktreeActionRequest {
+  taskId: string;
+  confirmed: boolean;
 }

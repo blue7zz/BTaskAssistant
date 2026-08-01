@@ -184,4 +184,26 @@ describe("Agent governance cards", () => {
     expect(container.textContent).toContain("已完成");
     expect(container.textContent).toContain("2.5 秒");
   });
+
+  it("stops a running Shell tool without expanding its output", async () => {
+    const onStop = vi.fn().mockResolvedValue(undefined);
+    const loadOutput = vi.fn();
+    await act(async () => {
+      root.render(createElement(AgentToolCard, {
+        tool: tool({ toolName: "btask_shell", state: "running" }),
+        loadOutput,
+        onStop,
+      }));
+    });
+
+    await act(async () => {
+      findButton(container, "停止").click();
+      await Promise.resolve();
+    });
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(loadOutput).not.toHaveBeenCalled();
+    expect(
+      findButton(container, "btask_shell").getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
 });

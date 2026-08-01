@@ -23,7 +23,7 @@ type PermissionDescription = {
   subject: string;
   target: string;
   normalizedTarget: string;
-  riskLevel: "low" | "medium" | "high";
+  riskLevel: "low" | "medium" | "high" | "critical";
 };
 
 let activeRunId = "";
@@ -70,6 +70,89 @@ function artifactPath(params: Record<string, unknown>): string {
   let name = String(params.name || "").trim();
   if (!name.includes(".")) name += ".md";
   return `artifacts/${directories[kind] || "invalid"}/${name}`;
+}
+
+function worktreePath(value: unknown): string | undefined {
+  let path = String(value || "").trim();
+  if (
+    !path ||
+    path.includes("\0") ||
+    path.startsWith("/") ||
+    path.startsWith("\\\\") ||
+    path.startsWith("//") ||
+    /^[A-Za-z]:/.test(path)
+  ) {
+    return undefined;
+  }
+  path = path.replaceAll("\\", "/");
+  const reserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+  const credential = /^(?:\.ssh|\.aws|\.gnupg|\.kube|credentials?|id_rsa|id_ed25519|\.env)$/i;
+  const segments = path.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        segment.includes(":") ||
+        segment.endsWith(" ") ||
+        segment.endsWith(".") ||
+        /[\u0000-\u001f\u007f-\u009f]/u.test(segment) ||
+        reserved.test(segment) ||
+        credential.test(segment) ||
+        segment.toLowerCase() === ".git",
+    )
+  ) {
+    return undefined;
+  }
+  return segments.join("/");
+}
+
+function shellPermission(params: Record<string, unknown>): PermissionDescription | undefined {
+  const command = String(params.command || "").trim();
+  let cwd = String(params.cwd || "").trim() || ".";
+  if (!command || command.includes("\0")) return undefined;
+  if (cwd !== ".") {
+    const normalized = worktreePath(cwd);
+    if (!normalized) return undefined;
+    cwd = normalized;
+  }
+  const cwdTarget = normalizedTarget("task-worktree", cwd, "execute");
+  const commandDigest = argsDigest({ command, cwd: cwdTarget });
+  let target = `${command}\n[cwd: ${cwd}]`;
+  let normalized = `${cwdTarget}\0${command}`;
+  let subject = "在当前任务 worktree 执行命令";
+  let riskLevel: PermissionDescription["riskLevel"] = "medium";
+  const credential = /(?:\.ssh|id_rsa|id_ed25519|security\s+find-(?:generic|internet)-password|(?:printenv|env)\s+.*(?:token|secret|password)|(?:authorization|token|pat|password|secret|api[_-]?key|cookie|credential)\s*[:=])/i;
+  const critical = /(^|[;&|\s])(?:git\s+(?:push|rebase|reset|filter-branch|filter-repo)|gh\s+(?:pr\s+create|release)|(?:npm|pnpm|yarn|cargo)\s+publish)(?:\s|$)/i;
+  const destructive = /(^|[;&|\s])(?:rm\s+(?:-[a-z]*r[a-z]*f|-rf|-fr)|git\s+clean\s+[^;&|]*(?:-[a-z]*f)|gh\s+repo\s+delete)(?:\s|$)/i;
+  const remoteDelete = /(^|[;&|\s])curl\b[^;&|]*(?:-X\s*|--request(?:=|\s+))DELETE(?:\s|$)/i;
+  const dependency = /(^|[;&|\s])(?:(?:npm|pnpm|yarn)\s+(?:install|add|update)|cargo\s+(?:add|install)|go\s+get)(?:\s|$)/i;
+  const indirect = /(?:[|<>`]|\$\(|&&|\|\||(^|[;\s])(?:eval|source|xargs|sudo|ssh|curl|wget)([;\s]|$)|find\s+.*-exec|(?:npm|pnpm|yarn)\s+(?:run|exec)|(?:sh|bash|zsh)\s+-c)/i;
+  if (credential.test(command)) {
+    riskLevel = "critical";
+    target = "[REDACTED credential-bearing command]";
+    normalized = `${cwdTarget}\0[REDACTED:${commandDigest}]`;
+  } else if (critical.test(command) || destructive.test(command) || remoteDelete.test(command)) {
+    riskLevel = "critical";
+    subject = "执行关键 Git、发布、远端或大量删除操作";
+  } else {
+    if (dependency.test(command)) {
+      riskLevel = "high";
+      subject = "安装或更新项目依赖";
+    }
+    if (indirect.test(command) || command.includes("(") || command.includes(")") || command.includes("\n")) {
+      riskLevel = "high";
+      subject = "执行含重定向、管道或间接调用的命令";
+    }
+  }
+  return {
+    capability: "shell.execute",
+    subject,
+    target,
+    normalizedTarget: normalized,
+    riskLevel,
+  };
 }
 
 function describePermission(
@@ -119,6 +202,60 @@ function describePermission(
       riskLevel: "high",
     };
   }
+  if (toolName === "btask_list_worktree_files") {
+    return {
+      capability: "task.worktree.list",
+      subject: "列出当前任务 worktree 文件",
+      target: "当前任务 worktree 文件索引",
+      normalizedTarget: normalizedTarget("task-worktree", ".", "read"),
+      riskLevel: "low",
+    };
+  }
+  if (toolName === "btask_read_worktree_file") {
+    const path = worktreePath(params.path);
+    if (!path) return undefined;
+    return {
+      capability: "task.worktree.read",
+      subject: "读取当前任务 worktree 文件",
+      target: path,
+      normalizedTarget: normalizedTarget("task-worktree", path, "read"),
+      riskLevel: "low",
+    };
+  }
+  if (toolName === "btask_write_worktree_file") {
+    const path = worktreePath(params.path);
+    if (!path) return undefined;
+    return {
+      capability: "task.worktree.write",
+      subject: "写入当前任务 worktree 文件",
+      target: path,
+      normalizedTarget: normalizedTarget("task-worktree", path, "modify"),
+      riskLevel: "medium",
+    };
+  }
+  if (toolName === "btask_edit_worktree_file") {
+    const path = worktreePath(params.path);
+    if (!path) return undefined;
+    return {
+      capability: "task.worktree.write",
+      subject: "精确编辑当前任务 worktree 文件",
+      target: path,
+      normalizedTarget: normalizedTarget("task-worktree", path, "modify"),
+      riskLevel: "medium",
+    };
+  }
+  if (toolName === "btask_delete_worktree_file") {
+    const path = worktreePath(params.path);
+    if (!path) return undefined;
+    return {
+      capability: "task.worktree.delete",
+      subject: "删除当前任务 worktree 文件",
+      target: path,
+      normalizedTarget: normalizedTarget("task-worktree", path, "delete"),
+      riskLevel: "medium",
+    };
+  }
+  if (toolName === "btask_shell") return shellPermission(params);
   return undefined;
 }
 
@@ -178,11 +315,14 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event, ctx) => {
     await bindActiveRun(ctx);
+    const modeGuidance = config.mode === "agent"
+      ? "Agent mode may use BTask worktree list/read/write/edit/delete tools. Shell commands must use btask_shell and always pass BTask approval. Never run Git commit, push, merge, PR, release, credential access, or arbitrary filesystem operations."
+      : "Ask/Plan may list and read the bound task worktree but must not modify it or execute Shell.";
     return { systemPrompt:
       event.systemPrompt +
-      `\n\nBTask task scope: ${config.taskId}. Use only btask_list_resources and ` +
-      "btask_read_resource for task context and references. Never use shell, Git, or arbitrary " +
-      "filesystem access. context/ and sources/ are immutable. Requirement changes must be " +
+      `\n\nBTask task scope: ${config.taskId}. Use BTask tools only. Use btask_list_resources and ` +
+      "btask_read_resource for task context and references. " + modeGuidance + " " +
+      "context/ and sources/ are immutable. Requirement changes must be " +
       "written as proposal artifacts. Do not restate the entire session history in prompts." };
   });
 
@@ -281,6 +421,41 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool(
     defineTool({
+      name: "btask_list_worktree_files",
+      label: "List task worktree files",
+      description: "List tracked and untracked files only in the Git worktree bound to this BTask task.",
+      parameters: Type.Object(
+        {
+          query: Type.Optional(Type.String({ maxLength: 200 })),
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+        },
+        { additionalProperties: false },
+      ),
+      async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+        const data = await bridge(ctx, toolCallId, "list_worktree_files", params);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "btask_read_worktree_file",
+      label: "Read task worktree file",
+      description: "Read one UTF-8 file from the Git worktree bound only to this BTask task.",
+      parameters: Type.Object(
+        { path: Type.String({ minLength: 1, maxLength: 1000 }) },
+        { additionalProperties: false },
+      ),
+      async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+        const data = await bridge(ctx, toolCallId, "read_worktree_file", params);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
       name: "btask_read_resource",
       label: "Read task resource",
       description: "Read one resource selected from the current BTask task resource index.",
@@ -332,6 +507,86 @@ export default function (pi: ExtensionAPI) {
         ),
         async execute(toolCallId, params, _signal, _onUpdate, ctx) {
           const data = await bridge(ctx, toolCallId, "write_artifact", params);
+          return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
+        },
+      }),
+    );
+  }
+
+  if (config.mode === "agent") {
+    pi.registerTool(
+      defineTool({
+        name: "btask_write_worktree_file",
+        label: "Write task worktree file",
+        description: "Create or replace one UTF-8 file in the current task Git worktree.",
+        parameters: Type.Object(
+          {
+            path: Type.String({ minLength: 1, maxLength: 1000 }),
+            content: Type.String({ maxLength: 2097152 }),
+          },
+          { additionalProperties: false },
+        ),
+        async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+          const data = await bridge(ctx, toolCallId, "write_worktree_file", params);
+          return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
+        },
+      }),
+    );
+
+    pi.registerTool(
+      defineTool({
+        name: "btask_edit_worktree_file",
+        label: "Edit task worktree file",
+        description: "Apply an exact old-text replacement to one UTF-8 file in the current task Git worktree.",
+        parameters: Type.Object(
+          {
+            path: Type.String({ minLength: 1, maxLength: 1000 }),
+            oldText: Type.String({ minLength: 1, maxLength: 2097152 }),
+            newText: Type.String({ maxLength: 2097152 }),
+            replaceAll: Type.Optional(Type.Boolean()),
+          },
+          { additionalProperties: false },
+        ),
+        async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+          const data = await bridge(ctx, toolCallId, "edit_worktree_file", params);
+          return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
+        },
+      }),
+    );
+
+    pi.registerTool(
+      defineTool({
+        name: "btask_delete_worktree_file",
+        label: "Delete task worktree file",
+        description: "Delete one regular file from the current task Git worktree.",
+        parameters: Type.Object(
+          { path: Type.String({ minLength: 1, maxLength: 1000 }) },
+          { additionalProperties: false },
+        ),
+        async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+          const data = await bridge(ctx, toolCallId, "delete_worktree_file", params);
+          return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
+        },
+      }),
+    );
+
+    pi.registerTool(
+      defineTool({
+        name: "btask_shell",
+        label: "Run task worktree command",
+        description: "Run one approved build, test, check, or ordinary Shell command in the current task worktree.",
+        parameters: Type.Object(
+          {
+            command: Type.String({ minLength: 1, maxLength: 65536 }),
+            cwd: Type.Optional(Type.String({ maxLength: 1000 })),
+            timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
+          },
+          { additionalProperties: false },
+        ),
+        async execute(toolCallId, params, _signal, onUpdate, ctx) {
+          onUpdate?.({ content: [{ type: "text", text: `Running in ${String(params.cwd || ".")}: ${params.command}` }] });
+          const data = await bridge(ctx, toolCallId, "shell", params) as any;
+          if (!data?.success) throw new Error(`Shell command failed: ${JSON.stringify(data)}`);
           return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data };
         },
       }),

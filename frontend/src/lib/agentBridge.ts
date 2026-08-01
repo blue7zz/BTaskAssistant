@@ -14,11 +14,19 @@ import type {
   AgentToolCall,
   AgentToolOutput,
   AgentToolOutputRequest,
+  BindGitRepositoryRequest,
+  CommitTaskGitChangesRequest,
+  CommitTaskGitChangesResult,
   CreateAgentSessionRequest,
+  GitBinding,
+  GitWorktreeActionRequest,
   ImportAgentAttachmentsRequest,
   ResolveAgentPermissionRequest,
   RemoveAgentReferenceRequest,
   RevokeAgentPermissionGrantRequest,
+  StopAgentToolExecutionRequest,
+  TaskFileDiff,
+  TaskGitStatus,
 } from "../domain/agent";
 
 const AGENT_EVENT_NAME = "agent:event";
@@ -51,6 +59,16 @@ interface NativeAgentApp {
   ): Promise<AgentSession>;
   SendAgentPrompt(request: AgentPromptRequest): Promise<AgentRun>;
   AbortAgentRun(request: AbortAgentRunRequest): Promise<void>;
+  StopAgentToolExecution?(request: StopAgentToolExecutionRequest): Promise<void>;
+  SelectGitRepository?(): Promise<string>;
+  BindGitRepository?(request: BindGitRepositoryRequest): Promise<GitBinding>;
+  GetTaskGitStatus?(taskId: string): Promise<TaskGitStatus>;
+  GetTaskFileDiff?(taskId: string, path: string): Promise<TaskFileDiff>;
+  CommitTaskGitChanges?(
+    request: CommitTaskGitChangesRequest,
+  ): Promise<CommitTaskGitChangesResult>;
+  CleanupTaskGitWorktree?(request: GitWorktreeActionRequest): Promise<GitBinding>;
+  RecoverTaskGitWorktree?(request: GitWorktreeActionRequest): Promise<GitBinding>;
   ListAgentResources(request: AgentResourceSearchRequest): Promise<AgentResource[]>;
   ListAgentArtifacts(taskId: string): Promise<AgentResource[]>;
   ImportAgentAttachments(request: ImportAgentAttachmentsRequest): Promise<AgentResource[]>;
@@ -83,6 +101,16 @@ export interface AgentClient {
   createSession(request: CreateAgentSessionRequest): Promise<AgentSession>;
   sendPrompt(request: AgentPromptRequest): Promise<AgentRun>;
   abortRun(request: AbortAgentRunRequest): Promise<void>;
+  stopToolExecution?(request: StopAgentToolExecutionRequest): Promise<void>;
+  selectGitRepository?(): Promise<string>;
+  bindGitRepository?(request: BindGitRepositoryRequest): Promise<GitBinding>;
+  getTaskGitStatus?(taskId: string): Promise<TaskGitStatus>;
+  getTaskFileDiff?(taskId: string, path: string): Promise<TaskFileDiff>;
+  commitTaskGitChanges?(
+    request: CommitTaskGitChangesRequest,
+  ): Promise<CommitTaskGitChangesResult>;
+  cleanupTaskGitWorktree?(request: GitWorktreeActionRequest): Promise<GitBinding>;
+  recoverTaskGitWorktree?(request: GitWorktreeActionRequest): Promise<GitBinding>;
   listResources?(request: AgentResourceSearchRequest): Promise<AgentResource[]>;
   listArtifacts?(taskId: string): Promise<AgentResource[]>;
   importAttachments?(request: ImportAgentAttachmentsRequest): Promise<AgentResource[]>;
@@ -678,6 +706,36 @@ const browserAgentClient: AgentClient = {
     emitBrowserEvent(session, "session.state", { state: "idle" });
     browserRuns.delete(active.run.id);
   },
+  async stopToolExecution() {
+    throw new Error("浏览器模拟不执行本机 Shell 命令");
+  },
+  async selectGitRepository() {
+    return "";
+  },
+  async bindGitRepository() {
+    throw new Error("浏览器模拟不能绑定本机 Git 仓库");
+  },
+  async getTaskGitStatus() {
+    return {
+      bound: false,
+      binding: {} as GitBinding,
+      files: [],
+      aheadOfBaseline: 0,
+      behindBaseline: 0,
+    };
+  },
+  async getTaskFileDiff() {
+    throw new Error("浏览器模拟没有本机 Git Diff");
+  },
+  async commitTaskGitChanges() {
+    throw new Error("浏览器模拟不能创建本地 commit");
+  },
+  async cleanupTaskGitWorktree() {
+    throw new Error("浏览器模拟没有可清理的 Git worktree");
+  },
+  async recoverTaskGitWorktree() {
+    throw new Error("浏览器模拟没有可恢复的 Git worktree");
+  },
   subscribe(listener) {
     browserListeners.add(listener);
     return () => browserListeners.delete(listener);
@@ -705,6 +763,46 @@ const nativeAgentClient: AgentClient = {
   createSession: (request) => nativeAgentApp().CreateAgentSession(request),
   sendPrompt: (request) => nativeAgentApp().SendAgentPrompt(request),
   abortRun: (request) => nativeAgentApp().AbortAgentRun(request),
+  stopToolExecution: (request) => {
+    const app = nativeAgentApp();
+    if (!app.StopAgentToolExecution) throw new Error("当前客户端不支持停止 Shell 工具");
+    return app.StopAgentToolExecution(request);
+  },
+  selectGitRepository: () => {
+    const app = nativeAgentApp();
+    if (!app.SelectGitRepository) throw new Error("当前客户端不支持 Git worktree");
+    return app.SelectGitRepository();
+  },
+  bindGitRepository: (request) => {
+    const app = nativeAgentApp();
+    if (!app.BindGitRepository) throw new Error("当前客户端不支持 Git worktree");
+    return app.BindGitRepository(request);
+  },
+  getTaskGitStatus: (taskId) => {
+    const app = nativeAgentApp();
+    if (!app.GetTaskGitStatus) throw new Error("当前客户端不支持 Git worktree");
+    return app.GetTaskGitStatus(taskId);
+  },
+  getTaskFileDiff: (taskId, path) => {
+    const app = nativeAgentApp();
+    if (!app.GetTaskFileDiff) throw new Error("当前客户端不支持 Git Diff");
+    return app.GetTaskFileDiff(taskId, path);
+  },
+  commitTaskGitChanges: (request) => {
+    const app = nativeAgentApp();
+    if (!app.CommitTaskGitChanges) throw new Error("当前客户端不支持本地 commit");
+    return app.CommitTaskGitChanges(request);
+  },
+  cleanupTaskGitWorktree: (request) => {
+    const app = nativeAgentApp();
+    if (!app.CleanupTaskGitWorktree) throw new Error("当前客户端不支持清理 Git worktree");
+    return app.CleanupTaskGitWorktree(request);
+  },
+  recoverTaskGitWorktree: (request) => {
+    const app = nativeAgentApp();
+    if (!app.RecoverTaskGitWorktree) throw new Error("当前客户端不支持恢复 Git worktree");
+    return app.RecoverTaskGitWorktree(request);
+  },
   listResources: (request) => nativeAgentApp().ListAgentResources(request),
   listArtifacts: (taskId) => nativeAgentApp().ListAgentArtifacts(taskId),
   importAttachments: (request) => nativeAgentApp().ImportAgentAttachments(request),
@@ -774,6 +872,22 @@ export const agentClient: AgentClient = {
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).abortRun(
       request,
     ),
+  stopToolExecution: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).stopToolExecution!(request),
+  selectGitRepository: () =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).selectGitRepository!(),
+  bindGitRepository: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).bindGitRepository!(request),
+  getTaskGitStatus: (taskId) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).getTaskGitStatus!(taskId),
+  getTaskFileDiff: (taskId, path) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).getTaskFileDiff!(taskId, path),
+  commitTaskGitChanges: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).commitTaskGitChanges!(request),
+  cleanupTaskGitWorktree: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).cleanupTaskGitWorktree!(request),
+  recoverTaskGitWorktree: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).recoverTaskGitWorktree!(request),
   listResources: (request) =>
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listResources!(request),
   listArtifacts: (taskId) =>

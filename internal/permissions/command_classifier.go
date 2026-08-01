@@ -8,12 +8,14 @@ import (
 )
 
 var (
-	criticalCommand     = regexp.MustCompile(`(?i)(^|[;&|\s])(?:git\s+(?:push|rebase|reset|filter-branch|filter-repo)|gh\s+(?:pr\s+create|release)|(?:npm|pnpm|yarn|cargo)\s+publish)(?:\s|$)`)
-	destructiveCommand  = regexp.MustCompile(`(?i)(^|[;&|\s])(?:rm\s+(?:-[a-z]*r[a-z]*f|-rf|-fr)|git\s+clean\s+[^;&|]*(?:-[a-z]*f)|gh\s+repo\s+delete)(?:\s|$)`)
-	remoteDeleteCommand = regexp.MustCompile(`(?i)(^|[;&|\s])curl\b[^;&|]*(?:-X\s*|--request(?:=|\s+))DELETE(?:\s|$)`)
-	credentialCommand   = regexp.MustCompile(`(?i)(?:\.ssh|id_rsa|id_ed25519|security\s+find-(?:generic|internet)-password|(?:printenv|env)\s+.*(?:token|secret|password)|(?:authorization|token|pat|password|secret|api[_-]?key|cookie|credential)\s*[:=])`)
-	dependencyCommand   = regexp.MustCompile(`(?i)(^|[;&|\s])(?:(?:npm|pnpm|yarn)\s+(?:install|add|update)|cargo\s+(?:add|install)|go\s+get)(?:\s|$)`)
-	indirectCommand     = regexp.MustCompile("(?i)(?:[|<>`]|\\$\\(|&&|\\|\\||(^|[;\\s])(?:eval|source|xargs|sudo|ssh|curl|wget)([;\\s]|$)|find\\s+.*-exec|(?:npm|pnpm|yarn)\\s+(?:run|exec)|(?:sh|bash|zsh)\\s+-c)")
+	criticalCommand         = regexp.MustCompile(`(?i)(^|[;&|\s])(?:git\s+(?:push|rebase|reset|filter-branch|filter-repo)|gh\s+(?:pr\s+create|release)|(?:npm|pnpm|yarn|cargo)\s+publish)(?:\s|$)`)
+	destructiveCommand      = regexp.MustCompile(`(?i)(^|[;&|\s])(?:rm\s+(?:-[a-z]*r[a-z]*f|-rf|-fr)|git\s+clean\s+[^;&|]*(?:-[a-z]*f)|gh\s+repo\s+delete)(?:\s|$)`)
+	remoteDeleteCommand     = regexp.MustCompile(`(?i)(^|[;&|\s])curl\b[^;&|]*(?:-X\s*|--request(?:=|\s+))DELETE(?:\s|$)`)
+	credentialCommand       = regexp.MustCompile(`(?i)(?:\.ssh|id_rsa|id_ed25519|security\s+find-(?:generic|internet)-password|(?:printenv|env)\s+.*(?:token|secret|password)|(?:authorization|token|pat|password|secret|api[_-]?key|cookie|credential)\s*[:=])`)
+	dependencyCommand       = regexp.MustCompile(`(?i)(^|[;&|\s])(?:(?:npm|pnpm|yarn)\s+(?:install|add|update)|cargo\s+(?:add|install)|go\s+get)(?:\s|$)`)
+	indirectCommand         = regexp.MustCompile("(?i)(?:[|<>`]|\\$\\(|&&|\\|\\||(^|[;\\s])(?:eval|source|xargs|sudo|ssh|curl|wget)([;\\s]|$)|find\\s+.*-exec|(?:npm|pnpm|yarn)\\s+(?:run|exec)|(?:sh|bash|zsh)\\s+-c)")
+	unsupportedGitShell     = regexp.MustCompile(`(?i)(^|[;&|\s])git\s+(?:add|commit|push|pull|fetch|merge|rebase|reset|clean|checkout|switch|branch|tag|remote|worktree|submodule|filter-branch|filter-repo)(?:\s|$)`)
+	unsupportedPublishShell = regexp.MustCompile(`(?i)(^|[;&|\s])(?:gh\s+(?:pr|release|repo)|(?:npm|pnpm|yarn|cargo)\s+publish)(?:\s|$)`)
 )
 
 func ClassifyCommand(command string, cwdTarget string) Classification {
@@ -48,6 +50,10 @@ func ClassifyCommand(command string, cwdTarget string) Classification {
 		classification.Subject = "执行含重定向、管道或间接调用的命令"
 	}
 	return classification
+}
+
+func unsupportedShellAction(command string) bool {
+	return unsupportedGitShell.MatchString(command) || unsupportedPublishShell.MatchString(command) || remoteDeleteCommand.MatchString(command)
 }
 
 func ClassifyGit(args []string, target string) (Classification, error) {

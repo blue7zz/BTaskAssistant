@@ -281,7 +281,8 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 		externalID = newID("pi-tool")
 	}
 	now := service.timestamp()
-	policy, allowed := gateToolPolicies[name]
+	policy, known := gateToolPolicies[name]
+	allowed := known && toolAllowedInMode(name, managed.record.Mode)
 	classification := permissionpolicy.ClassifyTool(permissionpolicy.ToolInput{
 		TaskID: managed.record.TaskID, ToolName: name, Args: args,
 	})
@@ -302,7 +303,7 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 			record.ArgsRef = &ref
 		}
 	}
-	if !allowed || (name == "btask_write_artifact" && managed.record.Mode == "ask") {
+	if !allowed {
 		record.Capability = "unexpected.tool"
 		record.RiskLevel = "critical"
 	}
@@ -317,7 +318,7 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 		"readOnly": policy.readOnly, "riskLevel": record.RiskLevel,
 		"argsPreview": stringValue(record.ArgsJSON), "argsRef": stringValue(record.ArgsRef),
 	})
-	if allowed && !(name == "btask_write_artifact" && managed.record.Mode == "ask") {
+	if allowed {
 		return
 	}
 	message := "PI 尝试调用当前任务策略未允许的工具：" + name
@@ -326,6 +327,21 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 		"protocol_error", message, false,
 	))
 	go abortRuntime(managed.runtime, service.requestTimeout)
+}
+
+func toolAllowedInMode(name string, mode string) bool {
+	switch name {
+	case "btask_list_resources", "btask_read_resource", "btask_permission_probe",
+		"btask_list_worktree_files", "btask_read_worktree_file":
+		return true
+	case "btask_write_artifact":
+		return mode == "plan" || mode == "agent"
+	case "btask_write_worktree_file", "btask_edit_worktree_file",
+		"btask_delete_worktree_file", "btask_shell":
+		return mode == "agent"
+	default:
+		return false
+	}
 }
 
 type gateToolPolicy struct {
@@ -351,6 +367,30 @@ var gateToolPolicies = map[string]gateToolPolicy{
 	"btask_permission_probe": {
 		capability: "diagnostic.permission.probe", riskLevel: "high",
 		subject: "验证 BTask 权限审批链路", readOnly: true,
+	},
+	"btask_list_worktree_files": {
+		capability: "task.worktree.list", riskLevel: "low",
+		subject: "列出当前任务 worktree 文件", readOnly: true,
+	},
+	"btask_read_worktree_file": {
+		capability: "task.worktree.read", riskLevel: "low",
+		subject: "读取当前任务 worktree 文件", readOnly: true,
+	},
+	"btask_write_worktree_file": {
+		capability: "task.worktree.write", riskLevel: "medium",
+		subject: "写入当前任务 worktree 文件", readOnly: false,
+	},
+	"btask_edit_worktree_file": {
+		capability: "task.worktree.write", riskLevel: "medium",
+		subject: "精确编辑当前任务 worktree 文件", readOnly: false,
+	},
+	"btask_delete_worktree_file": {
+		capability: "task.worktree.delete", riskLevel: "medium",
+		subject: "删除当前任务 worktree 文件", readOnly: false,
+	},
+	"btask_shell": {
+		capability: "shell.execute", riskLevel: "medium",
+		subject: "在当前任务 worktree 执行命令", readOnly: false,
 	},
 }
 
@@ -531,6 +571,7 @@ func (service *Service) finishRunLocked(
 	if managed.run == nil {
 		return
 	}
+	service.execution.StopRun(managed.record.TaskID, managed.record.ID, managed.run.record.ID)
 	service.cancelPendingPermissionsLocked(managed, "运行结束，待处理权限请求已取消")
 	run := managed.run
 	messageStatus := "complete"

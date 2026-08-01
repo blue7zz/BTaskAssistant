@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blue7zz/BTaskAssistant/internal/execution"
 	permissionpolicy "github.com/blue7zz/BTaskAssistant/internal/permissions"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
@@ -113,10 +114,16 @@ func (service *Service) handleGateEventLocked(
 	}
 	tool, exists := managed.run.tools[request.ToolCallID]
 	wantTool := map[string]string{
-		"list_resources":   "btask_list_resources",
-		"read_resource":    "btask_read_resource",
-		"write_artifact":   "btask_write_artifact",
-		"permission_probe": "btask_permission_probe",
+		"list_resources":       "btask_list_resources",
+		"read_resource":        "btask_read_resource",
+		"write_artifact":       "btask_write_artifact",
+		"permission_probe":     "btask_permission_probe",
+		"list_worktree_files":  "btask_list_worktree_files",
+		"read_worktree_file":   "btask_read_worktree_file",
+		"write_worktree_file":  "btask_write_worktree_file",
+		"edit_worktree_file":   "btask_edit_worktree_file",
+		"delete_worktree_file": "btask_delete_worktree_file",
+		"shell":                "btask_shell",
 	}[request.Operation]
 	if !exists || wantTool == "" || tool.ToolName != wantTool {
 		service.respondGate(managed, event.ID, nil, errors.New("PI gate request does not match its active tool call"))
@@ -184,8 +191,132 @@ func (service *Service) handleGateEventLocked(
 		} else {
 			data = map[string]any{"approved": true, "target": args.Target}
 		}
+	case "list_worktree_files":
+		var args struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if json.Unmarshal(request.Args, &args) != nil {
+			err = errors.New("worktree file list arguments are invalid")
+		} else {
+			data, err = service.git.ListFiles(context.Background(), managed.record.TaskID, args.Query, args.Limit)
+		}
+	case "read_worktree_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(request.Args, &args) != nil {
+			err = errors.New("worktree file read arguments are invalid")
+		} else {
+			data, err = service.git.ReadFile(context.Background(), managed.record.TaskID, args.Path)
+		}
+	case "write_worktree_file":
+		var args struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if json.Unmarshal(request.Args, &args) != nil {
+			err = errors.New("worktree file write arguments are invalid")
+		} else {
+			data, err = service.git.WriteFile(context.Background(), managed.record.TaskID, managed.record.Mode, args.Path, args.Content)
+			if err == nil {
+				service.emitGitChangedLocked(managed, tool.ID, "file_write")
+			}
+		}
+	case "edit_worktree_file":
+		var args struct {
+			Path       string `json:"path"`
+			OldText    string `json:"oldText"`
+			NewText    string `json:"newText"`
+			ReplaceAll bool   `json:"replaceAll"`
+		}
+		if json.Unmarshal(request.Args, &args) != nil {
+			err = errors.New("worktree file edit arguments are invalid")
+		} else {
+			data, err = service.git.EditFile(context.Background(), managed.record.TaskID, managed.record.Mode, args.Path, args.OldText, args.NewText, args.ReplaceAll)
+			if err == nil {
+				service.emitGitChangedLocked(managed, tool.ID, "file_edit")
+			}
+		}
+	case "delete_worktree_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(request.Args, &args) != nil {
+			err = errors.New("worktree file delete arguments are invalid")
+		} else {
+			data, err = service.git.DeleteFile(context.Background(), managed.record.TaskID, managed.record.Mode, args.Path)
+			if err == nil {
+				service.emitGitChangedLocked(managed, tool.ID, "file_delete")
+			}
+		}
+	case "shell":
+		service.startShellBridgeLocked(managed, event.ID, request, tool)
+		return
 	}
 	service.respondGate(managed, event.ID, data, err)
+}
+
+func (service *Service) startShellBridgeLocked(
+	managed *managedSession,
+	extensionRequestID string,
+	request gateBridgeRequest,
+	tool storage.ToolCallRecord,
+) {
+	var args struct {
+		Command        string `json:"command"`
+		CWD            string `json:"cwd"`
+		TimeoutSeconds int    `json:"timeoutSeconds"`
+	}
+	if json.Unmarshal(request.Args, &args) != nil {
+		service.respondGate(managed, extensionRequestID, nil, errors.New("Shell arguments are invalid"))
+		return
+	}
+	_, cwd, cwdDisplay, err := service.git.ResolveCommandDirectory(
+		context.Background(), managed.record.TaskID, managed.record.Mode, args.CWD,
+	)
+	if err != nil {
+		service.respondGate(managed, extensionRequestID, nil, err)
+		return
+	}
+	timeout := time.Duration(args.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	runID := managed.run.record.ID
+	taskID := managed.record.TaskID
+	sessionID := managed.record.ID
+	workspaceRoot := managed.workspaceRoot
+	_ = service.emitLocked(managed, "tool.update", runID, tool.ID, map[string]any{
+		"outputPreview": "Shell 命令已启动", "accumulated": true,
+		"command": args.Command, "cwd": cwdDisplay,
+	})
+	go func() {
+		result, runErr := service.execution.Run(context.Background(), execution.RunRequest{
+			TaskID: taskID, SessionID: sessionID, RunID: runID, ToolCallID: tool.ID,
+			Command: args.Command, CWD: cwd, CWDDisplay: cwdDisplay,
+			WorkspaceRoot: workspaceRoot, Timeout: timeout,
+		})
+		managed.mutex.Lock()
+		defer managed.mutex.Unlock()
+		if managed.run == nil || managed.run.record.ID != runID || managed.runtime == nil {
+			service.cancelGateRequest(managed, extensionRequestID)
+			return
+		}
+		if runErr == nil {
+			service.emitGitChangedLocked(managed, tool.ID, "shell")
+		}
+		service.respondGate(managed, extensionRequestID, result, runErr)
+	}()
+}
+
+func (service *Service) emitGitChangedLocked(managed *managedSession, toolID string, reason string) {
+	if managed.run == nil {
+		return
+	}
+	_ = service.emitLocked(managed, "git.changed", managed.run.record.ID, toolID, map[string]any{
+		"reason": reason,
+	})
 }
 
 func (service *Service) handleRunIdentityRequestLocked(

@@ -29,8 +29,13 @@ func Evaluate(request Request, grants []Grant, now time.Time) Decision {
 			return hardDeny(classification.RiskLevel, "Shell 仅可在 development 状态申请")
 		}
 	}
-	if strings.HasPrefix(classification.Capability, "task.worktree.") && request.TaskStatus != "development" {
-		return hardDeny(classification.RiskLevel, "worktree 写入仅可在 development 状态申请")
+	if strings.HasPrefix(classification.Capability, "task.worktree.") && classification.Mutating {
+		if request.Mode != "agent" {
+			return hardDeny(classification.RiskLevel, "仅 Agent 模式允许修改 worktree")
+		}
+		if request.TaskStatus != "development" {
+			return hardDeny(classification.RiskLevel, "worktree 写入仅可在 development 状态申请")
+		}
 	}
 
 	matching := make([]Grant, 0, len(grants))
@@ -72,9 +77,12 @@ func Evaluate(request Request, grants []Grant, now time.Time) Decision {
 	}
 
 	switch classification.Capability {
-	case "task.resource.list", "task.resource.read":
+	case "task.resource.list", "task.resource.read", "task.worktree.list", "task.worktree.read":
 		decision.Outcome = OutcomeAllow
 		decision.Reason = "当前任务只读资源由模式默认允许"
+	case "task.worktree.write", "task.worktree.delete":
+		decision.Outcome = OutcomeAllow
+		decision.Reason = "development + Agent 模式允许受控修改当前任务 worktree"
 	case "task.artifact.write":
 		if request.Mode == "plan" || request.Mode == "agent" {
 			decision.Outcome = OutcomeAllow

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blue7zz/BTaskAssistant/internal/execution"
+	"github.com/blue7zz/BTaskAssistant/internal/gitrepo"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
 
@@ -33,6 +35,8 @@ type Service struct {
 	permissionTimeout time.Duration
 	now               func() time.Time
 	delivery          *eventDeliveryQueue
+	git               *gitrepo.Service
+	execution         *execution.Service
 
 	mutex    sync.Mutex
 	sessions map[string]*managedSession
@@ -112,6 +116,14 @@ func NewService(store Store, options ServiceOptions) *Service {
 	if options.PermissionTimeout <= 0 {
 		options.PermissionTimeout = 5 * time.Minute
 	}
+	gitService := options.GitService
+	if gitService == nil {
+		gitService = gitrepo.NewService(store)
+	}
+	executionService := options.ExecutionService
+	if executionService == nil {
+		executionService = execution.NewService()
+	}
 	return &Service{
 		store:             store,
 		factory:           factory,
@@ -122,6 +134,8 @@ func NewService(store Store, options ServiceOptions) *Service {
 		permissionTimeout: options.PermissionTimeout,
 		now:               now,
 		delivery:          newEventDeliveryQueue(options.Emit),
+		git:               gitService,
+		execution:         executionService,
 		sessions:          make(map[string]*managedSession),
 	}
 }
@@ -287,6 +301,12 @@ func (service *Service) SendPrompt(
 		ResultPath: "runs/" + runID + "/result.md",
 		StartedAt:  now,
 	}
+	if binding, bindingErr := service.git.Binding(ctx, request.TaskID); bindingErr == nil && binding.State == "ready" {
+		bindingID := binding.ID
+		baseline := binding.BaselineCommit
+		run.GitBindingID = &bindingID
+		run.BaselineCommit = &baseline
+	}
 	if err := prepareRunFiles(workspace.RootPath, run); err != nil {
 		return storage.ExecutionRunRecord{}, err
 	}
@@ -380,6 +400,7 @@ func (service *Service) Abort(ctx context.Context, request AbortRequest) error {
 	if managed.run == nil || managed.run.record.ID != request.RunID {
 		return errors.New("没有匹配的活动 PI 运行")
 	}
+	service.execution.StopRun(request.TaskID, request.SessionID, request.RunID)
 	service.cancelPendingPermissionsLocked(managed, "用户停止运行，待处理权限请求已取消")
 	managed.run.stopRequested = true
 	managed.run.record.State = "stopping"
@@ -438,7 +459,42 @@ func (service *Service) Close(ctx context.Context) error {
 	if err := service.delivery.close(ctx); err != nil && firstErr == nil {
 		firstErr = err
 	}
+	if err := service.execution.Close(ctx); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	return firstErr
+}
+
+func (service *Service) StopToolExecution(request execution.StopRequest) error {
+	tool, err := service.store.ToolCall(request.TaskID, request.ToolCallID)
+	if err != nil {
+		return err
+	}
+	if tool.SessionID != request.SessionID || tool.RunID != request.RunID ||
+		tool.ToolName != "btask_shell" || tool.State != "running" {
+		return errors.New("没有匹配的运行中 BTask Shell 工具")
+	}
+	return service.execution.Stop(request)
+}
+
+func (service *Service) ActiveTask(taskID string) bool {
+	service.mutex.Lock()
+	sessions := make([]*managedSession, 0, len(service.sessions))
+	for _, managed := range service.sessions {
+		if managed.record.TaskID == taskID {
+			sessions = append(sessions, managed)
+		}
+	}
+	service.mutex.Unlock()
+	for _, managed := range sessions {
+		managed.mutex.Lock()
+		active := managed.run != nil
+		managed.mutex.Unlock()
+		if active {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *Service) loadManagedSession(

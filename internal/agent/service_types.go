@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/blue7zz/BTaskAssistant/internal/execution"
+	"github.com/blue7zz/BTaskAssistant/internal/gitrepo"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 )
@@ -63,6 +65,8 @@ type Store interface {
 	UpsertWorkspaceArtifact(storage.WorkspaceArtifactRecord) error
 	TaskRevision(string) (int, error)
 	TaskStatus(string) (string, error)
+	GitBinding(string) (storage.GitBindingRecord, error)
+	UpsertGitBinding(storage.GitBindingRecord) error
 	UpsertRequirementProposal(storage.RequirementProposalRecord) error
 	RequirementProposals(string) ([]storage.RequirementProposalRecord, error)
 	InterruptActiveAgentActivity(string, string) error
@@ -77,6 +81,8 @@ type ServiceOptions struct {
 	PermissionTimeout time.Duration
 	Now               func() time.Time
 	Emit              Emitter
+	GitService        *gitrepo.Service
+	ExecutionService  *execution.Service
 }
 
 type CreateSessionRequest struct {
@@ -212,5 +218,7 @@ type AgentAPI interface {
 	CreateSession(context.Context, CreateSessionRequest) (storage.AgentSessionRecord, error)
 	SendPrompt(context.Context, PromptRequest) (storage.ExecutionRunRecord, error)
 	Abort(context.Context, AbortRequest) error
+	StopToolExecution(execution.StopRequest) error
+	ActiveTask(string) bool
 	Close(context.Context) error
 }

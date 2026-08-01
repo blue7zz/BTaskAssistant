@@ -107,6 +107,143 @@ func ClassifyTool(input ToolInput) Classification {
 			Target: args.Target, NormalizedTarget: target, ArgsDigest: digest,
 			RiskLevel: RiskHigh, ReadOnly: true,
 		}
+	case "btask_list_worktree_files":
+		var args struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := decodeStrict(input.Args, &args); err != nil || len(args.Query) > 200 || args.Limit < 0 || args.Limit > 500 {
+			return deniedClassification("worktree 文件列表参数无法规范化")
+		}
+		target, _ := NormalizeTarget(PathTarget{
+			RootKind: "task-worktree", RootID: input.TaskID,
+			RelativePath: ".", Operation: "read",
+		})
+		return Classification{
+			Capability: "task.worktree.list", Subject: "列出当前任务 worktree 文件",
+			Target: "当前任务 worktree 文件索引", NormalizedTarget: target,
+			ArgsDigest: digest, RiskLevel: RiskLow, ReadOnly: true,
+		}
+	case "btask_read_worktree_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := decodeStrict(input.Args, &args); err != nil {
+			return deniedClassification("worktree 文件读取参数无法规范化")
+		}
+		pathValue, err := NormalizeRelativePath(args.Path)
+		if err != nil || worktreeMetadataPath(pathValue) {
+			return deniedClassification("worktree 文件读取路径不安全")
+		}
+		target, _ := NormalizeTarget(PathTarget{
+			RootKind: "task-worktree", RootID: input.TaskID,
+			RelativePath: pathValue, Operation: "read",
+		})
+		return Classification{
+			Capability: "task.worktree.read", Subject: "读取当前任务 worktree 文件",
+			Target: pathValue, NormalizedTarget: target, ArgsDigest: digest,
+			RiskLevel: RiskLow, ReadOnly: true,
+		}
+	case "btask_write_worktree_file":
+		var args struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := decodeStrict(input.Args, &args); err != nil || len(args.Content) > 2*1024*1024 ||
+			!utf8.ValidString(args.Content) || strings.ContainsRune(args.Content, '\x00') {
+			return deniedClassification("worktree 文件写入参数无法规范化")
+		}
+		pathValue, err := NormalizeRelativePath(args.Path)
+		if err != nil || worktreeMetadataPath(pathValue) {
+			return deniedClassification("worktree 文件写入路径不安全")
+		}
+		target, _ := NormalizeTarget(PathTarget{
+			RootKind: "task-worktree", RootID: input.TaskID,
+			RelativePath: pathValue, Operation: "modify",
+		})
+		return Classification{
+			Capability: "task.worktree.write", Subject: "写入当前任务 worktree 文件",
+			Target: pathValue, NormalizedTarget: target, ArgsDigest: digest,
+			RiskLevel: RiskMedium, Mutating: true,
+		}
+	case "btask_edit_worktree_file":
+		var args struct {
+			Path       string `json:"path"`
+			OldText    string `json:"oldText"`
+			NewText    string `json:"newText"`
+			ReplaceAll bool   `json:"replaceAll"`
+		}
+		if err := decodeStrict(input.Args, &args); err != nil || args.OldText == "" ||
+			len(args.OldText)+len(args.NewText) > 2*1024*1024 ||
+			!utf8.ValidString(args.OldText+args.NewText) || strings.ContainsRune(args.OldText+args.NewText, '\x00') {
+			return deniedClassification("worktree 精确编辑参数无法规范化")
+		}
+		pathValue, err := NormalizeRelativePath(args.Path)
+		if err != nil || worktreeMetadataPath(pathValue) {
+			return deniedClassification("worktree 精确编辑路径不安全")
+		}
+		target, _ := NormalizeTarget(PathTarget{
+			RootKind: "task-worktree", RootID: input.TaskID,
+			RelativePath: pathValue, Operation: "modify",
+		})
+		return Classification{
+			Capability: "task.worktree.write", Subject: "精确编辑当前任务 worktree 文件",
+			Target: pathValue, NormalizedTarget: target, ArgsDigest: digest,
+			RiskLevel: RiskMedium, Mutating: true,
+		}
+	case "btask_delete_worktree_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := decodeStrict(input.Args, &args); err != nil {
+			return deniedClassification("worktree 文件删除参数无法规范化")
+		}
+		pathValue, err := NormalizeRelativePath(args.Path)
+		if err != nil || worktreeMetadataPath(pathValue) {
+			return deniedClassification("worktree 文件删除路径不安全")
+		}
+		target, _ := NormalizeTarget(PathTarget{
+			RootKind: "task-worktree", RootID: input.TaskID,
+			RelativePath: pathValue, Operation: "delete",
+		})
+		return Classification{
+			Capability: "task.worktree.delete", Subject: "删除当前任务 worktree 文件",
+			Target: pathValue, NormalizedTarget: target, ArgsDigest: digest,
+			RiskLevel: RiskMedium, Mutating: true,
+		}
+	case "btask_shell":
+		var args struct {
+			Command        string `json:"command"`
+			CWD            string `json:"cwd"`
+			TimeoutSeconds int    `json:"timeoutSeconds"`
+		}
+		if err := decodeStrict(input.Args, &args); err != nil || args.TimeoutSeconds < 0 || args.TimeoutSeconds > 3600 {
+			return deniedClassification("Shell 参数无法规范化")
+		}
+		cwd := strings.TrimSpace(args.CWD)
+		if cwd == "" {
+			cwd = "."
+		}
+		if cwd != "." {
+			var err error
+			cwd, err = NormalizeRelativePath(cwd)
+			if err != nil || worktreeMetadataPath(cwd) {
+				return deniedClassification("Shell cwd 不安全")
+			}
+		}
+		cwdTarget, _ := NormalizeTarget(PathTarget{
+			RootKind: "task-worktree", RootID: input.TaskID,
+			RelativePath: cwd, Operation: "execute",
+		})
+		classification := ClassifyCommand(args.Command, cwdTarget)
+		classification.ArgsDigest = digest
+		if classification.Target != "[REDACTED credential-bearing command]" {
+			classification.Target = strings.TrimSpace(args.Command) + "\n[cwd: " + cwd + "]"
+		}
+		if unsupportedShellAction(args.Command) {
+			classification.HardDenyReason = "普通 Shell 不提供 Git 提交、推送、合并、历史操作、PR 或发布；请使用专用显式动作"
+		}
+		return classification
 	default:
 		return Classification{
 			Capability: "unknown.tool", Subject: "调用未知工具", Target: input.ToolName,
@@ -114,6 +251,15 @@ func ClassifyTool(input ToolInput) Classification {
 			RiskLevel: RiskHigh, Mutating: true,
 		}
 	}
+}
+
+func worktreeMetadataPath(value string) bool {
+	for _, segment := range strings.Split(value, "/") {
+		if strings.EqualFold(segment, ".git") {
+			return true
+		}
+	}
+	return false
 }
 
 func CanonicalArgsDigest(raw json.RawMessage) (string, error) {
