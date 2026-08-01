@@ -24,14 +24,15 @@ const (
 )
 
 type Service struct {
-	store          Store
-	factory        RuntimeFactory
-	executable     string
-	startupTimeout time.Duration
-	requestTimeout time.Duration
-	shutdownGrace  time.Duration
-	now            func() time.Time
-	delivery       *eventDeliveryQueue
+	store             Store
+	factory           RuntimeFactory
+	executable        string
+	startupTimeout    time.Duration
+	requestTimeout    time.Duration
+	shutdownGrace     time.Duration
+	permissionTimeout time.Duration
+	now               func() time.Time
+	delivery          *eventDeliveryQueue
 
 	mutex    sync.Mutex
 	sessions map[string]*managedSession
@@ -56,6 +57,26 @@ type activeRun struct {
 	errorMessage     string
 	stopRequested    bool
 	tools            map[string]storage.ToolCallRecord
+	toolArgs         map[string]json.RawMessage
+	permissions      map[string]*pendingPermission
+	receipts         map[string]permissionReceipt
+}
+
+type pendingPermission struct {
+	request              storage.PermissionRequestRecord
+	extensionUIRequestID string
+	expiresAt            time.Time
+}
+
+type permissionReceipt struct {
+	RequestID        string
+	Capability       string
+	NormalizedTarget string
+	ArgsDigest       string
+	Scope            string
+	Decision         string
+	Mutating         bool
+	OperationStarted bool
 }
 
 type entriesResponse struct {
@@ -88,20 +109,30 @@ func NewService(store Store, options ServiceOptions) *Service {
 	if options.ShutdownGrace <= 0 {
 		options.ShutdownGrace = defaultShutdownGrace
 	}
+	if options.PermissionTimeout <= 0 {
+		options.PermissionTimeout = 5 * time.Minute
+	}
 	return &Service{
-		store:          store,
-		factory:        factory,
-		executable:     options.Executable,
-		startupTimeout: options.StartupTimeout,
-		requestTimeout: options.RequestTimeout,
-		shutdownGrace:  options.ShutdownGrace,
-		now:            now,
-		delivery:       newEventDeliveryQueue(options.Emit),
-		sessions:       make(map[string]*managedSession),
+		store:             store,
+		factory:           factory,
+		executable:        options.Executable,
+		startupTimeout:    options.StartupTimeout,
+		requestTimeout:    options.RequestTimeout,
+		shutdownGrace:     options.ShutdownGrace,
+		permissionTimeout: options.PermissionTimeout,
+		now:               now,
+		delivery:          newEventDeliveryQueue(options.Emit),
+		sessions:          make(map[string]*managedSession),
 	}
 }
 
 func (service *Service) RecoverInterrupted() error {
+	if _, err := service.store.ExpirePendingPermissionRequests(
+		service.timestamp(),
+		"应用已重启，待处理权限请求已过期",
+	); err != nil {
+		return err
+	}
 	return service.store.InterruptActiveAgentActivity(
 		service.timestamp(),
 		interruptedRestartError,
@@ -292,7 +323,10 @@ func (service *Service) SendPrompt(
 	}
 	managed.run = &activeRun{
 		record: run, assistant: assistant, assistantStarted: true,
-		tools: make(map[string]storage.ToolCallRecord),
+		tools:       make(map[string]storage.ToolCallRecord),
+		toolArgs:    make(map[string]json.RawMessage),
+		permissions: make(map[string]*pendingPermission),
+		receipts:    make(map[string]permissionReceipt),
 	}
 	managed.record.State = "running"
 	managed.record.ErrorMessage = nil
@@ -346,6 +380,7 @@ func (service *Service) Abort(ctx context.Context, request AbortRequest) error {
 	if managed.run == nil || managed.run.record.ID != request.RunID {
 		return errors.New("没有匹配的活动 PI 运行")
 	}
+	service.cancelPendingPermissionsLocked(managed, "用户停止运行，待处理权限请求已取消")
 	managed.run.stopRequested = true
 	managed.run.record.State = "stopping"
 	if err := service.store.UpsertExecutionRun(managed.run.record); err != nil {
@@ -386,10 +421,14 @@ func (service *Service) Close(ctx context.Context) error {
 		managed.mutex.Lock()
 		managed.closing = true
 		runtime := managed.runtime
+		service.cancelPendingPermissionsLocked(managed, "应用关闭，待处理权限请求已取消")
 		if managed.run != nil {
 			service.finishRunLocked(managed, "interrupted", "应用关闭时运行尚未完成")
 		}
 		managed.mutex.Unlock()
+		_, _ = service.store.ExpireSessionPermissionGrants(
+			managed.record.TaskID, managed.record.ID, service.timestamp(),
+		)
 		if runtime != nil {
 			if err := runtime.Close(ctx); err != nil && firstErr == nil {
 				firstErr = err
@@ -445,6 +484,11 @@ func (service *Service) startRuntimeLocked(
 		default:
 			return nil
 		}
+	}
+	if _, err := service.store.ExpireSessionPermissionGrants(
+		managed.record.TaskID, managed.record.ID, service.timestamp(),
+	); err != nil {
+		return err
 	}
 	managed.record.State = "starting"
 	managed.record.ErrorMessage = nil
@@ -600,9 +644,15 @@ func (service *Service) consume(
 	if managed.closing {
 		return
 	}
+	_, _ = service.store.ExpireSessionPermissionGrants(
+		managed.record.TaskID,
+		managed.record.ID,
+		service.timestamp(),
+	)
 	exit := runtime.Exit()
 	message := processExitMessage(exit, workspaceRoot)
 	if managed.run != nil {
+		service.cancelPendingPermissionsLocked(managed, "PI 进程退出，待处理权限请求已取消")
 		service.finishRunLocked(managed, "interrupted", message)
 	}
 	managed.record.State = "failed"

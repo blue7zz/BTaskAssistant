@@ -3,6 +3,8 @@ package storage
 import (
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -381,6 +383,179 @@ func TestInterruptActiveAgentActivityPreservesHistoryAndMarksActiveRows(t *testi
 	if err := store.InterruptActiveAgentActivity(interruptedAt, "应用已重启"); err != nil {
 		t.Fatalf("repeat interruption must be idempotent: %v", err)
 	}
+}
+
+func TestPermissionResolutionOnceConsumptionRevokeAndIsolation(t *testing.T) {
+	store := newNormalizedRepositoryStore(t)
+	for _, taskID := range []string{"task_permission_a", "task_permission_b"} {
+		seedNormalizedTask(t, store, taskID)
+		sessionID := "session-" + taskID
+		if err := store.UpsertAgentSession(repositorySession(taskID, sessionID)); err != nil {
+			t.Fatal(err)
+		}
+		run := repositoryRun(taskID, sessionID, "run-"+taskID)
+		run.State = "succeeded"
+		if err := store.UpsertExecutionRun(run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpsertToolCall(repositoryToolCall(taskID, sessionID, run.ID, "tool-"+taskID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	taskID := "task_permission_a"
+	sessionID := "session-task_permission_a"
+	request := PermissionRequestRecord{
+		ID: "request-atomic", TaskID: taskID, SessionID: sessionID,
+		RunID: "run-task_permission_a", ToolCallID: "tool-task_permission_a",
+		Capability: "task.artifact.write", Target: "artifacts/plans/a.md",
+		NormalizedTarget: stringPointer(`{"rootKind":"task-artifacts","rootId":"task_permission_a","relativePath":"plans/a.md","operation":"modify"}`),
+		Subject:          "write artifact", RiskLevel: "medium", State: "pending",
+		RequestedAt: repositoryTestTime,
+	}
+	if err := store.UpsertPermissionRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	grantID := "grant-atomic"
+	grant := PermissionGrantRecord{
+		ID: grantID, TaskID: &taskID, SessionID: &sessionID, RequestID: &request.ID,
+		Capability: request.Capability, TargetPattern: *request.NormalizedTarget,
+		Scope: "once", Decision: "allow", RiskCeiling: "medium",
+		CreatedAt: repositoryTestTime, CreatedBy: "user",
+	}
+	scope := "once"
+	resolved, err := store.ResolvePermissionRequest(PermissionResolution{
+		TaskID: taskID, RequestID: request.ID, State: "allowed",
+		ResolvedAt: "2026-08-01T08:01:00Z", ResolvedBy: "user", DecisionScope: &scope,
+	}, &grant)
+	if err != nil || resolved.State != "allowed" {
+		t.Fatalf("atomic resolution failed: %#v, %v", resolved, err)
+	}
+	if _, err := store.ResolvePermissionRequest(PermissionResolution{
+		TaskID: taskID, RequestID: request.ID, State: "allowed",
+		ResolvedAt: "2026-08-01T08:01:01Z", ResolvedBy: "user", DecisionScope: &scope,
+	}, nil); !errors.Is(err, ErrPermissionRequestResolved) {
+		t.Fatalf("repeated resolution returned %v", err)
+	}
+
+	var successes atomic.Int32
+	var wait sync.WaitGroup
+	for index := 0; index < 24; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if err := store.ConsumePermissionGrant(
+				taskID, grantID, request.ID, "2026-08-01T08:02:00Z",
+			); err == nil {
+				successes.Add(1)
+			} else if !errors.Is(err, ErrPermissionGrantUnavailable) {
+				t.Errorf("unexpected consume error: %v", err)
+			}
+		}()
+	}
+	wait.Wait()
+	if successes.Load() != 1 {
+		t.Fatalf("once grant was consumed %d times", successes.Load())
+	}
+	storedGrant, err := store.PermissionGrant(&taskID, grantID)
+	if err != nil || storedGrant.ConsumedAt == nil {
+		t.Fatalf("once consumption was not persisted: %#v, %v", storedGrant, err)
+	}
+
+	taskGrant := PermissionGrantRecord{
+		ID: "grant-task-a", TaskID: &taskID, RequestID: &request.ID,
+		Capability: request.Capability, TargetPattern: *request.NormalizedTarget,
+		Scope: "task", Decision: "allow", RiskCeiling: "medium",
+		CreatedAt: repositoryTestTime, CreatedBy: "user",
+	}
+	if err := store.UpsertPermissionGrant(taskGrant); err != nil {
+		t.Fatal(err)
+	}
+	permanent := PermissionGrantRecord{
+		ID: "grant-permanent-audit", RequestID: &request.ID,
+		Capability: "task.resource.read", TargetPattern: "*", Scope: "permanent",
+		Decision: "allow", RiskCeiling: "medium", CreatedAt: repositoryTestTime, CreatedBy: "user",
+	}
+	if err := store.UpsertPermissionGrant(permanent); err != nil {
+		t.Fatal(err)
+	}
+	grantsA, err := store.ActivePermissionGrants(taskID, sessionID, "2026-08-01T08:03:00Z")
+	if err != nil || !grantIDs(grantsA)[taskGrant.ID] || !grantIDs(grantsA)[permanent.ID] || grantIDs(grantsA)[grantID] {
+		t.Fatalf("unexpected task A grants: %#v, %v", grantsA, err)
+	}
+	grantsB, err := store.ActivePermissionGrants(
+		"task_permission_b", "session-task_permission_b", "2026-08-01T08:03:00Z",
+	)
+	if err != nil || grantIDs(grantsB)[taskGrant.ID] || !grantIDs(grantsB)[permanent.ID] {
+		t.Fatalf("task grant leaked or permanent grant disappeared: %#v, %v", grantsB, err)
+	}
+	revoked, err := store.RevokePermissionGrant(taskID, taskGrant.ID, "2026-08-01T08:04:00Z")
+	if err != nil || revoked.RevokedAt == nil {
+		t.Fatalf("revoke failed: %#v, %v", revoked, err)
+	}
+	grantsA, _ = store.ActivePermissionGrants(taskID, sessionID, "2026-08-01T08:05:00Z")
+	if grantIDs(grantsA)[taskGrant.ID] {
+		t.Fatal("revoked grant remained active")
+	}
+}
+
+func TestPermissionRestartExpiresPendingAndSessionGrant(t *testing.T) {
+	store := newNormalizedRepositoryStore(t)
+	seedNormalizedTask(t, store, "task_permission_restart")
+	taskID := "task_permission_restart"
+	sessionID := "session-restart"
+	if err := store.UpsertAgentSession(repositorySession(taskID, sessionID)); err != nil {
+		t.Fatal(err)
+	}
+	run := repositoryRun(taskID, sessionID, "run-restart")
+	run.State = "succeeded"
+	if err := store.UpsertExecutionRun(run); err != nil {
+		t.Fatal(err)
+	}
+	tool := repositoryToolCall(taskID, sessionID, run.ID, "tool-restart")
+	if err := store.UpsertToolCall(tool); err != nil {
+		t.Fatal(err)
+	}
+	request := PermissionRequestRecord{
+		ID: "request-restart", TaskID: taskID, SessionID: sessionID,
+		RunID: run.ID, ToolCallID: tool.ID, Capability: "shell.execute",
+		Target: "go test ./...", Subject: "run tests", RiskLevel: "high",
+		State: "pending", RequestedAt: repositoryTestTime,
+	}
+	if err := store.UpsertPermissionRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	grant := PermissionGrantRecord{
+		ID: "grant-session-restart", TaskID: &taskID, SessionID: &sessionID,
+		RequestID: &request.ID, Capability: "task.resource.read", TargetPattern: "*",
+		Scope: "session", Decision: "allow", RiskCeiling: "medium",
+		CreatedAt: repositoryTestTime, CreatedBy: "user",
+	}
+	if err := store.UpsertPermissionGrant(grant); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.ExpirePendingPermissionRequests(
+		"2026-08-01T08:10:00Z", "application restarted",
+	)
+	if err != nil || count != 1 {
+		t.Fatalf("restart expiry failed: %d, %v", count, err)
+	}
+	stored, err := store.PermissionRequest(taskID, request.ID)
+	if err != nil || stored.State != "expired" || stored.ResolvedBy == nil || *stored.ResolvedBy != "system" {
+		t.Fatalf("pending request did not expire: %#v, %v", stored, err)
+	}
+	active, err := store.ActivePermissionGrants(taskID, sessionID, "2026-08-01T08:10:01Z")
+	if err != nil || len(active) != 0 {
+		t.Fatalf("session grant survived restart: %#v, %v", active, err)
+	}
+}
+
+func grantIDs(records []PermissionGrantRecord) map[string]bool {
+	result := make(map[string]bool, len(records))
+	for _, record := range records {
+		result[record.ID] = true
+	}
+	return result
 }
 
 func TestNormalizedRepositoriesRejectUnsafeStoredPaths(t *testing.T) {

@@ -277,6 +277,31 @@ func (s *SQLiteStore) TaskRevision(taskID string) (int, error) {
 	return snapshot.Revision, nil
 }
 
+func (s *SQLiteStore) TaskStatus(taskID string) (string, error) {
+	if !taskIDPattern.MatchString(taskID) {
+		return "", fmt.Errorf("invalid task id %q", taskID)
+	}
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+	database, err := s.readyDatabase()
+	if err != nil {
+		return "", err
+	}
+	var payload string
+	if err := database.QueryRow(`SELECT payload FROM workspace_state WHERE id = 1`).Scan(&payload); err != nil {
+		return "", err
+	}
+	snapshots, err := decodeTaskSnapshots(payload)
+	if err != nil {
+		return "", err
+	}
+	snapshot, exists := snapshots[taskID]
+	if !exists {
+		return "", ErrTaskWorkspaceNotFound
+	}
+	return snapshot.Status, nil
+}
+
 func (s *SQLiteStore) ListTaskWorkspaceFiles(
 	taskID string,
 	logicalPath string,

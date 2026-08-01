@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 type assistantDelta struct {
@@ -157,10 +158,25 @@ func compactionPayload(kind string, raw json.RawMessage) map[string]any {
 }
 
 func boundedText(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "…"
+	marker := "…"
+	if limit <= len(marker) {
+		end := limit
+		for end > 0 && !utf8.ValidString(value[:end]) {
+			end--
+		}
+		return value[:end]
+	}
+	end := limit - len(marker)
+	for end > 0 && !utf8.ValidString(value[:end]) {
+		end--
+	}
+	return value[:end] + marker
 }
 
 func stableArgsPreview(raw json.RawMessage) *string {

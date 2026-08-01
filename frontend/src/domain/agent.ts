@@ -112,6 +112,93 @@ export interface AgentRun {
   errorMessage?: string;
 }
 
+export type AgentRiskLevel = "low" | "medium" | "high" | "critical";
+export type AgentPermissionScope = "once" | "session" | "task" | "permanent";
+
+export interface AgentToolCall {
+  id: string;
+  taskId: string;
+  sessionId: string;
+  runId: string;
+  externalToolCallId: string;
+  toolName: string;
+  capability: string;
+  target?: string;
+  riskLevel: AgentRiskLevel;
+  state: "received" | "waiting_permission" | "running" | "succeeded" | "failed" | "denied" | "cancelled";
+  argsJson?: string;
+  argsRef?: string;
+  outputSummary?: string;
+  outputRef?: string;
+  isError: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface AgentPermissionRequest {
+  id: string;
+  taskId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  capability: string;
+  target: string;
+  normalizedTarget?: string;
+  subject: string;
+  riskLevel: AgentRiskLevel;
+  state: "pending" | "allowed" | "denied" | "expired" | "cancelled";
+  requestedAt: string;
+  expiresAt?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  decisionScope?: AgentPermissionScope;
+  reason?: string;
+  allowedScopes: AgentPermissionScope[];
+}
+
+export interface AgentPermissionGrant {
+  id: string;
+  taskId?: string;
+  sessionId?: string;
+  requestId?: string;
+  capability: string;
+  targetPattern: string;
+  scope: AgentPermissionScope;
+  decision: "allow" | "deny";
+  riskCeiling: AgentRiskLevel;
+  createdAt: string;
+  expiresAt?: string;
+  consumedAt?: string;
+  revokedAt?: string;
+  createdBy: string;
+}
+
+export interface ResolveAgentPermissionRequest {
+  taskId: string;
+  sessionId: string;
+  requestId: string;
+  decision: "allow" | "deny";
+  scope: AgentPermissionScope | "";
+}
+
+export interface RevokeAgentPermissionGrantRequest {
+  taskId: string;
+  grantId: string;
+}
+
+export interface AgentToolOutputRequest {
+  taskId: string;
+  toolCallId: string;
+}
+
+export interface AgentToolOutput {
+  reference: string;
+  content: string;
+  byteSize: number;
+  truncated: boolean;
+}
+
 export interface AgentEvent {
   version: 1;
   eventId: string;

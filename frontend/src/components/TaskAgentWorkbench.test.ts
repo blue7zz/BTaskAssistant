@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentEvent,
   AgentMessage,
+  AgentPermissionRequest,
   AgentResource,
   AgentRun,
   AgentSession,
@@ -609,5 +610,111 @@ describe("TaskAgentWorkbench", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("task_new · PI");
     expect(container.textContent).not.toContain("task_old · PI");
+  });
+
+  it("renders task-scoped permission requests and submits a decision only once", async () => {
+    const activeSession = session("task_permission");
+    let currentRequest: AgentPermissionRequest = {
+      id: "permission_task",
+      taskId: "task_permission",
+      sessionId: activeSession.id,
+      runId: "run_permission",
+      toolCallId: "tool_permission",
+      toolName: "btask_write_artifact",
+      capability: "artifact.write",
+      target: "artifacts/plan.md",
+      normalizedTarget: "artifacts/plan.md",
+      subject: "pi",
+      riskLevel: "medium",
+      state: "pending",
+      requestedAt: "2026-08-01T08:00:00Z",
+      expiresAt: "2026-08-01T08:05:00Z",
+      allowedScopes: ["once", "task"],
+    };
+    let listener: ((value: AgentEvent) => void) | undefined;
+    let finishResolution: (() => void) | undefined;
+    const listPermissionRequests = vi.fn(
+      async () => [{ ...currentRequest }],
+    );
+    const resolvePermission = vi.fn(
+      () => new Promise<AgentPermissionRequest>((resolve) => {
+        finishResolution = () => {
+          currentRequest = {
+            ...currentRequest,
+            state: "allowed",
+            decisionScope: "once",
+            allowedScopes: [],
+          };
+          resolve({ ...currentRequest });
+        };
+      }),
+    );
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([activeSession]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([]),
+      listPermissionRequests,
+      listPermissionGrants: vi.fn().mockResolvedValue([]),
+      listToolCalls: vi.fn().mockResolvedValue([]),
+      resolvePermission,
+      createSession: vi.fn(),
+      sendPrompt: vi.fn(),
+      abortRun: vi.fn(),
+      subscribe: (candidate) => {
+        listener = candidate;
+        return () => undefined;
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(TaskAgentWorkbench, {
+          taskId: "task_permission",
+          taskTitle: "权限任务",
+          client,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("btask_write_artifact");
+    expect(container.textContent).toContain("应用级软权限边界");
+
+    const loadCount = listPermissionRequests.mock.calls.length;
+    await act(async () => {
+      listener?.(
+        event(
+          "task_other",
+          "session_other",
+          1,
+          "permission.requested",
+          {},
+        ),
+      );
+      await Promise.resolve();
+    });
+    expect(listPermissionRequests).toHaveBeenCalledTimes(loadCount);
+
+    act(() => {
+      button(container, "仅本次允许").click();
+      button(container, "仅本次允许").click();
+    });
+    expect(resolvePermission).toHaveBeenCalledTimes(1);
+    expect(resolvePermission).toHaveBeenCalledWith({
+      taskId: "task_permission",
+      sessionId: activeSession.id,
+      requestId: "permission_task",
+      decision: "allow",
+      scope: "once",
+    });
+
+    await act(async () => {
+      finishResolution?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("已允许 · 仅本次允许");
   });
 });

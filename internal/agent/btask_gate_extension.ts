@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 
 const config = __BTASK_GATE_CONFIG__;
 
@@ -10,6 +11,138 @@ type BridgeResponse = {
   data?: unknown;
   error?: string;
 };
+
+type RunResponse = {
+  version: string;
+  nonce: string;
+  runId: string;
+};
+
+type PermissionDescription = {
+  capability: string;
+  subject: string;
+  target: string;
+  normalizedTarget: string;
+  riskLevel: "low" | "medium" | "high";
+};
+
+let activeRunId = "";
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${stable(key)}:${stable(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value)
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+function argsDigest(args: Record<string, unknown>): string {
+  return createHash("sha256").update(stable(args)).digest("hex");
+}
+
+function normalizedTarget(
+  rootKind: string,
+  relativePath: string,
+  operation: string,
+): string {
+  return JSON.stringify({
+    rootKind,
+    rootId: config.taskId,
+    relativePath,
+    operation,
+  });
+}
+
+function artifactPath(params: Record<string, unknown>): string {
+  const directories: Record<string, string> = {
+    plan: "plans",
+    report: "reports",
+    proposal: "proposals",
+    export: "exports",
+  };
+  const kind = String(params.kind || "").trim().toLowerCase();
+  let name = String(params.name || "").trim();
+  if (!name.includes(".")) name += ".md";
+  return `artifacts/${directories[kind] || "invalid"}/${name}`;
+}
+
+function describePermission(
+  toolName: string,
+  params: Record<string, unknown>,
+): PermissionDescription | undefined {
+  if (toolName === "btask_list_resources") {
+    return {
+      capability: "task.resource.list",
+      subject: "列出当前任务资源",
+      target: "当前任务资源索引",
+      normalizedTarget: normalizedTarget("task-resources", ".", "read"),
+      riskLevel: "low",
+    };
+  }
+  if (toolName === "btask_read_resource") {
+    const resourceId = String(params.resourceId || "").trim();
+    return {
+      capability: "task.resource.read",
+      subject: "读取当前任务资源",
+      target: resourceId,
+      normalizedTarget: normalizedTarget("task-resources", resourceId, "read"),
+      riskLevel: "low",
+    };
+  }
+  if (toolName === "btask_write_artifact") {
+    const target = artifactPath(params);
+    return {
+      capability: "task.artifact.write",
+      subject: "写入当前任务 artifact",
+      target,
+      normalizedTarget: normalizedTarget(
+        "task-artifacts",
+        target.replace(/^artifacts\//, ""),
+        "modify",
+      ),
+      riskLevel: "medium",
+    };
+  }
+  if (toolName === "btask_permission_probe") {
+    const target = String(params.target || "").trim();
+    return {
+      capability: "diagnostic.permission.probe",
+      subject: "验证 BTask 权限审批链路",
+      target,
+      normalizedTarget: normalizedTarget("permission-self-test", target, "read"),
+      riskLevel: "high",
+    };
+  }
+  return undefined;
+}
+
+async function bindActiveRun(ctx: any): Promise<string> {
+  const request = JSON.stringify({
+    version: config.version,
+    nonce: config.nonce,
+    taskId: config.taskId,
+    sessionId: config.sessionId,
+    mode: config.mode,
+  });
+  const value = await ctx.ui.input("btask-run", request);
+  if (!value) throw new Error("BTask gate did not bind an active run");
+  const response = JSON.parse(value) as RunResponse;
+  if (
+    response.version !== config.version ||
+    response.nonce !== config.nonce ||
+    !response.runId
+  ) {
+    throw new Error("BTask active run identity mismatch");
+  }
+  activeRunId = response.runId;
+  return activeRunId;
+}
 
 async function bridge(
   ctx: any,
@@ -22,6 +155,7 @@ async function bridge(
     nonce: config.nonce,
     taskId: config.taskId,
     sessionId: config.sessionId,
+    runId: activeRunId,
     mode: config.mode,
     toolCallId,
     operation,
@@ -42,14 +176,85 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus("btask-gate", `${config.version}:${config.nonce}`);
   });
 
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt:
+  pi.on("before_agent_start", async (event, ctx) => {
+    await bindActiveRun(ctx);
+    return { systemPrompt:
       event.systemPrompt +
       `\n\nBTask task scope: ${config.taskId}. Use only btask_list_resources and ` +
       "btask_read_resource for task context and references. Never use shell, Git, or arbitrary " +
       "filesystem access. context/ and sources/ are immutable. Requirement changes must be " +
-      "written as proposal artifacts. Do not restate the entire session history in prompts.",
-  }));
+      "written as proposal artifacts. Do not restate the entire session history in prompts." };
+  });
+
+  pi.on("tool_call", async (event, ctx) => {
+    const description = describePermission(
+      event.toolName,
+      event.input as Record<string, unknown>,
+    );
+    if (!description || !activeRunId) {
+      return { block: true, reason: "BTask gate cannot normalize this tool call" };
+    }
+    const envelope = JSON.stringify({
+      protocol: config.permissionProtocol,
+      version: config.version,
+      nonce: config.nonce,
+      taskId: config.taskId,
+      sessionId: config.sessionId,
+      runId: activeRunId,
+      mode: config.mode,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      ...description,
+      argsDigest: argsDigest(event.input as Record<string, unknown>),
+    });
+    const confirmed = await ctx.ui.confirm("btask-permission", envelope, {
+      timeout: 300000,
+      signal: ctx.signal,
+    });
+    if (!confirmed) {
+      return { block: true, reason: "BTask permission denied or expired" };
+    }
+  });
+
+  if (config.selfTest) {
+    pi.registerCommand("btask-gate-self-test", {
+      description: "Verify the PI RPC confirm request/response path without a model",
+      handler: async (_args, ctx) => {
+        const digestFixture = {
+          text: "line\u2028next\u2029end",
+          nested: { b: 2, a: 1 },
+        };
+        const confirmed = await ctx.ui.confirm(
+          "btask-permission-self-test",
+          JSON.stringify({
+            protocol: config.permissionProtocol,
+            version: config.version,
+            nonce: config.nonce,
+            argsDigest: argsDigest(digestFixture),
+          }),
+          { timeout: 10000 },
+        );
+        if (!confirmed) throw new Error("BTask permission self-test was denied");
+        ctx.ui.notify("BTask permission self-test passed", "info");
+      },
+    });
+
+    pi.registerTool(
+      defineTool({
+        name: "btask_permission_probe",
+        label: "Permission probe",
+        description: "Test-only permission protocol probe.",
+        parameters: Type.Object(
+          { target: Type.String({ minLength: 1, maxLength: 200 }) },
+          { additionalProperties: false },
+        ),
+        async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+          const data = await bridge(ctx, toolCallId, "permission_probe", params);
+          return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+        },
+      }),
+    );
+  }
 
   pi.registerTool(
     defineTool({

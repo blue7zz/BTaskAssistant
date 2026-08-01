@@ -11,6 +11,9 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 )
 
+var ErrPermissionRequestResolved = errors.New("permission request is no longer pending")
+var ErrPermissionGrantUnavailable = errors.New("permission grant is unavailable")
+
 type GitBindingRecord struct {
 	ID                string  `json:"id"`
 	TaskID            string  `json:"taskId"`
@@ -62,6 +65,16 @@ type PermissionGrantRecord struct {
 	ConsumedAt    *string `json:"consumedAt,omitempty"`
 	RevokedAt     *string `json:"revokedAt,omitempty"`
 	CreatedBy     string  `json:"createdBy"`
+}
+
+type PermissionResolution struct {
+	TaskID        string
+	RequestID     string
+	State         string
+	ResolvedAt    string
+	ResolvedBy    string
+	DecisionScope *string
+	Reason        string
 }
 
 type WorkspaceArtifactRecord struct {
@@ -202,6 +215,102 @@ func (s *SQLiteStore) PermissionRequest(
 		  FROM permission_requests WHERE task_id = ? AND id = ?`, taskID, requestID))
 }
 
+func (s *SQLiteStore) PermissionRequests(
+	taskID string,
+	sessionID string,
+) ([]PermissionRequestRecord, error) {
+	if !taskIDPattern.MatchString(taskID) {
+		return nil, fmt.Errorf("invalid task id %q", taskID)
+	}
+	database, unlock, err := s.repositoryRead()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	query := `
+		SELECT id, task_id, session_id, run_id, tool_call_id, capability,
+		       target, normalized_target, subject, risk_level, state,
+		       requested_at, resolved_at, resolved_by, decision_scope, reason
+		  FROM permission_requests WHERE task_id = ?`
+	arguments := []any{taskID}
+	if strings.TrimSpace(sessionID) != "" {
+		query += ` AND session_id = ?`
+		arguments = append(arguments, sessionID)
+	}
+	query += ` ORDER BY requested_at, id`
+	rows, err := database.Query(query, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]PermissionRequestRecord, 0)
+	for rows.Next() {
+		record, err := scanPermissionRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (s *SQLiteStore) ResolvePermissionRequest(
+	resolution PermissionResolution,
+	grant *PermissionGrantRecord,
+) (PermissionRequestRecord, error) {
+	if err := validatePermissionResolution(resolution); err != nil {
+		return PermissionRequestRecord{}, err
+	}
+	if grant != nil {
+		if err := validatePermissionGrantRecord(*grant); err != nil {
+			return PermissionRequestRecord{}, err
+		}
+		if grant.RequestID == nil || *grant.RequestID != resolution.RequestID {
+			return PermissionRequestRecord{}, errors.New("permission grant must reference its resolved request")
+		}
+	}
+	var updated PermissionRequestRecord
+	err := s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		result, err := connection.ExecContext(ctx, `
+			UPDATE permission_requests
+			   SET state = ?, resolved_at = ?, resolved_by = ?, decision_scope = ?, reason = ?
+			 WHERE task_id = ? AND id = ? AND state = 'pending'`,
+			resolution.State,
+			resolution.ResolvedAt,
+			resolution.ResolvedBy,
+			resolution.DecisionScope,
+			nullableText(resolution.Reason),
+			resolution.TaskID,
+			resolution.RequestID,
+		)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrPermissionRequestResolved
+		}
+		if grant != nil {
+			if err := insertPermissionGrant(ctx, connection, *grant); err != nil {
+				return err
+			}
+		}
+		updated, err = scanPermissionRequest(connection.QueryRowContext(ctx, `
+			SELECT id, task_id, session_id, run_id, tool_call_id, capability,
+			       target, normalized_target, subject, risk_level, state,
+			       requested_at, resolved_at, resolved_by, decision_scope, reason
+			  FROM permission_requests WHERE task_id = ? AND id = ?`,
+			resolution.TaskID,
+			resolution.RequestID,
+		))
+		return err
+	})
+	return updated, err
+}
+
 func (s *SQLiteStore) UpsertPermissionGrant(record PermissionGrantRecord) error {
 	if err := validatePermissionGrantRecord(record); err != nil {
 		return err
@@ -269,6 +378,197 @@ func (s *SQLiteStore) PermissionGrant(
 		       consumed_at, revoked_at, created_by
 		  FROM permission_grants
 		 WHERE id = ? AND task_id IS ?`, grantID, taskValue))
+}
+
+func (s *SQLiteStore) ActivePermissionGrants(
+	taskID string,
+	sessionID string,
+	now string,
+) ([]PermissionGrantRecord, error) {
+	if !taskIDPattern.MatchString(taskID) || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(now) == "" {
+		return nil, errors.New("task, session, and timestamp are required to list permission grants")
+	}
+	database, unlock, err := s.repositoryRead()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	rows, err := database.Query(`
+		SELECT id, task_id, session_id, request_id, capability, target_pattern,
+		       scope, decision, risk_ceiling, created_at, expires_at,
+		       consumed_at, revoked_at, created_by
+		  FROM permission_grants
+		 WHERE revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > ?)
+		   AND (consumed_at IS NULL OR scope != 'once')
+		   AND (
+		        scope = 'permanent'
+		        OR (scope = 'task' AND task_id = ?)
+		        OR (scope IN ('session', 'once') AND task_id = ? AND session_id = ?)
+		   )
+		 ORDER BY created_at, id`, now, taskID, taskID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]PermissionGrantRecord, 0)
+	for rows.Next() {
+		record, err := scanPermissionGrant(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (s *SQLiteStore) ConsumePermissionGrant(
+	taskID string,
+	grantID string,
+	requestID string,
+	consumedAt string,
+) error {
+	if err := validateScopedID(taskID, grantID, "permission grant"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(requestID) == "" || strings.TrimSpace(consumedAt) == "" {
+		return errors.New("permission request and consumption timestamp are required")
+	}
+	return s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		result, err := connection.ExecContext(ctx, `
+			UPDATE permission_grants
+			   SET consumed_at = ?
+			 WHERE id = ? AND task_id = ? AND request_id = ? AND scope = 'once'
+			   AND decision = 'allow' AND consumed_at IS NULL AND revoked_at IS NULL
+			   AND (expires_at IS NULL OR expires_at > ?)`,
+			consumedAt, grantID, taskID, requestID, consumedAt,
+		)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrPermissionGrantUnavailable
+		}
+		return nil
+	})
+}
+
+func (s *SQLiteStore) RevokePermissionGrant(
+	taskID string,
+	grantID string,
+	revokedAt string,
+) (PermissionGrantRecord, error) {
+	if !taskIDPattern.MatchString(taskID) || strings.TrimSpace(grantID) == "" || strings.TrimSpace(revokedAt) == "" {
+		return PermissionGrantRecord{}, errors.New("task, permission grant, and revoke timestamp are required")
+	}
+	var updated PermissionGrantRecord
+	err := s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		result, err := connection.ExecContext(ctx, `
+			UPDATE permission_grants
+			   SET revoked_at = ?
+			 WHERE id = ? AND revoked_at IS NULL AND (task_id = ? OR task_id IS NULL)`,
+			revokedAt, grantID, taskID,
+		)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrPermissionGrantUnavailable
+		}
+		updated, err = scanPermissionGrant(connection.QueryRowContext(ctx, `
+			SELECT id, task_id, session_id, request_id, capability, target_pattern,
+			       scope, decision, risk_ceiling, created_at, expires_at,
+			       consumed_at, revoked_at, created_by
+			  FROM permission_grants WHERE id = ?`, grantID))
+		return err
+	})
+	return updated, err
+}
+
+func (s *SQLiteStore) ExpirePendingPermissionRequests(
+	resolvedAt string,
+	reason string,
+) (int64, error) {
+	if strings.TrimSpace(resolvedAt) == "" || strings.TrimSpace(reason) == "" {
+		return 0, errors.New("permission expiry timestamp and reason are required")
+	}
+	var count int64
+	err := s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		result, err := connection.ExecContext(ctx, `
+			UPDATE permission_requests
+			   SET state = 'expired', resolved_at = ?, resolved_by = 'system', reason = ?
+			 WHERE state = 'pending'`, resolvedAt, reason)
+		if err != nil {
+			return err
+		}
+		count, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		_, err = connection.ExecContext(ctx, `
+			UPDATE permission_grants
+			   SET expires_at = ?
+			 WHERE scope = 'session' AND revoked_at IS NULL
+			   AND (expires_at IS NULL OR expires_at > ?)`, resolvedAt, resolvedAt)
+		return err
+	})
+	return count, err
+}
+
+func insertPermissionGrant(
+	ctx context.Context,
+	connection *sql.Conn,
+	record PermissionGrantRecord,
+) error {
+	_, err := connection.ExecContext(ctx, `
+		INSERT INTO permission_grants(
+			id, task_id, session_id, request_id, capability, target_pattern,
+			scope, decision, risk_ceiling, created_at, expires_at,
+			consumed_at, revoked_at, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID, record.TaskID, record.SessionID, record.RequestID,
+		record.Capability, record.TargetPattern, record.Scope, record.Decision,
+		record.RiskCeiling, record.CreatedAt, record.ExpiresAt,
+		record.ConsumedAt, record.RevokedAt, record.CreatedBy,
+	)
+	return err
+}
+
+func validatePermissionResolution(resolution PermissionResolution) error {
+	if err := validateScopedID(resolution.TaskID, resolution.RequestID, "permission request"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(resolution.ResolvedAt) == "" || strings.TrimSpace(resolution.ResolvedBy) == "" {
+		return errors.New("permission resolution timestamp and actor are required")
+	}
+	switch resolution.State {
+	case "allowed":
+		if resolution.DecisionScope == nil {
+			return errors.New("allowed permission resolution requires a scope")
+		}
+	case "denied", "expired", "cancelled":
+		if resolution.DecisionScope != nil {
+			return errors.New("non-allow permission resolution must not have a scope")
+		}
+	default:
+		return fmt.Errorf("unsupported permission resolution state %q", resolution.State)
+	}
+	return nil
+}
+
+func nullableText(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *SQLiteStore) UpsertWorkspaceArtifact(record WorkspaceArtifactRecord) error {
@@ -471,8 +771,8 @@ func validatePermissionGrantRecord(record PermissionGrantRecord) error {
 	}
 	switch record.Scope {
 	case "permanent":
-		if record.TaskID != nil || record.SessionID != nil || record.RequestID != nil {
-			return errors.New("permanent permission grant must not have task, session, or request scope")
+		if record.TaskID != nil || record.SessionID != nil {
+			return errors.New("permanent permission grant must not have task or session scope")
 		}
 	case "task":
 		if record.TaskID == nil || record.SessionID != nil {
@@ -490,6 +790,32 @@ func validatePermissionGrantRecord(record PermissionGrantRecord) error {
 		return fmt.Errorf("unsupported permission grant scope %q", record.Scope)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) ExpireSessionPermissionGrants(
+	taskID string,
+	sessionID string,
+	expiredAt string,
+) (int64, error) {
+	if !taskIDPattern.MatchString(taskID) || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(expiredAt) == "" {
+		return 0, errors.New("task, session, and expiry timestamp are required")
+	}
+	var count int64
+	err := s.withRepositoryWrite(func(ctx context.Context, connection *sql.Conn) error {
+		result, err := connection.ExecContext(ctx, `
+			UPDATE permission_grants
+			   SET expires_at = ?
+			 WHERE task_id = ? AND session_id = ? AND scope = 'session'
+			   AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+			expiredAt, taskID, sessionID, expiredAt,
+		)
+		if err != nil {
+			return err
+		}
+		count, err = result.RowsAffected()
+		return err
+	})
+	return count, err
 }
 
 func validateWorkspaceArtifactRecord(record WorkspaceArtifactRecord) error {

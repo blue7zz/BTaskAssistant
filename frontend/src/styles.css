@@ -6305,6 +6305,307 @@ body.panel-resizing .workspace-grid {
   scrollbar-color: #d5d6db transparent;
 }
 
+.agent-security-boundary {
+  display: flex;
+  width: min(100%, 620px);
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid #e5e2fa;
+  border-radius: 8px;
+  color: #716d95;
+  background: #f4f2ff;
+  font-size: 7.5px;
+  line-height: 1.5;
+}
+
+.agent-security-boundary svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.agent-governance-card,
+.agent-grant-list {
+  width: min(100%, 620px);
+  padding: 10px 11px;
+  border: 1px solid #e1e2e8;
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 1px 2px rgba(22, 22, 26, 0.03);
+}
+
+.agent-governance-card.risk-low {
+  border-left-color: #78ad8a;
+}
+
+.agent-governance-card.risk-medium {
+  border-left-color: #d5a549;
+}
+
+.agent-governance-card.risk-high,
+.agent-governance-card.risk-critical {
+  border-left-color: #cc6169;
+}
+
+.agent-permission-card > header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.agent-permission-card > header > div,
+.agent-tool-summary > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-permission-card > header strong,
+.agent-tool-summary strong,
+.agent-grant-list strong {
+  color: #4e5058;
+  font-size: 8.5px;
+}
+
+.agent-permission-card > header small,
+.agent-tool-summary small,
+.agent-grant-list small {
+  overflow: hidden;
+  color: #90929a;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-governance-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: #6d6890;
+  background: #f1effc;
+}
+
+.agent-risk-badge,
+.agent-state-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 2px 5px;
+  border-radius: 999px;
+  font-size: 6.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.agent-risk-badge.risk-low {
+  color: #37764d;
+  background: #e9f5ed;
+}
+
+.agent-risk-badge.risk-medium {
+  color: #8a651e;
+  background: #fff4da;
+}
+
+.agent-risk-badge.risk-high,
+.agent-risk-badge.risk-critical {
+  color: #9d3e47;
+  background: #fcebed;
+}
+
+.agent-state-badge {
+  color: #656872;
+  background: #f0f1f4;
+  text-transform: none;
+}
+
+.agent-state-badge.state-running,
+.agent-state-badge.state-waiting_permission,
+.agent-state-badge.state-pending {
+  color: #5c55a9;
+  background: #eeecff;
+}
+
+.agent-state-badge.state-succeeded,
+.agent-state-badge.state-allowed {
+  color: #37764d;
+  background: #e9f5ed;
+}
+
+.agent-state-badge.state-failed,
+.agent-state-badge.state-denied {
+  color: #9d3e47;
+  background: #fcebed;
+}
+
+.agent-governance-details {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+}
+
+.agent-governance-details > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 43px minmax(0, 1fr);
+  gap: 7px;
+}
+
+.agent-governance-details dt,
+.agent-governance-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 7.5px;
+  line-height: 1.5;
+}
+
+.agent-governance-details dt {
+  color: #999ba3;
+}
+
+.agent-governance-details dd {
+  color: #5e6068;
+}
+
+.agent-permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.agent-permission-actions .button {
+  min-height: 25px;
+  font-size: 7px;
+}
+
+.agent-deny-button {
+  border-color: #efcfd2;
+  color: #9e3f48;
+  background: #fff4f5;
+}
+
+.agent-governance-result {
+  margin: 8px 0 0;
+  color: #7e8088;
+  font-size: 7.5px;
+}
+
+.agent-tool-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.agent-tool-summary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 0;
+  color: #6f7179;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-tool-summary:hover {
+  background: #fafafd;
+}
+
+.agent-tool-details {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0 10px 10px;
+  border-top: 1px solid #eeeef2;
+  color: #777982;
+  font-size: 7.5px;
+}
+
+.agent-tool-details section > strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #65676f;
+  font-size: 7.5px;
+}
+
+.agent-tool-details pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 7px;
+  overflow: auto;
+  border: 1px solid #e8e8ed;
+  border-radius: 7px;
+  color: #555760;
+  background: #f8f8fa;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 7px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-output-loading,
+.agent-output-error,
+.agent-tool-details > p {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 7.5px;
+}
+
+.agent-output-error {
+  color: #9e3f48;
+}
+
+.agent-grant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left-color: #827ad8;
+}
+
+.agent-grant-list > header,
+.agent-grant-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-grant-list > header span {
+  color: #9698a0;
+  font-size: 7px;
+}
+
+.agent-grant-list > div {
+  padding-top: 6px;
+  border-top: 1px solid #eeeef2;
+}
+
+.agent-grant-list > div > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-grant-list .button {
+  min-height: 24px;
+  font-size: 7px;
+}
+
 .agent-loading,
 .agent-chat-empty {
   display: flex;

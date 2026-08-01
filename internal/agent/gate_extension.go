@@ -15,7 +15,8 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 )
 
-const gateExtensionVersion = "btask-gate/v1"
+const gateExtensionVersion = "btask-gate/v2"
+const permissionProtocolVersion = "BTASK_PERMISSION_V1"
 
 var gateFilenameValue = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
@@ -30,11 +31,13 @@ type gateIdentity struct {
 }
 
 type gateExtensionConfig struct {
-	Version   string `json:"version"`
-	Nonce     string `json:"nonce"`
-	TaskID    string `json:"taskId"`
-	SessionID string `json:"sessionId"`
-	Mode      string `json:"mode"`
+	Version            string `json:"version"`
+	PermissionProtocol string `json:"permissionProtocol"`
+	Nonce              string `json:"nonce"`
+	TaskID             string `json:"taskId"`
+	SessionID          string `json:"sessionId"`
+	Mode               string `json:"mode"`
+	SelfTest           bool   `json:"selfTest,omitempty"`
 }
 
 func installGateExtension(
@@ -48,11 +51,12 @@ func installGateExtension(
 	}
 	nonce := newID("gate")
 	config, err := json.Marshal(gateExtensionConfig{
-		Version:   gateExtensionVersion,
-		Nonce:     nonce,
-		TaskID:    taskID,
-		SessionID: sessionID,
-		Mode:      mode,
+		Version:            gateExtensionVersion,
+		PermissionProtocol: permissionProtocolVersion,
+		Nonce:              nonce,
+		TaskID:             taskID,
+		SessionID:          sessionID,
+		Mode:               mode,
 	})
 	if err != nil {
 		return gateIdentity{}, err
@@ -62,7 +66,7 @@ func installGateExtension(
 		return gateIdentity{}, errors.New("embedded PI gate extension marker is invalid")
 	}
 	content := bytes.Replace(gateExtensionTemplate, marker, config, 1)
-	filename := "btask-gate-v1-" + sessionID + ".ts"
+	filename := "btask-gate-v2-" + sessionID + ".ts"
 	path, err := (taskspace.Service{}).InstallAgentExtension(
 		filepath.Dir(workspaceRoot), taskID, filename, content,
 	)

@@ -630,6 +630,37 @@ func (s *SQLiteStore) ToolCall(taskID string, toolCallID string) (ToolCallRecord
 		  FROM tool_calls WHERE task_id = ? AND id = ?`, taskID, toolCallID))
 }
 
+func (s *SQLiteStore) ToolCalls(taskID string, sessionID string) ([]ToolCallRecord, error) {
+	if !taskIDPattern.MatchString(taskID) || strings.TrimSpace(sessionID) == "" {
+		return nil, errors.New("task and session are required to list tool calls")
+	}
+	database, unlock, err := s.repositoryRead()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	rows, err := database.Query(`
+		SELECT id, task_id, session_id, run_id, external_tool_call_id,
+		       tool_name, capability, target, risk_level, state, args_json,
+		       args_ref, output_summary, output_ref, is_error, started_at,
+		       finished_at
+		  FROM tool_calls WHERE task_id = ? AND session_id = ?
+		 ORDER BY started_at, id`, taskID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]ToolCallRecord, 0)
+	for rows.Next() {
+		record, err := scanToolCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
 // InterruptActiveAgentActivity repairs process-owned states after an app
 // restart without deleting completed messages or PI session files.
 func (s *SQLiteStore) InterruptActiveAgentActivity(

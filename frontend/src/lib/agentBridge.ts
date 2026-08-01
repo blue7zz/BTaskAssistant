@@ -2,6 +2,8 @@ import type {
   AbortAgentRunRequest,
   AgentEvent,
   AgentMessage,
+  AgentPermissionGrant,
+  AgentPermissionRequest,
   AgentPromptRequest,
   AgentResource,
   AgentResourcePreview,
@@ -9,9 +11,14 @@ import type {
   AgentResourceSearchRequest,
   AgentRun,
   AgentSession,
+  AgentToolCall,
+  AgentToolOutput,
+  AgentToolOutputRequest,
   CreateAgentSessionRequest,
   ImportAgentAttachmentsRequest,
+  ResolveAgentPermissionRequest,
   RemoveAgentReferenceRequest,
+  RevokeAgentPermissionGrantRequest,
 } from "../domain/agent";
 
 const AGENT_EVENT_NAME = "agent:event";
@@ -23,6 +30,22 @@ interface NativeAgentApp {
     sessionId: string,
   ): Promise<AgentMessage[]>;
   ListExecutionRuns(taskId: string, sessionId: string): Promise<AgentRun[]>;
+  ListAgentToolCalls(taskId: string, sessionId: string): Promise<AgentToolCall[]>;
+  ListAgentPermissionRequests(
+    taskId: string,
+    sessionId: string,
+  ): Promise<AgentPermissionRequest[]>;
+  ListAgentPermissionGrants(
+    taskId: string,
+    sessionId: string,
+  ): Promise<AgentPermissionGrant[]>;
+  ResolveAgentPermission(
+    request: ResolveAgentPermissionRequest,
+  ): Promise<AgentPermissionRequest>;
+  RevokeAgentPermissionGrant(
+    request: RevokeAgentPermissionGrantRequest,
+  ): Promise<AgentPermissionGrant>;
+  ReadAgentToolOutput(request: AgentToolOutputRequest): Promise<AgentToolOutput>;
   CreateAgentSession(
     request: CreateAgentSessionRequest,
   ): Promise<AgentSession>;
@@ -41,6 +64,22 @@ export interface AgentClient {
   listSessions(taskId: string): Promise<AgentSession[]>;
   listMessages(taskId: string, sessionId: string): Promise<AgentMessage[]>;
   listRuns(taskId: string, sessionId: string): Promise<AgentRun[]>;
+  listToolCalls?(taskId: string, sessionId: string): Promise<AgentToolCall[]>;
+  listPermissionRequests?(
+    taskId: string,
+    sessionId: string,
+  ): Promise<AgentPermissionRequest[]>;
+  listPermissionGrants?(
+    taskId: string,
+    sessionId: string,
+  ): Promise<AgentPermissionGrant[]>;
+  resolvePermission?(
+    request: ResolveAgentPermissionRequest,
+  ): Promise<AgentPermissionRequest>;
+  revokePermissionGrant?(
+    request: RevokeAgentPermissionGrantRequest,
+  ): Promise<AgentPermissionGrant>;
+  readToolOutput?(request: AgentToolOutputRequest): Promise<AgentToolOutput>;
   createSession(request: CreateAgentSessionRequest): Promise<AgentSession>;
   sendPrompt(request: AgentPromptRequest): Promise<AgentRun>;
   abortRun(request: AbortAgentRunRequest): Promise<void>;
@@ -65,6 +104,12 @@ function nativeAgentApp(): NativeAgentApp {
     typeof app?.ListAgentSessions !== "function" ||
     typeof app.ListAgentMessages !== "function" ||
     typeof app.ListExecutionRuns !== "function" ||
+    typeof app.ListAgentToolCalls !== "function" ||
+    typeof app.ListAgentPermissionRequests !== "function" ||
+    typeof app.ListAgentPermissionGrants !== "function" ||
+    typeof app.ResolveAgentPermission !== "function" ||
+    typeof app.RevokeAgentPermissionGrant !== "function" ||
+    typeof app.ReadAgentToolOutput !== "function" ||
     typeof app.CreateAgentSession !== "function" ||
     typeof app.SendAgentPrompt !== "function" ||
     typeof app.AbortAgentRun !== "function" ||
@@ -336,6 +381,27 @@ const browserAgentClient: AgentClient = {
     return (browserRunHistory.get(messageKey(taskId, sessionId)) ?? []).map(
       (run) => ({ ...run }),
     );
+  },
+  async listToolCalls(taskId, sessionId) {
+    browserSession(taskId, sessionId);
+    return [];
+  },
+  async listPermissionRequests(taskId, sessionId) {
+    browserSession(taskId, sessionId);
+    return [];
+  },
+  async listPermissionGrants(taskId, sessionId) {
+    browserSession(taskId, sessionId);
+    return [];
+  },
+  async resolvePermission() {
+    throw new Error("浏览器模拟没有待审批的权限请求");
+  },
+  async revokePermissionGrant() {
+    throw new Error("浏览器模拟没有可撤销的权限授权");
+  },
+  async readToolOutput() {
+    throw new Error("浏览器模拟没有可懒加载的工具输出");
   },
   async listResources(request) {
     const query = request.query.trim().toLowerCase();
@@ -625,6 +691,17 @@ const nativeAgentClient: AgentClient = {
     nativeAgentApp().ListAgentMessages(taskId, sessionId),
   listRuns: (taskId, sessionId) =>
     nativeAgentApp().ListExecutionRuns(taskId, sessionId),
+  listToolCalls: (taskId, sessionId) =>
+    nativeAgentApp().ListAgentToolCalls(taskId, sessionId),
+  listPermissionRequests: (taskId, sessionId) =>
+    nativeAgentApp().ListAgentPermissionRequests(taskId, sessionId),
+  listPermissionGrants: (taskId, sessionId) =>
+    nativeAgentApp().ListAgentPermissionGrants(taskId, sessionId),
+  resolvePermission: (request) =>
+    nativeAgentApp().ResolveAgentPermission(request),
+  revokePermissionGrant: (request) =>
+    nativeAgentApp().RevokeAgentPermissionGrant(request),
+  readToolOutput: (request) => nativeAgentApp().ReadAgentToolOutput(request),
   createSession: (request) => nativeAgentApp().CreateAgentSession(request),
   sendPrompt: (request) => nativeAgentApp().SendAgentPrompt(request),
   abortRun: (request) => nativeAgentApp().AbortAgentRun(request),
@@ -659,6 +736,31 @@ export const agentClient: AgentClient = {
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listRuns(
       taskId,
       sessionId,
+    ),
+  listToolCalls: (taskId, sessionId) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listToolCalls!(
+      taskId,
+      sessionId,
+    ),
+  listPermissionRequests: (taskId, sessionId) =>
+    (nativeAppPresent()
+      ? nativeAgentClient
+      : browserAgentClient).listPermissionRequests!(taskId, sessionId),
+  listPermissionGrants: (taskId, sessionId) =>
+    (nativeAppPresent()
+      ? nativeAgentClient
+      : browserAgentClient).listPermissionGrants!(taskId, sessionId),
+  resolvePermission: (request) =>
+    (nativeAppPresent()
+      ? nativeAgentClient
+      : browserAgentClient).resolvePermission!(request),
+  revokePermissionGrant: (request) =>
+    (nativeAppPresent()
+      ? nativeAgentClient
+      : browserAgentClient).revokePermissionGrant!(request),
+  readToolOutput: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).readToolOutput!(
+      request,
     ),
   createSession: (request) =>
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).createSession(

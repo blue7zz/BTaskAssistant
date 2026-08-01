@@ -11,7 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	permissionpolicy "github.com/blue7zz/BTaskAssistant/internal/permissions"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
 
@@ -247,6 +249,16 @@ func TestServiceTaskIsolationAndAbnormalExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	alphaTaskID := "task_alpha"
+	alphaSessionID := alpha.ID
+	if err := store.UpsertPermissionGrant(storage.PermissionGrantRecord{
+		ID: "grant-crash-session", TaskID: &alphaTaskID, SessionID: &alphaSessionID,
+		Capability: "task.resource.read", TargetPattern: "*", Scope: "session",
+		Decision: "allow", RiskCeiling: "medium",
+		CreatedAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), CreatedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	alphaRun, err := service.SendPrompt(context.Background(), PromptRequest{
 		TaskID: "task_alpha", SessionID: alpha.ID, Message: "hold",
 	})
@@ -262,6 +274,12 @@ func TestServiceTaskIsolationAndAbnormalExit(t *testing.T) {
 	_, err = store.AgentSession("task_alpha", alpha.ID)
 	if err != nil || storedAlpha.State != "failed" {
 		t.Fatalf("unexpected crashed session %#v, %v", storedAlpha, err)
+	}
+	grants, err := store.ActivePermissionGrants(
+		"task_alpha", alpha.ID, time.Now().Add(time.Second).UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil || len(grants) != 0 {
+		t.Fatalf("session grant survived PI crash: %#v, %v", grants, err)
 	}
 	storedBeta, err := store.AgentSession("task_beta", beta.ID)
 	if err != nil || storedBeta.State != "idle" {
@@ -411,24 +429,48 @@ func TestPlanGateWritesArtifactsAndRequirementProposals(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := factory.runtime(0)
+	toolArgs := json.RawMessage(`{"kind":"proposal","name":"scope.md","content":"# 范围修改建议\n"}`)
+	var emittedArgs map[string]any
+	if err := json.Unmarshal(toolArgs, &emittedArgs); err != nil {
+		t.Fatal(err)
+	}
 	runtime.emit(map[string]any{
 		"type": "tool_execution_start", "toolCallId": "artifact-call",
 		"toolName": "btask_write_artifact",
-		"args":     map[string]any{"kind": "proposal", "name": "scope.md"},
+		"args":     emittedArgs,
 	})
 	options := factory.processOptions(0)
+	classification := permissionpolicy.ClassifyTool(permissionpolicy.ToolInput{
+		TaskID: "task_gate_artifact", ToolName: "btask_write_artifact", Args: toolArgs,
+	})
+	envelope, _ := json.Marshal(permissionEnvelope{
+		Protocol: permissionProtocolVersion, Version: options.Gate.Version, Nonce: options.Gate.Nonce,
+		TaskID: "task_gate_artifact", SessionID: session.ID, RunID: run.ID, Mode: "plan",
+		ToolCallID: "artifact-call", ToolName: "btask_write_artifact",
+		Capability: classification.Capability, Subject: classification.Subject,
+		Target: classification.Target, NormalizedTarget: classification.NormalizedTarget,
+		RiskLevel: string(classification.RiskLevel), ArgsDigest: classification.ArgsDigest,
+	})
+	runtime.emit(map[string]any{
+		"type": "extension_ui_request", "id": "permission-request-1",
+		"method": "confirm", "title": "btask-permission", "message": string(envelope),
+	})
+	permissionResponse := runtime.waitNotification(t)
+	if confirmed, _ := permissionResponse["confirmed"].(bool); !confirmed {
+		t.Fatalf("artifact permission was not allowed: %#v", permissionResponse)
+	}
 	request := gateBridgeRequest{
 		Version: options.Gate.Version, Nonce: options.Gate.Nonce,
-		TaskID: "task_gate_artifact", SessionID: session.ID, Mode: "plan",
+		TaskID: "task_gate_artifact", SessionID: session.ID, RunID: run.ID, Mode: "plan",
 		ToolCallID: "artifact-call", Operation: "write_artifact",
-		Args: json.RawMessage(`{"kind":"proposal","name":"scope.md","content":"# 范围修改建议\n"}`),
+		Args: toolArgs,
 	}
 	placeholder, _ := json.Marshal(request)
 	runtime.emit(map[string]any{
 		"type": "extension_ui_request", "id": "gate-request-1",
 		"method": "input", "title": "btask-gate", "placeholder": string(placeholder),
 	})
-	response := runtime.waitNotification(t)
+	response := runtime.waitNotificationID(t, "gate-request-1")
 	value, _ := response["value"].(string)
 	var bridgeResponse gateBridgeResponse
 	if err := json.Unmarshal([]byte(value), &bridgeResponse); err != nil || !bridgeResponse.OK {
@@ -462,6 +504,301 @@ func TestPlanGateWritesArtifactsAndRequirementProposals(t *testing.T) {
 	})
 	runtime.emit(map[string]any{"type": "agent_settled"})
 	waitForRunState(t, store, "task_gate_artifact", run.ID, "succeeded")
+}
+
+func TestPermissionProtocolAllowDenyTimeoutCancelAndLargeOutput(t *testing.T) {
+	t.Run("allow once and reconcile large output", func(t *testing.T) {
+		service, store, factory := newPermissionTestService(t, "task_permission_allow", time.Second)
+		session, run, runtime, request := startPermissionProbe(t, service, store, factory, "task_permission_allow")
+		resolved, err := service.ResolvePermission(context.Background(), ResolvePermissionRequest{
+			TaskID: "task_permission_allow", SessionID: session.ID,
+			RequestID: request.ID, Decision: "allow", Scope: "once",
+		})
+		if err != nil || resolved.State != "allowed" || resolved.DecisionScope != "once" {
+			t.Fatalf("allow once failed: %#v, %v", resolved, err)
+		}
+		if _, err := service.ResolvePermission(context.Background(), ResolvePermissionRequest{
+			TaskID: "task_permission_allow", SessionID: session.ID,
+			RequestID: request.ID, Decision: "allow", Scope: "once",
+		}); err == nil {
+			t.Fatal("repeated permission submission was accepted")
+		}
+		response := runtime.waitNotificationID(t, "probe-confirm")
+		if confirmed, _ := response["confirmed"].(bool); !confirmed {
+			t.Fatalf("allow did not resume PI confirm: %#v", response)
+		}
+		emitProbeBridge(t, runtime, factory.processOptions(0), session.ID, run.ID)
+		bridgeResponse := runtime.waitNotificationID(t, "probe-bridge")
+		if value, _ := bridgeResponse["value"].(string); !strings.Contains(value, `"approved":true`) {
+			t.Fatalf("approved probe did not execute: %#v", bridgeResponse)
+		}
+		large := strings.Repeat("output-", 12000)
+		runtime.emit(map[string]any{
+			"type": "tool_execution_update", "toolCallId": "probe-call",
+			"toolName": "btask_permission_probe", "partialResult": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": large}},
+			},
+		})
+		runtime.emit(map[string]any{
+			"type": "tool_execution_end", "toolCallId": "probe-call",
+			"toolName": "btask_permission_probe", "result": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": large}},
+			},
+		})
+		runtime.emit(map[string]any{"type": "agent_settled"})
+		waitForRunState(t, store, "task_permission_allow", run.ID, "succeeded")
+		tools, err := service.ToolCalls("task_permission_allow", session.ID)
+		if err != nil || len(tools) != 1 || tools[0].State != "succeeded" || tools[0].OutputRef == nil {
+			t.Fatalf("tool receipt/output was not reconciled: %#v, %v", tools, err)
+		}
+		output, err := service.ReadToolOutput(ToolOutputRequest{
+			TaskID: "task_permission_allow", ToolCallID: tools[0].ID,
+		})
+		if err != nil || !strings.HasPrefix(output.Content, "output-output-") || output.ByteSize <= 32*1024 {
+			t.Fatalf("large output was not loaded lazily: %#v, %v", output, err)
+		}
+	})
+
+	t.Run("deny prevents bridge execution", func(t *testing.T) {
+		service, store, factory := newPermissionTestService(t, "task_permission_deny", time.Second)
+		session, run, runtime, request := startPermissionProbe(t, service, store, factory, "task_permission_deny")
+		resolved, err := service.ResolvePermission(context.Background(), ResolvePermissionRequest{
+			TaskID: "task_permission_deny", SessionID: session.ID,
+			RequestID: request.ID, Decision: "deny",
+		})
+		if err != nil || resolved.State != "denied" {
+			t.Fatalf("deny failed: %#v, %v", resolved, err)
+		}
+		response := runtime.waitNotificationID(t, "probe-confirm")
+		if confirmed, _ := response["confirmed"].(bool); confirmed || response["cancelled"] == true {
+			t.Fatalf("deny returned the wrong PI response: %#v", response)
+		}
+		runtime.emit(map[string]any{
+			"type": "tool_execution_end", "toolCallId": "probe-call",
+			"toolName": "btask_permission_probe", "isError": true,
+			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "blocked"}}},
+		})
+		runtime.emit(map[string]any{"type": "agent_settled"})
+		waitForRunState(t, store, "task_permission_deny", run.ID, "succeeded")
+		tools, _ := service.ToolCalls("task_permission_deny", session.ID)
+		if len(tools) != 1 || tools[0].State != "denied" {
+			t.Fatalf("denied tool was treated as executed: %#v", tools)
+		}
+	})
+
+	t.Run("timeout expires without grant", func(t *testing.T) {
+		service, store, factory := newPermissionTestService(t, "task_permission_timeout", 30*time.Millisecond)
+		session, _, runtime, request := startPermissionProbe(t, service, store, factory, "task_permission_timeout")
+		response := runtime.waitNotificationID(t, "probe-confirm")
+		if response["cancelled"] != true {
+			t.Fatalf("timeout did not cancel PI confirm: %#v", response)
+		}
+		stored, err := store.PermissionRequest("task_permission_timeout", request.ID)
+		if err != nil || stored.State != "expired" || stored.DecisionScope != nil {
+			t.Fatalf("timeout permission state is wrong: %#v, %v", stored, err)
+		}
+		grants, err := service.PermissionGrants("task_permission_timeout", session.ID)
+		if err != nil || len(grants) != 0 {
+			t.Fatalf("timeout created a grant: %#v, %v", grants, err)
+		}
+	})
+
+	t.Run("abort cancels pending permission", func(t *testing.T) {
+		service, store, factory := newPermissionTestService(t, "task_permission_cancel", time.Second)
+		session, run, runtime, request := startPermissionProbe(t, service, store, factory, "task_permission_cancel")
+		if err := service.Abort(context.Background(), AbortRequest{
+			TaskID: "task_permission_cancel", SessionID: session.ID, RunID: run.ID,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		response := runtime.waitNotificationID(t, "probe-confirm")
+		if response["cancelled"] != true {
+			t.Fatalf("abort did not cancel PI confirm: %#v", response)
+		}
+		stored, err := store.PermissionRequest("task_permission_cancel", request.ID)
+		if err != nil || stored.State != "cancelled" {
+			t.Fatalf("abort permission state is wrong: %#v, %v", stored, err)
+		}
+	})
+}
+
+func TestPermissionProtocolBadNonceExtensionErrorAndMissingReceiptFailClosed(t *testing.T) {
+	service, store, factory := newPermissionTestService(t, "task_permission_fail_closed", time.Second)
+	session, run, runtime, _ := startPermissionProbe(t, service, store, factory, "task_permission_fail_closed")
+	badEnvelope := permissionEnvelope{
+		Protocol: permissionProtocolVersion, Version: gateExtensionVersion, Nonce: "bad-nonce",
+		TaskID: "task_permission_fail_closed", SessionID: session.ID, RunID: run.ID,
+		Mode: "agent", ToolCallID: "probe-call", ToolName: "btask_permission_probe",
+	}
+	encoded, _ := json.Marshal(badEnvelope)
+	runtime.emit(map[string]any{
+		"type": "extension_ui_request", "id": "bad-confirm", "method": "confirm",
+		"title": "btask-permission", "message": string(encoded),
+	})
+	response := runtime.waitNotificationID(t, "bad-confirm")
+	if response["cancelled"] != true {
+		t.Fatalf("bad nonce was not rejected: %#v", response)
+	}
+	waitForRunState(t, store, "task_permission_fail_closed", run.ID, "failed")
+
+	service2, store2, factory2 := newPermissionTestService(t, "task_permission_extension_error", time.Second)
+	session2, run2, runtime2, _ := startPermissionProbe(t, service2, store2, factory2, "task_permission_extension_error")
+	runtime2.emit(map[string]any{"type": "extension_error", "error": "gate crashed"})
+	waitForRunState(t, store2, "task_permission_extension_error", run2.ID, "failed")
+	if session2.ID == "" {
+		t.Fatal("unreachable")
+	}
+
+	service3, store3, factory3 := newPermissionTestService(t, "task_permission_receipt", time.Second)
+	session3, run3, runtime3, _ := startPermissionProbe(t, service3, store3, factory3, "task_permission_receipt")
+	runtime3.emit(map[string]any{
+		"type": "tool_execution_end", "toolCallId": "probe-call",
+		"toolName": "btask_permission_probe", "result": map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "bypassed"}},
+		},
+	})
+	runtime3.emit(map[string]any{"type": "agent_settled"})
+	waitForRunState(t, store3, "task_permission_receipt", run3.ID, "failed")
+	tools, _ := service3.ToolCalls("task_permission_receipt", session3.ID)
+	if len(tools) != 1 || tools[0].State != "failed" {
+		t.Fatalf("missing receipt was not treated as security failure: %#v", tools)
+	}
+}
+
+func TestPermissionAuditRedactsSecrets(t *testing.T) {
+	for limit := 0; limit < 8; limit++ {
+		bounded := boundedText("界界界", limit)
+		if len(bounded) > limit || !utf8.ValidString(bounded) {
+			t.Fatalf("bounded UTF-8 text exceeded %d bytes: %q", limit, bounded)
+		}
+	}
+	redacted := string(redactToolArgs(json.RawMessage(`{"token":"top-secret","api-key":"key-value","nested":{"password":"hunter2"},"safe":"ok"}`)))
+	if strings.Contains(redacted, "top-secret") || strings.Contains(redacted, "hunter2") ||
+		strings.Contains(redacted, "key-value") || !strings.Contains(redacted, "[REDACTED]") ||
+		!strings.Contains(redacted, `"safe":"ok"`) {
+		t.Fatalf("structured secrets were not redacted: %s", redacted)
+	}
+	text := redactSecrets("Authorization: Bearer live-token\npassword=hunter2\nsafe=ok")
+	if strings.Contains(text, "live-token") || strings.Contains(text, "hunter2") || !strings.Contains(text, "safe=ok") {
+		t.Fatalf("text secrets were not redacted: %s", text)
+	}
+	audit := string(redactAuditJSON(json.RawMessage(`{"type":"tool_execution_start","args":{"pat":"github-pat","safe":"ok"},"result":"Authorization: Bearer event-token"}`)))
+	if strings.Contains(audit, "github-pat") || strings.Contains(audit, "event-token") ||
+		!strings.Contains(audit, `"safe":"ok"`) {
+		t.Fatalf("raw audit event was not redacted: %s", audit)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "runs", "run-utf8"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := writeToolAuxFile(
+		root, "run-utf8", "tool-utf8", "output.txt", []byte("1234界"), 5,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ref)))
+	if err != nil || string(written) != "1234" || !utf8.Valid(written) {
+		t.Fatalf("UTF-8 output truncation is invalid: %q, %v", written, err)
+	}
+}
+
+func newPermissionTestService(
+	t *testing.T,
+	taskID string,
+	permissionTimeout time.Duration,
+) (*Service, *storage.SQLiteStore, *fakeRuntimeFactory) {
+	t.Helper()
+	store := newServiceTestStore(t, taskID, "权限任务")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+		PermissionTimeout: permissionTimeout,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	return service, store, factory
+}
+
+func startPermissionProbe(
+	t *testing.T,
+	service *Service,
+	store *storage.SQLiteStore,
+	factory *fakeRuntimeFactory,
+	taskID string,
+) (storage.AgentSessionRecord, storage.ExecutionRunRecord, *fakeRuntime, PermissionRequest) {
+	t.Helper()
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: taskID, Mode: "agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: taskID, SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := factory.runtime(0)
+	args := json.RawMessage(`{"target":"rpc-confirm"}`)
+	runtime.emit(map[string]any{
+		"type": "tool_execution_start", "toolCallId": "probe-call",
+		"toolName": "btask_permission_probe", "args": map[string]any{"target": "rpc-confirm"},
+	})
+	classification := permissionpolicy.ClassifyTool(permissionpolicy.ToolInput{
+		TaskID: taskID, ToolName: "btask_permission_probe", Args: args,
+	})
+	options := factory.processOptions(0)
+	envelope, _ := json.Marshal(permissionEnvelope{
+		Protocol: permissionProtocolVersion, Version: options.Gate.Version, Nonce: options.Gate.Nonce,
+		TaskID: taskID, SessionID: session.ID, RunID: run.ID, Mode: "agent",
+		ToolCallID: "probe-call", ToolName: "btask_permission_probe",
+		Capability: classification.Capability, Subject: classification.Subject,
+		Target: classification.Target, NormalizedTarget: classification.NormalizedTarget,
+		RiskLevel: string(classification.RiskLevel), ArgsDigest: classification.ArgsDigest,
+	})
+	runtime.emit(map[string]any{
+		"type": "extension_ui_request", "id": "probe-confirm", "method": "confirm",
+		"title": "btask-permission", "message": string(envelope),
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		requests, requestErr := service.PermissionRequests(taskID, session.ID)
+		if requestErr == nil && len(requests) == 1 && requests[0].State == "pending" {
+			if len(requests[0].AllowedScopes) != 1 || requests[0].AllowedScopes[0] != "once" {
+				t.Fatalf("high-risk probe exposed broad scopes: %#v", requests[0])
+			}
+			return session, run, runtime, requests[0]
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	storedRun, _ := store.ExecutionRun(taskID, run.ID)
+	t.Fatalf("permission request did not become pending; run %#v", storedRun)
+	return storage.AgentSessionRecord{}, storage.ExecutionRunRecord{}, nil, PermissionRequest{}
+}
+
+func emitProbeBridge(
+	t *testing.T,
+	runtime *fakeRuntime,
+	options ProcessOptions,
+	sessionID string,
+	runID string,
+) {
+	t.Helper()
+	request, _ := json.Marshal(gateBridgeRequest{
+		Version: options.Gate.Version, Nonce: options.Gate.Nonce,
+		TaskID: "task_permission_allow", SessionID: sessionID, RunID: runID, Mode: "agent",
+		ToolCallID: "probe-call", Operation: "permission_probe",
+		Args: json.RawMessage(`{"target":"rpc-confirm"}`),
+	})
+	runtime.emit(map[string]any{
+		"type": "extension_ui_request", "id": "probe-bridge", "method": "input",
+		"title": "btask-gate", "placeholder": string(request),
+	})
 }
 
 func waitForSessionState(
@@ -845,6 +1182,24 @@ func (runtime *fakeRuntime) waitNotification(t *testing.T) map[string]any {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("timed out waiting for PI extension bridge response")
+	return nil
+}
+
+func (runtime *fakeRuntime) waitNotificationID(t *testing.T, requestID string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runtime.mutex.Lock()
+		for _, value := range runtime.notifications {
+			if value["id"] == requestID {
+				runtime.mutex.Unlock()
+				return value
+			}
+		}
+		runtime.mutex.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for PI extension response %s", requestID)
 	return nil
 }
 

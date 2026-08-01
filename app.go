@@ -230,6 +230,81 @@ func (a *App) ListExecutionRuns(
 	return a.agentService.Runs(taskID, sessionID)
 }
 
+func (a *App) ListAgentToolCalls(
+	taskID string,
+	sessionID string,
+) ([]storage.ToolCallRecord, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.ToolCalls(taskID, sessionID)
+}
+
+func (a *App) ListAgentPermissionRequests(
+	taskID string,
+	sessionID string,
+) ([]agent.PermissionRequest, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.PermissionRequests(taskID, sessionID)
+}
+
+func (a *App) ListAgentPermissionGrants(
+	taskID string,
+	sessionID string,
+) ([]storage.PermissionGrantRecord, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.PermissionGrants(taskID, sessionID)
+}
+
+func (a *App) ResolveAgentPermission(
+	request agent.ResolvePermissionRequest,
+) (agent.PermissionRequest, error) {
+	if a.startupErr != nil {
+		return agent.PermissionRequest{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return agent.PermissionRequest{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.ResolvePermission(a.appContext(), request)
+}
+
+func (a *App) RevokeAgentPermissionGrant(
+	request agent.RevokePermissionGrantRequest,
+) (storage.PermissionGrantRecord, error) {
+	if a.startupErr != nil {
+		return storage.PermissionGrantRecord{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return storage.PermissionGrantRecord{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.RevokePermissionGrant(request)
+}
+
+func (a *App) ReadAgentToolOutput(
+	request agent.ToolOutputRequest,
+) (agent.ToolOutput, error) {
+	if a.startupErr != nil {
+		return agent.ToolOutput{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return agent.ToolOutput{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.ReadToolOutput(request)
+}
+
 func (a *App) ListAgentResources(
 	request agent.ResourceSearchRequest,
 ) ([]agent.ResourceDescriptor, error) {

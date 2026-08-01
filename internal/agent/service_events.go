@@ -7,12 +7,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	permissionpolicy "github.com/blue7zz/BTaskAssistant/internal/permissions"
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
+
+const maxToolOutputFileBytes = 4 * 1024 * 1024
+
+var secretTextPattern = regexp.MustCompile(`(?i)(token|pat|password|secret|api[_-]?key|authorization|cookie|credential|private[_-]?key)(\s*[:=]\s*)([^\s,;]+)`)
+var secretHeaderPattern = regexp.MustCompile(`(?im)(authorization|cookie)(\s*:\s*)[^\r\n]+`)
 
 func (service *Service) handleRawEventLocked(
 	managed *managedSession,
@@ -20,7 +27,8 @@ func (service *Service) handleRawEventLocked(
 	workspaceRoot string,
 ) {
 	if managed.run != nil {
-		_ = appendRunFile(workspaceRoot, managed.run.record.StdoutPath, append(raw.JSON, '\n'))
+		auditJSON := redactAuditJSON(raw.JSON)
+		_ = appendRunFile(workspaceRoot, managed.run.record.StdoutPath, append(auditJSON, '\n'))
 	}
 	switch raw.Type {
 	case "agent_start":
@@ -101,9 +109,6 @@ func (service *Service) handleRawEventLocked(
 	case "bash_execution_update":
 		service.rejectUnexpectedNoToolsEventLocked(managed, raw.Type)
 	case "extension_error":
-		if managed.run == nil {
-			return
-		}
 		message := "PI Extension 发生错误"
 		var event struct {
 			Error string `json:"error"`
@@ -111,10 +116,7 @@ func (service *Service) handleRawEventLocked(
 		if json.Unmarshal(raw.JSON, &event) == nil && strings.TrimSpace(event.Error) != "" {
 			message = sanitizeError(event.Error, workspaceRoot)
 		}
-		managed.run.errorMessage = message
-		_ = service.emitLocked(managed, "error", managed.run.record.ID, "", errorPayload(
-			"unknown", message, false,
-		))
+		service.failGateProtocolLocked(managed, message)
 	}
 }
 
@@ -280,11 +282,25 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 	}
 	now := service.timestamp()
 	policy, allowed := gateToolPolicies[name]
+	classification := permissionpolicy.ClassifyTool(permissionpolicy.ToolInput{
+		TaskID: managed.record.TaskID, ToolName: name, Args: args,
+	})
 	record := storage.ToolCallRecord{
 		ID: newID("tool"), TaskID: managed.record.TaskID, SessionID: managed.record.ID,
 		RunID: managed.run.record.ID, ExternalToolCallID: externalID, ToolName: name,
-		Capability: policy.capability, RiskLevel: policy.riskLevel, State: "running",
-		ArgsJSON: stableArgsPreview(args), StartedAt: &now,
+		Capability: classification.Capability, RiskLevel: string(classification.RiskLevel), State: "running",
+		ArgsJSON: stableArgsPreview(redactToolArgs(args)), StartedAt: &now,
+	}
+	if classification.Target != "" {
+		record.Target = &classification.Target
+	}
+	if len(args) > 32*1024 {
+		if ref, err := writeToolAuxFile(
+			managed.workspaceRoot, managed.run.record.ID, record.ID, "args.json",
+			redactToolArgs(args), maxToolOutputFileBytes,
+		); err == nil {
+			record.ArgsRef = &ref
+		}
 	}
 	if !allowed || (name == "btask_write_artifact" && managed.record.Mode == "ask") {
 		record.Capability = "unexpected.tool"
@@ -295,10 +311,11 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 		return
 	}
 	managed.run.tools[externalID] = record
+	managed.run.toolArgs[externalID] = append(json.RawMessage(nil), args...)
 	_ = service.emitLocked(managed, "tool.start", managed.run.record.ID, record.ID, map[string]any{
 		"toolName": name, "capability": record.Capability, "subject": policy.subject,
 		"readOnly": policy.readOnly, "riskLevel": record.RiskLevel,
-		"argsPreview": stringValue(record.ArgsJSON),
+		"argsPreview": stringValue(record.ArgsJSON), "argsRef": stringValue(record.ArgsRef),
 	})
 	if allowed && !(name == "btask_write_artifact" && managed.record.Mode == "ask") {
 		return
@@ -331,6 +348,10 @@ var gateToolPolicies = map[string]gateToolPolicy{
 		capability: "task.artifact.write", riskLevel: "medium",
 		subject: "写入当前任务 artifacts", readOnly: false,
 	},
+	"btask_permission_probe": {
+		capability: "diagnostic.permission.probe", riskLevel: "high",
+		subject: "验证 BTask 权限审批链路", readOnly: true,
+	},
 }
 
 func (service *Service) handleToolUpdateLocked(managed *managedSession, raw json.RawMessage) {
@@ -342,10 +363,24 @@ func (service *Service) handleToolUpdateLocked(managed *managedSession, raw json
 	if !exists {
 		return
 	}
+	output = redactSecrets(output)
 	preview := boundedText(output, 32*1024)
-	_ = service.emitLocked(managed, "tool.update", managed.run.record.ID, record.ID, map[string]any{
+	payload := map[string]any{
 		"outputPreview": preview, "accumulated": true, "truncated": len(output) > len(preview),
-	})
+	}
+	if len(output) > 32*1024 {
+		if ref, err := writeToolAuxFile(
+			managed.workspaceRoot, managed.run.record.ID, record.ID, "output.txt",
+			[]byte(output), maxToolOutputFileBytes,
+		); err == nil {
+			record.OutputRef = &ref
+			payload["outputRef"] = ref
+		}
+	}
+	record.OutputSummary = &preview
+	_ = service.store.UpsertToolCall(record)
+	managed.run.tools[externalID] = record
+	_ = service.emitLocked(managed, "tool.update", managed.run.record.ID, record.ID, payload)
 }
 
 func (service *Service) handleToolEndLocked(managed *managedSession, raw json.RawMessage) {
@@ -358,19 +393,63 @@ func (service *Service) handleToolEndLocked(managed *managedSession, raw json.Ra
 		return
 	}
 	now := service.timestamp()
+	receipt, hasReceipt := managed.run.receipts[externalID]
 	record.State = "succeeded"
-	if isError {
+	if !hasReceipt {
+		isError = true
+		record.State = "failed"
+		message := "工具结束时没有可对账的 BTask 权限回执"
+		managed.run.errorMessage = message
+		_ = service.emitLocked(managed, "error", managed.run.record.ID, record.ID, errorPayload(
+			"protocol_error", message, false,
+		))
+	} else if receipt.Decision != "allow" {
+		isError = true
+		if receipt.Decision == "cancelled" || receipt.Decision == "expired" {
+			record.State = "cancelled"
+		} else {
+			record.State = "denied"
+		}
+	} else if !receipt.OperationStarted {
+		isError = true
+		record.State = "failed"
+		message := "工具未通过 BTask 执行桥却返回了结果"
+		managed.run.errorMessage = message
+		_ = service.emitLocked(managed, "error", managed.run.record.ID, record.ID, errorPayload(
+			"protocol_error", message, false,
+		))
+	} else if isError {
 		record.State = "failed"
 	}
 	record.IsError = isError
+	output = redactSecrets(output)
 	preview := boundedText(output, 32*1024)
 	record.OutputSummary = &preview
+	if len(output) > 32*1024 {
+		if ref, err := writeToolAuxFile(
+			managed.workspaceRoot, managed.run.record.ID, record.ID, "output.txt",
+			[]byte(output), maxToolOutputFileBytes,
+		); err == nil {
+			record.OutputRef = &ref
+		}
+	}
 	record.FinishedAt = &now
 	_ = service.store.UpsertToolCall(record)
 	managed.run.tools[externalID] = record
-	_ = service.emitLocked(managed, "tool.end", managed.run.record.ID, record.ID, map[string]any{
+	payload := map[string]any{
 		"state": record.State, "outputSummary": preview,
-	})
+		"outputRef": stringValue(record.OutputRef),
+	}
+	if isError {
+		payload["error"] = errorPayload("tool_error", preview, false)
+	}
+	_ = service.emitLocked(managed, "tool.end", managed.run.record.ID, record.ID, payload)
+	if hasReceipt {
+		_ = service.emitLocked(managed, "permission.reconciled", managed.run.record.ID, record.ID, map[string]any{
+			"requestId": receipt.RequestID, "state": record.State,
+			"operationStarted": receipt.OperationStarted,
+		})
+	}
 }
 
 func (service *Service) emitRunEventLocked(
@@ -452,6 +531,7 @@ func (service *Service) finishRunLocked(
 	if managed.run == nil {
 		return
 	}
+	service.cancelPendingPermissionsLocked(managed, "运行结束，待处理权限请求已取消")
 	run := managed.run
 	messageStatus := "complete"
 	if state == "cancelled" {
@@ -675,6 +755,144 @@ func writeRunFile(root string, logicalPath string, content []byte) error {
 		return err
 	}
 	return file.Sync()
+}
+
+func writeToolAuxFile(
+	root string,
+	runID string,
+	toolID string,
+	suffix string,
+	content []byte,
+	limit int,
+) (string, error) {
+	if root == "" || runID == "" || toolID == "" ||
+		strings.ContainsAny(runID+toolID+suffix, "/\\\x00") {
+		return "", errors.New("PI tool output identity is unsafe")
+	}
+	if len(content) > limit {
+		end := limit
+		for end > 0 && end < len(content) && !utf8.RuneStart(content[end]) {
+			end--
+		}
+		content = content[:end]
+	}
+	logicalPath := "runs/" + runID + "/tool-" + toolID + "-" + suffix
+	directory := filepath.Join(root, "runs", runID)
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("PI tool output directory is unsafe")
+	}
+	directoryRoot, err := os.OpenRoot(directory)
+	if err != nil {
+		return "", err
+	}
+	defer directoryRoot.Close()
+	filename := "tool-" + toolID + "-" + suffix
+	if info, err := directoryRoot.Lstat(filename); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("PI tool output path is unsafe")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	temporaryName := "." + filename + "-" + newID("tmp")
+	file, err := directoryRoot.OpenFile(temporaryName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = directoryRoot.Remove(temporaryName)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return "", err
+	}
+	if _, err := file.Write(content); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	if err := directoryRoot.Rename(temporaryName, filename); err != nil {
+		return "", err
+	}
+	removeTemporary = false
+	if err := directoryRoot.Chmod(filename, 0o600); err != nil {
+		return "", err
+	}
+	return logicalPath, nil
+}
+
+func redactToolArgs(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return raw
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return raw
+	}
+	value = redactJSONValue(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
+func redactJSONValue(value any) any {
+	switch current := value.(type) {
+	case map[string]any:
+		for key, child := range current {
+			if credentialAuditKey(key) {
+				current[key] = "[REDACTED]"
+				continue
+			}
+			current[key] = redactJSONValue(child)
+		}
+	case []any:
+		for index, child := range current {
+			current[index] = redactJSONValue(child)
+		}
+	case string:
+		return redactSecrets(current)
+	}
+	return value
+}
+
+func redactSecrets(value string) string {
+	value = secretHeaderPattern.ReplaceAllString(value, `$1$2[REDACTED]`)
+	return secretTextPattern.ReplaceAllString(value, `$1$2[REDACTED]`)
+}
+
+func redactAuditJSON(raw json.RawMessage) []byte {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return []byte(redactSecrets(string(raw)))
+	}
+	encoded, err := json.Marshal(redactJSONValue(value))
+	if err != nil {
+		return []byte(redactSecrets(string(raw)))
+	}
+	return encoded
+}
+
+func credentialAuditKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	return lower == "pat" || strings.Contains(lower, "token") ||
+		strings.Contains(lower, "password") || strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "api_key") || strings.Contains(lower, "api-key") ||
+		strings.Contains(lower, "apikey") || strings.Contains(lower, "authorization") ||
+		strings.Contains(lower, "cookie") || strings.Contains(lower, "credential") ||
+		strings.Contains(lower, "private_key") || strings.Contains(lower, "private-key") ||
+		strings.Contains(lower, "signature")
 }
 
 func splitUTF8(value string, maxBytes int) []string {

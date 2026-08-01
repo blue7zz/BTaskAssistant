@@ -135,7 +135,40 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 		t.Fatalf("create v3 fixture: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO workspace_state(id, payload) VALUES (1, '{"state":{"tasks":[]}}')
+		INSERT INTO workspace_state(id, payload) VALUES (1, '{"state":{"tasks":[]}}');
+		INSERT INTO task_workspaces(
+			task_id, workspace_id, root_path, schema_version, manifest_revision,
+			state, created_at, updated_at
+		) VALUES ('task-v3-permission', 'workspace-v3-permission', '/tasks/task-v3-permission', 1, 1,
+		          'ready', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z');
+		INSERT INTO agent_sessions(
+			id, task_id, engine, title, mode, resource_policy, state,
+			created_at, updated_at, last_active_at
+		) VALUES ('session-v3', 'task-v3-permission', 'pi', 'v3', 'ask', 'isolated', 'idle',
+		          '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z');
+		INSERT INTO execution_runs(
+			id, task_id, session_id, mode, state, events_path, stdout_path,
+			stderr_path, result_path, started_at, finished_at
+		) VALUES ('run-v3', 'task-v3-permission', 'session-v3', 'ask', 'succeeded',
+		          'runs/run-v3/events.jsonl', 'runs/run-v3/stdout.jsonl',
+		          'runs/run-v3/stderr.log', 'runs/run-v3/result.md',
+		          '2026-08-01T08:00:00Z', '2026-08-01T08:01:00Z');
+		INSERT INTO tool_calls(
+			id, task_id, session_id, run_id, external_tool_call_id, tool_name,
+			capability, risk_level, state, is_error
+		) VALUES ('tool-v3', 'task-v3-permission', 'session-v3', 'run-v3', 'external-v3',
+		          'btask_read_resource', 'task.resource.read', 'low', 'succeeded', 0);
+		INSERT INTO permission_requests(
+			id, task_id, session_id, run_id, tool_call_id, capability, target,
+			subject, risk_level, state, requested_at, resolved_at, resolved_by
+		) VALUES ('request-v3', 'task-v3-permission', 'session-v3', 'run-v3', 'tool-v3',
+		          'task.resource.read', 'resource-v3', 'read resource', 'low', 'allowed',
+		          '2026-08-01T08:00:00Z', '2026-08-01T08:00:01Z', 'policy');
+		INSERT INTO permission_grants(
+			id, task_id, capability, target_pattern, scope, decision, risk_ceiling,
+			created_at, created_by
+		) VALUES ('grant-v3', 'task-v3-permission', 'task.resource.read', '*', 'task',
+		          'allow', 'low', '2026-08-01T08:00:00Z', 'user')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +201,13 @@ func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
 	var payload string
 	if err := database.QueryRow(`SELECT payload FROM workspace_state WHERE id = 1`).Scan(&payload); err != nil || payload != `{"state":{"tasks":[]}}` {
 		t.Fatalf("v3 workspace payload changed: %q, error %v", payload, err)
+	}
+	var permissionState, grantScope string
+	if err := database.QueryRow(`SELECT state FROM permission_requests WHERE id = 'request-v3'`).Scan(&permissionState); err != nil || permissionState != "allowed" {
+		t.Fatalf("v3 permission request was not preserved: %q, %v", permissionState, err)
+	}
+	if err := database.QueryRow(`SELECT scope FROM permission_grants WHERE id = 'grant-v3'`).Scan(&grantScope); err != nil || grantScope != "task" {
+		t.Fatalf("v3 permission grant was not preserved: %q, %v", grantScope, err)
 	}
 }
 

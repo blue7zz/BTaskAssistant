@@ -11,6 +11,7 @@ import {
   Paperclip,
   Plus,
   Send,
+  ShieldAlert,
   Square,
   X,
 } from "lucide-react";
@@ -27,12 +28,18 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentMessageStatus,
+  AgentPermissionGrant,
+  AgentPermissionRequest,
+  AgentPermissionScope,
   AgentResource,
   AgentResourcePreview,
   AgentSession,
+  AgentToolCall,
 } from "../domain/agent";
 import { agentClient, type AgentClient } from "../lib/agentBridge";
 import { useWorkspaceStore } from "../store/workspace";
+import { AgentPermissionCard } from "./AgentPermissionCard";
+import { AgentToolCard } from "./AgentToolCard";
 
 interface TaskAgentWorkbenchProps {
   taskId: string;
@@ -53,6 +60,14 @@ const MESSAGE_STATUSES = new Set<AgentMessageStatus>([
   "complete",
   "error",
   "cancelled",
+]);
+const GOVERNANCE_EVENT_KINDS = new Set([
+  "permission.requested",
+  "permission.resolved",
+  "permission.revoked",
+  "tool.start",
+  "tool.update",
+  "tool.end",
 ]);
 
 function errorText(error: unknown): string {
@@ -105,6 +120,19 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+function permissionScopeLabel(scope: AgentPermissionScope): string {
+  switch (scope) {
+    case "once":
+      return "仅本次";
+    case "session":
+      return "本会话";
+    case "task":
+      return "当前任务";
+    case "permanent":
+      return "永久";
+  }
+}
+
 function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -133,6 +161,11 @@ export function TaskAgentWorkbench({
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const [permissionRequests, setPermissionRequests] = useState<AgentPermissionRequest[]>([]);
+  const [permissionGrants, setPermissionGrants] = useState<AgentPermissionGrant[]>([]);
+  const [toolCalls, setToolCalls] = useState<AgentToolCall[]>([]);
+  const [resolvingPermissions, setResolvingPermissions] = useState<Set<string>>(new Set());
+  const [revokingGrants, setRevokingGrants] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState("");
   const [newSessionMode, setNewSessionMode] = useState<AgentSession["mode"]>("ask");
   const [resources, setResources] = useState<AgentResource[]>([]);
@@ -154,6 +187,8 @@ export function TaskAgentWorkbench({
   const epochRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedSessionRef = useRef("");
+  const resolvingPermissionsRef = useRef(new Set<string>());
+  const revokingGrantsRef = useRef(new Set<string>());
   const terminalRunsRef = useRef(new Set<string>());
   const lastEventSequenceRef = useRef(new Map<string, number>());
 
@@ -175,6 +210,34 @@ export function TaskAgentWorkbench({
         return;
       }
       setMessages(sortMessages(loaded));
+    },
+    [client, taskId],
+  );
+
+  const reloadGovernance = useCallback(
+    async (sessionId: string, epoch = epochRef.current) => {
+      if (!sessionId) {
+        if (epoch === epochRef.current) {
+          setPermissionRequests([]);
+          setPermissionGrants([]);
+          setToolCalls([]);
+        }
+        return;
+      }
+      const [loadedRequests, loadedGrants, loadedTools] = await Promise.all([
+        client.listPermissionRequests?.(taskId, sessionId) ?? Promise.resolve([]),
+        client.listPermissionGrants?.(taskId, sessionId) ?? Promise.resolve([]),
+        client.listToolCalls?.(taskId, sessionId) ?? Promise.resolve([]),
+      ]);
+      if (
+        epoch !== epochRef.current ||
+        selectedSessionRef.current !== sessionId
+      ) {
+        return;
+      }
+      setPermissionRequests(loadedRequests);
+      setPermissionGrants(loadedGrants);
+      setToolCalls(loadedTools);
     },
     [client, taskId],
   );
@@ -274,10 +337,17 @@ export function TaskAgentWorkbench({
     const epoch = ++epochRef.current;
     terminalRunsRef.current.clear();
     lastEventSequenceRef.current.clear();
+    resolvingPermissionsRef.current.clear();
+    revokingGrantsRef.current.clear();
     selectedSessionRef.current = "";
     setSessions([]);
     setSelectedSessionId("");
     setMessages([]);
+    setPermissionRequests([]);
+    setPermissionGrants([]);
+    setToolCalls([]);
+    setResolvingPermissions(new Set());
+    setRevokingGrants(new Set());
     setDraft("");
     setResources([]);
     setArtifacts([]);
@@ -323,6 +393,12 @@ export function TaskAgentWorkbench({
         return;
       }
       if (!selectedSessionRef.current) return;
+
+      if (GOVERNANCE_EVENT_KINDS.has(event.kind)) {
+        void reloadGovernance(event.sessionId, epoch).catch((reason) => {
+          if (epoch === epochRef.current) setError(errorText(reason));
+        });
+      }
 
       const messageId = payloadString(event.payload, "messageId");
       if (event.kind === "message.start" && messageId) {
@@ -439,24 +515,30 @@ export function TaskAgentWorkbench({
       epochRef.current += 1;
       unsubscribe();
     };
-  }, [client, reloadMessages, reloadResources, taskId]);
+  }, [client, reloadGovernance, reloadMessages, reloadResources, taskId]);
 
   useEffect(() => {
     if (!selectedSessionId) {
       setMessages([]);
+      setPermissionRequests([]);
+      setPermissionGrants([]);
+      setToolCalls([]);
       return;
     }
     const epoch = epochRef.current;
     setLoading(true);
     setError("");
-    void reloadMessages(selectedSessionId, epoch)
+    void Promise.all([
+      reloadMessages(selectedSessionId, epoch),
+      reloadGovernance(selectedSessionId, epoch),
+    ])
       .catch((reason) => {
         if (epoch === epochRef.current) setError(errorText(reason));
       })
       .finally(() => {
         if (epoch === epochRef.current) setLoading(false);
       });
-  }, [reloadMessages, selectedSessionId]);
+  }, [reloadGovernance, reloadMessages, selectedSessionId]);
 
   const activeMentionQuery = mentionQuery(draft);
   useEffect(() => {
@@ -541,6 +623,9 @@ export function TaskAgentWorkbench({
       ]);
       setSelectedSessionId(session.id);
       setMessages([]);
+      setPermissionRequests([]);
+      setPermissionGrants([]);
+      setToolCalls([]);
     } catch (reason) {
       if (epoch === epochRef.current) setError(errorText(reason));
     } finally {
@@ -594,10 +679,73 @@ export function TaskAgentWorkbench({
     }
   };
 
+  const resolvePermission = async (
+    request: AgentPermissionRequest,
+    decision: "allow" | "deny",
+    scope: AgentPermissionScope | "",
+  ) => {
+    if (
+      !client.resolvePermission ||
+      request.taskId !== taskId ||
+      request.sessionId !== selectedSessionRef.current ||
+      resolvingPermissionsRef.current.has(request.id)
+    ) {
+      return;
+    }
+    const epoch = epochRef.current;
+    resolvingPermissionsRef.current.add(request.id);
+    setResolvingPermissions(new Set(resolvingPermissionsRef.current));
+    setError("");
+    try {
+      await client.resolvePermission({
+        taskId,
+        sessionId: request.sessionId,
+        requestId: request.id,
+        decision,
+        scope,
+      });
+      await reloadGovernance(request.sessionId, epoch);
+    } catch (reason) {
+      if (epoch === epochRef.current) setError(errorText(reason));
+    } finally {
+      resolvingPermissionsRef.current.delete(request.id);
+      if (epoch === epochRef.current) {
+        setResolvingPermissions(new Set(resolvingPermissionsRef.current));
+      }
+    }
+  };
+
+  const revokePermissionGrant = async (grant: AgentPermissionGrant) => {
+    if (
+      !client.revokePermissionGrant ||
+      revokingGrantsRef.current.has(grant.id)
+    ) {
+      return;
+    }
+    const sessionId = selectedSessionRef.current;
+    if (!sessionId) return;
+    const epoch = epochRef.current;
+    revokingGrantsRef.current.add(grant.id);
+    setRevokingGrants(new Set(revokingGrantsRef.current));
+    setError("");
+    try {
+      await client.revokePermissionGrant({ taskId, grantId: grant.id });
+      await reloadGovernance(sessionId, epoch);
+    } catch (reason) {
+      if (epoch === epochRef.current) setError(errorText(reason));
+    } finally {
+      revokingGrantsRef.current.delete(grant.id);
+      if (epoch === epochRef.current) {
+        setRevokingGrants(new Set(revokingGrantsRef.current));
+      }
+    }
+  };
+
   const activeSession = sessions.find(
     (session) => session.id === selectedSessionId,
   );
   const busy = Boolean(activeRunId);
+  const hasGovernance = permissionRequests.length > 0 || permissionGrants.length > 0 || toolCalls.length > 0;
 
   return (
     <section className="task-agent-workbench" aria-label="PI 会话工作台">
@@ -635,7 +783,7 @@ export function TaskAgentWorkbench({
           <span>
             {client.runtimeMode() === "browser-mock"
               ? "浏览器模拟，不启动本机 PI"
-              : "原生 PI RPC · 任务资源门禁 · 无 Shell/Git"}
+              : "原生 PI RPC · BTask 权限门禁 · 无 Shell/Git"}
           </span>
         </div>
         <div className="agent-session-list">
@@ -712,7 +860,67 @@ export function TaskAgentWorkbench({
               正在读取会话…
             </div>
           )}
-          {!loading && selectedSessionId && messages.length === 0 && (
+          {selectedSessionId && (
+            <div className="agent-security-boundary" role="note">
+              <ShieldAlert size={13} />
+              <span>
+                BTask 提供应用级软权限边界，并非操作系统沙箱；本阶段未开放 Shell 与 Git 执行。
+              </span>
+            </div>
+          )}
+          {permissionGrants.length > 0 && (
+            <section className="agent-grant-list" aria-label="当前有效授权">
+              <header>
+                <strong>当前有效授权</strong>
+                <span>{permissionGrants.length}</span>
+              </header>
+              {permissionGrants.map((grant) => (
+                <div key={grant.id}>
+                  <span>
+                    <strong>{grant.capability}</strong>
+                    <small>
+                      {permissionScopeLabel(grant.scope)} · {grant.targetPattern}
+                    </small>
+                  </span>
+                  {client.revokePermissionGrant && (
+                    <button
+                      type="button"
+                      className="button secondary compact"
+                      disabled={revokingGrants.has(grant.id)}
+                      onClick={() => void revokePermissionGrant(grant)}
+                    >
+                      {revokingGrants.has(grant.id) ? "撤销中" : "撤销"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
+          {permissionRequests.map((request) => (
+            <AgentPermissionCard
+              key={request.id}
+              request={request}
+              submitting={resolvingPermissions.has(request.id)}
+              onResolve={(decision, scope) => {
+                void resolvePermission(request, decision, scope);
+              }}
+            />
+          ))}
+          {toolCalls.map((tool) => (
+            <AgentToolCard
+              key={tool.id}
+              tool={tool}
+              loadOutput={
+                tool.outputRef && client.readToolOutput
+                  ? () => client.readToolOutput!({
+                    taskId,
+                    toolCallId: tool.id,
+                  })
+                  : undefined
+              }
+            />
+          ))}
+          {!loading && selectedSessionId && messages.length === 0 && !hasGovernance && (
             <div className="agent-chat-empty">
               <Bot size={26} />
               <strong>开始当前任务的第一轮对话</strong>

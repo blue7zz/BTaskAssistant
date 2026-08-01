@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	permissionpolicy "github.com/blue7zz/BTaskAssistant/internal/permissions"
+	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
 
 type gateBridgeRequest struct {
@@ -14,9 +18,36 @@ type gateBridgeRequest struct {
 	TaskID     string          `json:"taskId"`
 	SessionID  string          `json:"sessionId"`
 	Mode       string          `json:"mode"`
+	RunID      string          `json:"runId"`
 	ToolCallID string          `json:"toolCallId"`
 	Operation  string          `json:"operation"`
 	Args       json.RawMessage `json:"args"`
+}
+
+type gateRunRequest struct {
+	Version   string `json:"version"`
+	Nonce     string `json:"nonce"`
+	TaskID    string `json:"taskId"`
+	SessionID string `json:"sessionId"`
+	Mode      string `json:"mode"`
+}
+
+type permissionEnvelope struct {
+	Protocol         string `json:"protocol"`
+	Version          string `json:"version"`
+	Nonce            string `json:"nonce"`
+	TaskID           string `json:"taskId"`
+	SessionID        string `json:"sessionId"`
+	RunID            string `json:"runId"`
+	Mode             string `json:"mode"`
+	ToolCallID       string `json:"toolCallId"`
+	ToolName         string `json:"toolName"`
+	Capability       string `json:"capability"`
+	Subject          string `json:"subject"`
+	Target           string `json:"target"`
+	NormalizedTarget string `json:"normalizedTarget"`
+	RiskLevel        string `json:"riskLevel"`
+	ArgsDigest       string `json:"argsDigest"`
 }
 
 type gateBridgeResponse struct {
@@ -36,6 +67,7 @@ func (service *Service) handleGateEventLocked(
 		Method      string `json:"method"`
 		Title       string `json:"title"`
 		Placeholder string `json:"placeholder"`
+		Message     string `json:"message"`
 		StatusKey   string `json:"statusKey"`
 		StatusText  string `json:"statusText"`
 	}
@@ -50,6 +82,14 @@ func (service *Service) handleGateEventLocked(
 		service.failGateProtocolLocked(managed, "PI gate heartbeat identity mismatch")
 		return
 	}
+	if event.Method == "input" && event.Title == "btask-run" {
+		service.handleRunIdentityRequestLocked(managed, event.ID, event.Placeholder)
+		return
+	}
+	if event.Method == "confirm" && event.Title == "btask-permission" {
+		service.handlePermissionRequestLocked(managed, event.ID, event.Message)
+		return
+	}
 	if event.Method != "input" || event.Title != "btask-gate" || len(event.Placeholder) > MaxRPCFrameBytes {
 		service.cancelGateRequest(managed, event.ID)
 		service.failGateProtocolLocked(managed, "PI extension requested an unsupported UI operation")
@@ -61,26 +101,46 @@ func (service *Service) handleGateEventLocked(
 		request.Nonce != managed.gate.Nonce ||
 		request.TaskID != managed.record.TaskID ||
 		request.SessionID != managed.record.ID ||
-		request.Mode != managed.record.Mode {
+		request.Mode != managed.record.Mode ||
+		managed.run == nil || request.RunID != managed.run.record.ID {
 		service.cancelGateRequest(managed, event.ID)
 		service.failGateProtocolLocked(managed, "PI gate request identity mismatch")
 		return
 	}
-	if managed.run == nil || request.ToolCallID == "" {
+	if request.ToolCallID == "" {
 		service.respondGate(managed, event.ID, nil, errors.New("PI gate request has no active run"))
 		return
 	}
 	tool, exists := managed.run.tools[request.ToolCallID]
 	wantTool := map[string]string{
-		"list_resources": "btask_list_resources",
-		"read_resource":  "btask_read_resource",
-		"write_artifact": "btask_write_artifact",
+		"list_resources":   "btask_list_resources",
+		"read_resource":    "btask_read_resource",
+		"write_artifact":   "btask_write_artifact",
+		"permission_probe": "btask_permission_probe",
 	}[request.Operation]
 	if !exists || wantTool == "" || tool.ToolName != wantTool {
 		service.respondGate(managed, event.ID, nil, errors.New("PI gate request does not match its active tool call"))
 		service.failGateProtocolLocked(managed, "PI gate tool-call identity mismatch")
 		return
 	}
+	classification := permissionpolicy.ClassifyTool(permissionpolicy.ToolInput{
+		TaskID: managed.record.TaskID, ToolName: tool.ToolName, Args: request.Args,
+	})
+	receipt, receiptExists := managed.run.receipts[request.ToolCallID]
+	if !receiptExists || receipt.Decision != "allow" || receipt.OperationStarted ||
+		receipt.Capability != classification.Capability ||
+		receipt.NormalizedTarget != classification.NormalizedTarget ||
+		receipt.ArgsDigest != classification.ArgsDigest || classification.HardDenyReason != "" {
+		service.respondGate(managed, event.ID, nil, errors.New("PI gate operation has no matching permission receipt"))
+		service.failGateProtocolLocked(managed, "PI gate permission receipt mismatch")
+		return
+	}
+	receipt.OperationStarted = true
+	managed.run.receipts[request.ToolCallID] = receipt
+	_ = service.emitLocked(managed, "permission.receipt", managed.run.record.ID, tool.ID, map[string]any{
+		"requestId": receipt.RequestID, "capability": receipt.Capability,
+		"scope": receipt.Scope, "state": "consumed",
+	})
 
 	var data any
 	var err error
@@ -115,8 +175,243 @@ func (service *Service) handleGateEventLocked(
 		} else {
 			data, err = service.writeArtifactLocked(managed, args.Kind, args.Name, args.Content)
 		}
+	case "permission_probe":
+		var args struct {
+			Target string `json:"target"`
+		}
+		if json.Unmarshal(request.Args, &args) != nil || strings.TrimSpace(args.Target) == "" {
+			err = errors.New("permission probe arguments are invalid")
+		} else {
+			data = map[string]any{"approved": true, "target": args.Target}
+		}
 	}
 	service.respondGate(managed, event.ID, data, err)
+}
+
+func (service *Service) handleRunIdentityRequestLocked(
+	managed *managedSession,
+	requestID string,
+	payload string,
+) {
+	if len(payload) > MaxRPCFrameBytes {
+		service.cancelGateRequest(managed, requestID)
+		service.failGateProtocolLocked(managed, "PI run identity request exceeds the RPC limit")
+		return
+	}
+	var request gateRunRequest
+	if json.Unmarshal([]byte(payload), &request) != nil ||
+		request.Version != managed.gate.Version || request.Nonce != managed.gate.Nonce ||
+		request.TaskID != managed.record.TaskID || request.SessionID != managed.record.ID ||
+		request.Mode != managed.record.Mode || managed.run == nil {
+		service.cancelGateRequest(managed, requestID)
+		service.failGateProtocolLocked(managed, "PI run identity request did not match the active gate")
+		return
+	}
+	response, _ := json.Marshal(map[string]string{
+		"version": managed.gate.Version, "nonce": managed.gate.Nonce,
+		"runId": managed.run.record.ID,
+	})
+	service.respondExtensionInput(managed, requestID, string(response))
+}
+
+func (service *Service) handlePermissionRequestLocked(
+	managed *managedSession,
+	extensionUIRequestID string,
+	payload string,
+) {
+	if len(payload) == 0 || len(payload) > MaxRPCFrameBytes || managed.run == nil {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, "PI permission envelope is missing, oversized, or has no active run")
+		return
+	}
+	var envelope permissionEnvelope
+	if json.Unmarshal([]byte(payload), &envelope) != nil ||
+		envelope.Protocol != permissionProtocolVersion ||
+		envelope.Version != managed.gate.Version || envelope.Nonce != managed.gate.Nonce ||
+		envelope.TaskID != managed.record.TaskID || envelope.SessionID != managed.record.ID ||
+		envelope.RunID != managed.run.record.ID || envelope.Mode != managed.record.Mode {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, "PI permission envelope identity mismatch")
+		return
+	}
+	tool, exists := managed.run.tools[envelope.ToolCallID]
+	policy, knownTool := gateToolPolicies[envelope.ToolName]
+	if !exists || !knownTool || tool.ToolName != envelope.ToolName {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, "PI permission envelope tool-call mismatch")
+		return
+	}
+	classification := permissionpolicy.ClassifyTool(permissionpolicy.ToolInput{
+		TaskID:   managed.record.TaskID,
+		ToolName: envelope.ToolName,
+		Args:     managed.run.toolArgs[envelope.ToolCallID],
+	})
+	if classification.Capability != envelope.Capability ||
+		classification.Subject != envelope.Subject || classification.Target != envelope.Target ||
+		classification.NormalizedTarget != envelope.NormalizedTarget ||
+		string(classification.RiskLevel) != envelope.RiskLevel ||
+		classification.ArgsDigest != envelope.ArgsDigest ||
+		classification.Capability != policy.capability {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, "PI permission envelope did not match authoritative classification")
+		return
+	}
+
+	now := service.now().UTC()
+	requestID := newID("permission")
+	grants, err := service.store.ActivePermissionGrants(
+		managed.record.TaskID, managed.record.ID, now.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, fmt.Sprintf("load permission grants: %v", err))
+		return
+	}
+	taskStatus, err := service.store.TaskStatus(managed.record.TaskID)
+	if err != nil {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, fmt.Sprintf("load task status: %v", err))
+		return
+	}
+	policyRequest := permissionpolicy.Request{
+		RequestID: requestID, TaskID: managed.record.TaskID, SessionID: managed.record.ID,
+		RunID: managed.run.record.ID, ToolCallID: tool.ID, ToolName: tool.ToolName,
+		Mode: managed.record.Mode, TaskStatus: taskStatus, GateValid: true,
+		Classification: classification,
+	}
+	decision := permissionpolicy.Evaluate(policyRequest, permissionGrants(grants), now)
+	requestedAt := now.Format(time.RFC3339Nano)
+	normalizedTarget := classification.NormalizedTarget
+	reason := decision.Reason
+	record := storage.PermissionRequestRecord{
+		ID: requestID, TaskID: managed.record.TaskID, SessionID: managed.record.ID,
+		RunID: managed.run.record.ID, ToolCallID: tool.ID,
+		Capability: classification.Capability, Target: classification.Target,
+		NormalizedTarget: &normalizedTarget, Subject: classification.Subject,
+		RiskLevel: string(classification.RiskLevel), State: "pending",
+		RequestedAt: requestedAt, Reason: &reason,
+	}
+	if decision.Outcome != permissionpolicy.OutcomeAsk {
+		resolvedAt := requestedAt
+		resolvedBy := "policy"
+		record.ResolvedAt = &resolvedAt
+		record.ResolvedBy = &resolvedBy
+		if decision.Outcome == permissionpolicy.OutcomeAllow {
+			record.State = "allowed"
+		} else {
+			record.State = "denied"
+		}
+		if decision.MatchedGrantID != "" {
+			for _, grant := range grants {
+				if grant.ID == decision.MatchedGrantID {
+					scope := grant.Scope
+					record.DecisionScope = &scope
+					break
+				}
+			}
+		}
+	}
+	if err := service.store.UpsertPermissionRequest(record); err != nil {
+		service.respondPermission(managed, extensionUIRequestID, false, true)
+		service.failGateProtocolLocked(managed, fmt.Sprintf("persist permission request: %v", err))
+		return
+	}
+
+	if decision.Outcome == permissionpolicy.OutcomeAsk {
+		expiresAt := now.Add(service.permissionTimeout)
+		managed.run.permissions[record.ID] = &pendingPermission{
+			request: record, extensionUIRequestID: extensionUIRequestID, expiresAt: expiresAt,
+		}
+		tool.State = "waiting_permission"
+		managed.run.tools[envelope.ToolCallID] = tool
+		managed.run.record.State = "waiting_permission"
+		_ = service.store.UpsertToolCall(tool)
+		_ = service.store.UpsertExecutionRun(managed.run.record)
+		_ = service.emitLocked(managed, "permission.requested", record.RunID, tool.ID, map[string]any{
+			"requestId": record.ID, "capability": record.Capability,
+			"subject": record.Subject, "target": record.Target,
+			"riskLevel":            record.RiskLevel,
+			"allowedScopes":        scopeStrings(decision.AllowedScopes),
+			"expiresAt":            expiresAt.Format(time.RFC3339Nano),
+			"extensionUIRequestId": extensionUIRequestID,
+		})
+		time.AfterFunc(service.permissionTimeout, func() {
+			service.expirePermission(record.ID, record.TaskID, record.SessionID)
+		})
+		return
+	}
+
+	if decision.Outcome == permissionpolicy.OutcomeAllow && decision.ConsumeGrantID != "" {
+		if err := service.store.ConsumePermissionGrant(
+			record.TaskID, decision.ConsumeGrantID, record.ID, requestedAt,
+		); err != nil {
+			service.respondPermission(managed, extensionUIRequestID, false, true)
+			service.failGateProtocolLocked(managed, "once permission grant could not be consumed")
+			return
+		}
+	}
+	scope := stringValue(record.DecisionScope)
+	decisionValue := "deny"
+	if decision.Outcome == permissionpolicy.OutcomeAllow {
+		decisionValue = "allow"
+		managed.run.receipts[envelope.ToolCallID] = permissionReceipt{
+			RequestID: record.ID, Capability: record.Capability,
+			NormalizedTarget: normalizedTarget, ArgsDigest: classification.ArgsDigest,
+			Scope: scope, Decision: "allow", Mutating: classification.Mutating,
+		}
+	} else {
+		tool.State = "denied"
+		_ = service.store.UpsertToolCall(tool)
+		managed.run.tools[envelope.ToolCallID] = tool
+		managed.run.receipts[envelope.ToolCallID] = permissionReceipt{
+			RequestID: record.ID, Capability: record.Capability,
+			NormalizedTarget: normalizedTarget, ArgsDigest: classification.ArgsDigest,
+			Scope: scope, Decision: record.State, Mutating: classification.Mutating,
+		}
+	}
+	_ = service.emitLocked(managed, "permission.resolved", record.RunID, tool.ID, map[string]any{
+		"requestId": record.ID, "decision": record.State, "scope": scope,
+		"matchedGrantId":       decision.MatchedGrantID,
+		"extensionUIRequestId": extensionUIRequestID,
+	})
+	service.respondPermission(managed, extensionUIRequestID, decisionValue == "allow", false)
+}
+
+func permissionGrants(records []storage.PermissionGrantRecord) []permissionpolicy.Grant {
+	result := make([]permissionpolicy.Grant, 0, len(records))
+	for _, record := range records {
+		grant := permissionpolicy.Grant{
+			ID: record.ID, TaskID: stringValue(record.TaskID), SessionID: stringValue(record.SessionID),
+			RequestID: stringValue(record.RequestID), Capability: record.Capability,
+			TargetPattern: record.TargetPattern, Scope: permissionpolicy.Scope(record.Scope),
+			Decision:    permissionpolicy.Outcome(record.Decision),
+			RiskCeiling: permissionpolicy.RiskLevel(record.RiskCeiling),
+		}
+		grant.ExpiresAt = parsePermissionTime(record.ExpiresAt)
+		grant.ConsumedAt = parsePermissionTime(record.ConsumedAt)
+		grant.RevokedAt = parsePermissionTime(record.RevokedAt)
+		result = append(result, grant)
+	}
+	return result
+}
+
+func parsePermissionTime(value *string) *time.Time {
+	if value == nil {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, *value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func scopeStrings(scopes []permissionpolicy.Scope) []string {
+	result := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		result = append(result, string(scope))
+	}
+	return result
 }
 
 func (service *Service) respondGate(
@@ -147,6 +442,44 @@ func (service *Service) respondGate(
 		"value": string(encoded),
 	}); err != nil {
 		service.failGateProtocolLocked(managed, fmt.Sprintf("PI gate response failed: %v", err))
+	}
+}
+
+func (service *Service) respondExtensionInput(
+	managed *managedSession,
+	requestID string,
+	value string,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), service.requestTimeout)
+	defer cancel()
+	if err := sendRuntimeNotification(ctx, managed.runtime, map[string]any{
+		"type": "extension_ui_response", "id": requestID, "value": value,
+	}); err != nil {
+		service.failGateProtocolLocked(managed, fmt.Sprintf("PI extension response failed: %v", err))
+	}
+}
+
+func (service *Service) respondPermission(
+	managed *managedSession,
+	requestID string,
+	confirmed bool,
+	cancelled bool,
+) {
+	if managed.runtime == nil || strings.TrimSpace(requestID) == "" {
+		return
+	}
+	response := map[string]any{
+		"type": "extension_ui_response", "id": requestID, "confirmed": confirmed,
+	}
+	if cancelled {
+		response = map[string]any{
+			"type": "extension_ui_response", "id": requestID, "cancelled": true,
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), service.requestTimeout)
+	defer cancel()
+	if err := sendRuntimeNotification(ctx, managed.runtime, response); err != nil {
+		service.failGateProtocolLocked(managed, fmt.Sprintf("PI permission response failed: %v", err))
 	}
 }
 
