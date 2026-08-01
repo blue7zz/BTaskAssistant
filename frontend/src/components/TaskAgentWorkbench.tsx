@@ -3,15 +3,20 @@ import {
   Activity,
   AtSign,
   Bot,
+  Boxes,
+  Clock3,
   ExternalLink,
+  File,
   FileText,
   FolderOpen,
   GitBranch,
   Image as ImageIcon,
+  Info,
   LoaderCircle,
   MessageSquare,
   Paperclip,
   Plus,
+  RotateCcw,
   Send,
   ShieldAlert,
   Square,
@@ -20,6 +25,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -40,6 +46,7 @@ import type {
 } from "../domain/agent";
 import { agentClient, type AgentClient } from "../lib/agentBridge";
 import { useWorkspaceStore } from "../store/workspace";
+import { STATUS_META } from "../domain/task";
 import { AgentChangesPanel } from "./AgentChangesPanel";
 import { AgentPermissionCard } from "./AgentPermissionCard";
 import { AgentRunsPanel } from "./AgentRunsPanel";
@@ -49,7 +56,17 @@ interface TaskAgentWorkbenchProps {
   taskId: string;
   taskTitle: string;
   client?: AgentClient;
+  onEditTask?(): void;
 }
+
+type ResourcePanel = "context" | "files" | "changes" | "runs";
+
+type TimelineItem =
+  | { type: "message"; id: string; at: string; sequence: number; message: AgentMessage }
+  | { type: "permission"; id: string; at: string; sequence: number; request: AgentPermissionRequest }
+  | { type: "tool"; id: string; at: string; sequence: number; tool: AgentToolCall };
+
+const HISTORY_PAGE_SIZE = 60;
 
 const FINAL_RUN_STATES = new Set([
   "succeeded",
@@ -73,6 +90,30 @@ const GOVERNANCE_EVENT_KINDS = new Set([
   "tool.update",
   "tool.end",
 ]);
+
+const SESSION_STATE_LABELS: Record<AgentSession["state"], string> = {
+  created: "待启动",
+  starting: "正在启动",
+  idle: "空闲",
+  running: "运行中",
+  stopping: "正在停止",
+  interrupted: "已中断",
+  failed: "失败",
+};
+
+const MODE_LABELS: Record<AgentSession["mode"], string> = {
+  ask: "Ask",
+  plan: "Plan",
+  agent: "Agent",
+};
+
+const MESSAGE_STATUS_LABELS: Record<AgentMessageStatus, string> = {
+  pending: "已排队",
+  streaming: "输出中",
+  complete: "完成",
+  error: "失败",
+  cancelled: "已取消",
+};
 
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -101,6 +142,23 @@ function sortMessages(messages: AgentMessage[]): AgentMessage[] {
     (left, right) =>
       left.sequence - right.sequence || left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+function mergeMessages(...groups: AgentMessage[][]): AgentMessage[] {
+  const byID = new Map<string, AgentMessage>();
+  for (const group of groups) {
+    for (const message of group) byID.set(message.id, message);
+  }
+  return sortMessages(Array.from(byID.values()));
+}
+
+function isContextResource(resource: AgentResource): boolean {
+  return resource.kind === "context" || resource.logicalPath.startsWith("context/");
+}
+
+function timelineTimestamp(value: string): number {
+  const parsed = new Date(value).valueOf();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatSessionTime(value: string): string {
@@ -160,6 +218,7 @@ export function TaskAgentWorkbench({
   taskId,
   taskTitle,
   client = agentClient,
+  onEditTask,
 }: TaskAgentWorkbenchProps) {
   const piSettings = useWorkspaceStore((state) => state.piSettings);
   const taskStatus = useWorkspaceStore(
@@ -168,6 +227,9 @@ export function TaskAgentWorkbench({
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const [historyCursor, setHistoryCursor] = useState("");
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [permissionRequests, setPermissionRequests] = useState<AgentPermissionRequest[]>([]);
   const [permissionGrants, setPermissionGrants] = useState<AgentPermissionGrant[]>([]);
   const [toolCalls, setToolCalls] = useState<AgentToolCall[]>([]);
@@ -179,9 +241,7 @@ export function TaskAgentWorkbench({
   const [artifacts, setArtifacts] = useState<AgentResource[]>([]);
   const [mentionOptions, setMentionOptions] = useState<AgentResource[]>([]);
   const [selectedResources, setSelectedResources] = useState<AgentResource[]>([]);
-  const [resourcePanel, setResourcePanel] = useState<
-    "resources" | "artifacts" | "changes" | "runs"
-  >("resources");
+  const [resourcePanel, setResourcePanel] = useState<ResourcePanel>("context");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
   const [runRefreshVersion, setRunRefreshVersion] = useState(0);
   const [preview, setPreview] = useState<AgentResourcePreview>();
@@ -191,12 +251,20 @@ export function TaskAgentWorkbench({
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<
+    "" | "send" | "steer" | "follow_up"
+  >("");
   const [stopping, setStopping] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [activeRunId, setActiveRunId] = useState("");
+  const [queueCounts, setQueueCounts] = useState({ steering: 0, followUp: 0 });
+  const [workspaceState, setWorkspaceState] = useState("读取中");
   const [error, setError] = useState("");
   const epochRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const selectedSessionRef = useRef("");
   const resolvingPermissionsRef = useRef(new Set<string>());
   const revokingGrantsRef = useRef(new Set<string>());
@@ -208,22 +276,89 @@ export function TaskAgentWorkbench({
   }, [selectedSessionId]);
 
   const reloadMessages = useCallback(
-    async (sessionId: string, epoch = epochRef.current) => {
+    async (
+      sessionId: string,
+      epoch = epochRef.current,
+      replace = false,
+    ) => {
       if (!sessionId) {
-        if (epoch === epochRef.current) setMessages([]);
+        if (epoch === epochRef.current) {
+          setMessages([]);
+          setHistoryCursor("");
+          setHasOlderMessages(false);
+        }
         return;
       }
-      const loaded = await client.listMessages(taskId, sessionId);
+      const page = client.listHistoryPage
+        ? await client.listHistoryPage({
+          taskId,
+          sessionId,
+          cursor: "",
+          limit: HISTORY_PAGE_SIZE,
+        })
+        : {
+          messages: await client.listMessages(taskId, sessionId),
+          nextCursor: undefined,
+          hasMore: false,
+        };
       if (
         epoch !== epochRef.current ||
         selectedSessionRef.current !== sessionId
       ) {
         return;
       }
-      setMessages(sortMessages(loaded));
+      setMessages((current) =>
+        replace ? sortMessages(page.messages) : mergeMessages(current, page.messages),
+      );
+      setHistoryCursor(page.nextCursor ?? "");
+      setHasOlderMessages(page.hasMore);
     },
     [client, taskId],
   );
+
+  const loadOlderMessages = useCallback(async () => {
+    const sessionId = selectedSessionRef.current;
+    if (
+      !sessionId ||
+      !historyCursor ||
+      !hasOlderMessages ||
+      loadingOlderMessages ||
+      !client.listHistoryPage
+    ) {
+      return;
+    }
+    const epoch = epochRef.current;
+    setLoadingOlderMessages(true);
+    setError("");
+    try {
+      const page = await client.listHistoryPage({
+        taskId,
+        sessionId,
+        cursor: historyCursor,
+        limit: HISTORY_PAGE_SIZE,
+      });
+      if (
+        epoch !== epochRef.current ||
+        selectedSessionRef.current !== sessionId
+      ) {
+        return;
+      }
+      stickToBottomRef.current = false;
+      setMessages((current) => mergeMessages(page.messages, current));
+      setHistoryCursor(page.nextCursor ?? "");
+      setHasOlderMessages(page.hasMore);
+    } catch (reason) {
+      if (epoch === epochRef.current) setError(errorText(reason));
+    } finally {
+      if (epoch === epochRef.current) setLoadingOlderMessages(false);
+    }
+  }, [
+    client,
+    hasOlderMessages,
+    historyCursor,
+    loadingOlderMessages,
+    taskId,
+  ]);
 
   const reloadGovernance = useCallback(
     async (sessionId: string, epoch = epochRef.current) => {
@@ -269,6 +404,29 @@ export function TaskAgentWorkbench({
       if (epoch !== epochRef.current) return;
       setResources(loadedResources.filter((resource) => resource.targetType === "resource"));
       setArtifacts(loadedArtifacts);
+    },
+    [client, taskId],
+  );
+
+  const reloadWorkspaceState = useCallback(
+    async (epoch = epochRef.current) => {
+      if (!client.getTaskGitStatus) {
+        if (epoch === epochRef.current) setWorkspaceState("仅任务上下文");
+        return;
+      }
+      try {
+        const status = await client.getTaskGitStatus(taskId);
+        if (epoch !== epochRef.current) return;
+        if (!status.bound) {
+          setWorkspaceState("仓库未绑定");
+        } else if (status.binding.state === "ready" && !status.errorMessage) {
+          setWorkspaceState(status.binding.branch ?? "worktree 就绪");
+        } else {
+          setWorkspaceState("worktree 异常");
+        }
+      } catch {
+        if (epoch === epochRef.current) setWorkspaceState("worktree 不可用");
+      }
     },
     [client, taskId],
   );
@@ -354,6 +512,9 @@ export function TaskAgentWorkbench({
     setSessions([]);
     setSelectedSessionId("");
     setMessages([]);
+    setHistoryCursor("");
+    setHasOlderMessages(false);
+    setLoadingOlderMessages(false);
     setPermissionRequests([]);
     setPermissionGrants([]);
     setToolCalls([]);
@@ -366,16 +527,19 @@ export function TaskAgentWorkbench({
     setSelectedResources([]);
     setPreview(undefined);
     setPreviewResource(undefined);
-    setResourcePanel("resources");
+    setResourcePanel("context");
     setGitRefreshVersion(0);
     setRunRefreshVersion(0);
     setDragActive(false);
     setActiveRunId("");
+    setQueueCounts({ steering: 0, followUp: 0 });
+    setWorkspaceState("读取中");
     setError("");
     setLoading(true);
     setCreating(false);
-    setSending(false);
+    setSubmittingAction("");
     setStopping(false);
+    setRecovering(false);
 
     const unsubscribe = client.subscribe((event) => {
       if (epoch !== epochRef.current || event.taskId !== taskId) return;
@@ -414,9 +578,18 @@ export function TaskAgentWorkbench({
       }
       if (event.kind === "git.changed") {
         setGitRefreshVersion((current) => current + 1);
+        void reloadWorkspaceState(epoch);
       }
       if (event.kind === "run.state") {
         setRunRefreshVersion((current) => current + 1);
+      }
+      if (event.kind === "queue.updated") {
+        const steering = event.payload.steeringCount;
+        const followUp = event.payload.followUpCount;
+        setQueueCounts({
+          steering: typeof steering === "number" ? steering : 0,
+          followUp: typeof followUp === "number" ? followUp : 0,
+        });
       }
 
       const messageId = payloadString(event.payload, "messageId");
@@ -435,7 +608,7 @@ export function TaskAgentWorkbench({
                 role === "user" || role === "system" ? role : "assistant",
               kind: "text",
               status: role === "user" ? "pending" : "streaming",
-              content: "",
+              content: payloadString(event.payload, "content"),
               sequence: event.sequence,
               createdAt: event.occurredAt,
             },
@@ -489,14 +662,15 @@ export function TaskAgentWorkbench({
           setActiveRunId((current) =>
             current === event.runId ? "" : current,
           );
-          setSending(false);
+          setSubmittingAction("");
           setStopping(false);
+          setQueueCounts({ steering: 0, followUp: 0 });
           if (state === "failed" || state === "interrupted") {
             setError(
               payloadString(event.payload, "reason") || "PI 运行未完成",
             );
           }
-        } else if (["queued", "running", "stopping"].includes(state)) {
+        } else if (ACTIVE_RUN_STATES.has(state)) {
           setActiveRunId(event.runId);
           setStopping(state === "stopping");
         }
@@ -529,35 +703,58 @@ export function TaskAgentWorkbench({
     void reloadResources(epoch).catch((reason) => {
       if (epoch === epochRef.current) setError(errorText(reason));
     });
+    void reloadWorkspaceState(epoch);
 
     return () => {
       epochRef.current += 1;
       unsubscribe();
     };
-  }, [client, reloadGovernance, reloadMessages, reloadResources, taskId]);
+  }, [
+    client,
+    reloadGovernance,
+    reloadMessages,
+    reloadResources,
+    reloadWorkspaceState,
+    taskId,
+  ]);
 
   useEffect(() => {
     if (!selectedSessionId) {
       setMessages([]);
+      setHistoryCursor("");
+      setHasOlderMessages(false);
       setPermissionRequests([]);
       setPermissionGrants([]);
       setToolCalls([]);
       return;
     }
     const epoch = epochRef.current;
+    setMessages([]);
+    setHistoryCursor("");
+    setHasOlderMessages(false);
+    setQueueCounts({ steering: 0, followUp: 0 });
     setLoading(true);
     setError("");
     void Promise.all([
-      reloadMessages(selectedSessionId, epoch),
+      reloadMessages(selectedSessionId, epoch, true),
       reloadGovernance(selectedSessionId, epoch),
     ])
       .catch((reason) => {
         if (epoch === epochRef.current) setError(errorText(reason));
       })
       .finally(() => {
-        if (epoch === epochRef.current) setLoading(false);
+        if (epoch === epochRef.current) {
+          setLoading(false);
+          window.setTimeout(() => textareaRef.current?.focus(), 0);
+        }
       });
   }, [reloadGovernance, reloadMessages, selectedSessionId]);
+
+  useEffect(() => {
+    const element = messageListRef.current;
+    if (!element || !stickToBottomRef.current) return;
+    element.scrollTop = element.scrollHeight;
+  }, [messages, permissionRequests, toolCalls]);
 
   const activeMentionQuery = mentionQuery(draft);
   useEffect(() => {
@@ -599,7 +796,7 @@ export function TaskAgentWorkbench({
   const handleDrop = (event: DragEvent<HTMLFormElement>) => {
     event.preventDefault();
     setDragActive(false);
-    if (!selectedSessionId || activeRunId) return;
+    if (!selectedSessionId || stopping) return;
     void importFiles(Array.from(event.dataTransfer.files));
   };
 
@@ -642,6 +839,8 @@ export function TaskAgentWorkbench({
       ]);
       setSelectedSessionId(session.id);
       setMessages([]);
+      setHistoryCursor("");
+      setHasOlderMessages(false);
       setPermissionRequests([]);
       setPermissionGrants([]);
       setToolCalls([]);
@@ -659,7 +858,7 @@ export function TaskAgentWorkbench({
     const sessionId = selectedSessionRef.current;
     if (!message || !sessionId || activeRunId) return;
     const epoch = epochRef.current;
-    setSending(true);
+    setSubmittingAction("send");
     setError("");
     setDraft("");
     try {
@@ -678,7 +877,70 @@ export function TaskAgentWorkbench({
       setDraft(originalDraft);
       setError(errorText(reason));
     } finally {
-      if (epoch === epochRef.current) setSending(false);
+      if (epoch === epochRef.current) setSubmittingAction("");
+    }
+  };
+
+  const queuePrompt = async (behavior: "steer" | "follow_up") => {
+    const originalDraft = draft;
+    const message = draft.trim() ||
+      (selectedResources.length > 0 ? "请查看所附任务资源。" : "");
+    const sessionId = selectedSessionRef.current;
+    const queue = behavior === "steer"
+      ? client.steerPrompt
+      : client.followUpPrompt;
+    if (!message || !sessionId || !activeRunId) return;
+    if (!queue) {
+      setError(
+        behavior === "steer"
+          ? "当前客户端不支持 PI Steer"
+          : "当前客户端不支持 PI Follow-up",
+      );
+      return;
+    }
+    const epoch = epochRef.current;
+    setSubmittingAction(behavior);
+    setError("");
+    setDraft("");
+    try {
+      const queued = await queue({
+        taskId,
+        sessionId,
+        message,
+        resourceIds: selectedResources.map((resource) => resource.id),
+      });
+      if (epoch !== epochRef.current) return;
+      setMessages((current) => mergeMessages(current, [queued]));
+      setSelectedResources([]);
+    } catch (reason) {
+      if (epoch !== epochRef.current) return;
+      setDraft(originalDraft);
+      setError(errorText(reason));
+    } finally {
+      if (epoch === epochRef.current) setSubmittingAction("");
+    }
+  };
+
+  const resumeSession = async () => {
+    const sessionId = selectedSessionRef.current;
+    if (!sessionId || !client.resumeSession || activeRunId) return;
+    const epoch = epochRef.current;
+    setRecovering(true);
+    setError("");
+    try {
+      const resumed = await client.resumeSession({ taskId, sessionId });
+      if (epoch !== epochRef.current) return;
+      setSessions((current) =>
+        current.map((session) => session.id === resumed.id ? resumed : session),
+      );
+      await Promise.all([
+        reloadMessages(sessionId, epoch),
+        reloadGovernance(sessionId, epoch),
+      ]);
+    } catch (reason) {
+      if (epoch === epochRef.current) setError(errorText(reason));
+    } finally {
+      if (epoch === epochRef.current) setRecovering(false);
     }
   };
 
@@ -781,45 +1043,183 @@ export function TaskAgentWorkbench({
     (session) => session.id === selectedSessionId,
   );
   const busy = Boolean(activeRunId);
-  const hasGovernance = permissionRequests.length > 0 || permissionGrants.length > 0 || toolCalls.length > 0;
+  const canRecover = Boolean(
+    activeSession &&
+    ["created", "interrupted", "failed"].includes(activeSession.state),
+  );
+  const contextResources = resources.filter(isContextResource);
+  const fileResources = [
+    ...resources.filter((resource) => !isContextResource(resource)),
+    ...artifacts,
+  ];
+  const visibleResources = resourcePanel === "context"
+    ? contextResources
+    : fileResources;
+  const hasGovernance = permissionRequests.length > 0 ||
+    permissionGrants.length > 0 ||
+    toolCalls.length > 0;
+  const timelineItems = useMemo<TimelineItem[]>(() => {
+    const items: TimelineItem[] = [
+      ...messages.map((message) => ({
+        type: "message" as const,
+        id: message.id,
+        at: message.createdAt,
+        sequence: message.sequence,
+        message,
+      })),
+      ...permissionRequests.map((request, index) => ({
+        type: "permission" as const,
+        id: request.id,
+        at: request.requestedAt,
+        sequence: Number.MAX_SAFE_INTEGER - 20_000 + index,
+        request,
+      })),
+      ...toolCalls.map((tool, index) => ({
+        type: "tool" as const,
+        id: tool.id,
+        at: tool.startedAt ?? tool.finishedAt ?? "",
+        sequence: Number.MAX_SAFE_INTEGER - 10_000 + index,
+        tool,
+      })),
+    ];
+    return items.sort((left, right) => {
+      const time = timelineTimestamp(left.at) - timelineTimestamp(right.at);
+      return time || left.sequence - right.sequence || left.id.localeCompare(right.id);
+    });
+  }, [messages, permissionRequests, toolCalls]);
 
   return (
     <section className="task-agent-workbench" aria-label="PI 会话工作台">
-      <aside className="agent-session-panel">
-        <div className="agent-session-heading">
-          <div>
-            <span className="eyebrow">任务级 Session</span>
-            <strong>PI 会话</strong>
-          </div>
-          <div className="agent-session-actions">
+      <header className="agent-workbench-topbar">
+        <div className="agent-workbench-identity">
+          <span className="eyebrow">任务 Agent 工作台</span>
+          <strong title={taskTitle}>{taskTitle}</strong>
+        </div>
+        <div className="agent-workbench-status" aria-label="当前任务与 PI 状态">
+          <span>
+            <small>任务</small>
+            <strong>{STATUS_META[taskStatus].label}</strong>
+          </span>
+          <span>
+            <small>模式</small>
+            <strong>{MODE_LABELS[activeSession?.mode ?? newSessionMode]}</strong>
+          </span>
+          <span title={activeSession?.model || piSettings.model || "使用 PI 默认模型"}>
+            <small>模型</small>
+            <strong>{activeSession?.model || piSettings.model || "PI 默认"}</strong>
+          </span>
+          <span>
+            <small>PI</small>
+            <strong>
+              {client.runtimeMode() === "browser-mock"
+                ? "浏览器 Mock"
+                : activeSession
+                  ? SESSION_STATE_LABELS[activeSession.state]
+                  : "未启动"}
+            </strong>
+          </span>
+          <span title={workspaceState}>
+            <small>工作区</small>
+            <strong>{workspaceState}</strong>
+          </span>
+        </div>
+        <div className="agent-workbench-actions">
+          <label>
+            <span>会话</span>
+            <select
+              aria-label="切换 PI 会话"
+              value={selectedSessionId}
+              disabled={sessions.length === 0 || busy}
+              onChange={(event) => {
+                selectedSessionRef.current = event.target.value;
+                stickToBottomRef.current = true;
+                setSelectedSessionId(event.target.value);
+              }}
+            >
+              {sessions.length === 0 && <option value="">暂无会话</option>}
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>{session.title}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>新会话模式</span>
             <select
               aria-label="新会话模式"
               value={newSessionMode}
               disabled={creating || busy}
-              onChange={(event) => setNewSessionMode(event.target.value as AgentSession["mode"])}
+              onChange={(event) =>
+                setNewSessionMode(event.target.value as AgentSession["mode"])}
             >
               <option value="ask">Ask</option>
               <option value="plan">Plan</option>
               <option value="agent">Agent</option>
             </select>
+          </label>
+          <button
+            type="button"
+            className="button secondary compact"
+            disabled={creating || busy}
+            onClick={() => void createSession()}
+          >
+            {creating ? <LoaderCircle className="spin" size={13} /> : <Plus size={13} />}
+            新会话
+          </button>
+          {canRecover && (
+            <button
+              type="button"
+              className="button secondary compact"
+              disabled={recovering || busy || !client.resumeSession}
+              onClick={() => void resumeSession()}
+            >
+              {recovering
+                ? <LoaderCircle className="spin" size={13} />
+                : <RotateCcw size={13} />}
+              {recovering ? "恢复中" : "恢复"}
+            </button>
+          )}
+          {busy && (
+            <button
+              type="button"
+              className="button secondary compact agent-stop-button"
+              onClick={() => void stopRun()}
+              disabled={stopping}
+            >
+              {stopping
+                ? <LoaderCircle className="spin" size={13} />
+                : <Square size={12} />}
+              {stopping ? "正在停止" : "停止"}
+            </button>
+          )}
+          {onEditTask && (
             <button
               type="button"
               className="icon-button"
-              aria-label="新建 PI 会话"
-              title="新建 PI 会话"
-              disabled={creating || busy}
-              onClick={() => void createSession()}
+              aria-label="编辑任务基本信息"
+              title="编辑任务基本信息"
+              onClick={onEditTask}
             >
-              {creating ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}
+              <Info size={14} />
             </button>
+          )}
+        </div>
+      </header>
+
+      <div className="agent-workbench-body">
+        <aside className="agent-session-panel">
+        <div className="agent-session-heading">
+          <div>
+            <span className="eyebrow">当前任务独立</span>
+            <strong>会话历史</strong>
           </div>
+          <span className="agent-session-count">{sessions.length}</span>
         </div>
         <div className="agent-runtime-note">
           <Bot size={14} />
           <span>
             {client.runtimeMode() === "browser-mock"
               ? "浏览器模拟，不启动本机 PI"
-              : "原生 PI RPC · 任务 worktree · 受控 Shell"}
+              : "当前 taskId 独立 Session、资源、worktree 与权限"}
           </span>
         </div>
         <div className="agent-session-list">
@@ -831,6 +1231,7 @@ export function TaskAgentWorkbench({
               disabled={busy && session.id !== selectedSessionId}
               onClick={() => {
                 selectedSessionRef.current = session.id;
+                stickToBottomRef.current = true;
                 setSelectedSessionId(session.id);
               }}
             >
@@ -858,24 +1259,22 @@ export function TaskAgentWorkbench({
             </div>
           )}
         </div>
-      </aside>
+        </aside>
 
-      <div className="agent-chat-panel">
+        <div className="agent-chat-panel">
         <header className="agent-chat-heading">
           <div>
             <strong>{activeSession?.title ?? "选择或新建会话"}</strong>
-            <span>会话数据只属于当前任务，不会写入任务状态快照。</span>
+            <span>
+              {activeSession
+                ? `${MODE_LABELS[activeSession.mode]} · ${activeSession.thinkingLevel || "默认思考级别"} · ${SESSION_STATE_LABELS[activeSession.state]}`
+                : "会话数据只属于当前任务，不会写入任务状态快照。"}
+            </span>
           </div>
-          {busy && (
-            <button
-              type="button"
-              className="button secondary compact agent-stop-button"
-              onClick={() => void stopRun()}
-              disabled={stopping}
-            >
-              {stopping ? <LoaderCircle className="spin" size={13} /> : <Square size={12} />}
-              {stopping ? "正在停止" : "停止"}
-            </button>
+          {(queueCounts.steering > 0 || queueCounts.followUp > 0) && (
+            <span className="agent-queue-counts" role="status">
+              引导 {queueCounts.steering} · 后续 {queueCounts.followUp}
+            </span>
           )}
         </header>
 
@@ -889,12 +1288,34 @@ export function TaskAgentWorkbench({
           </div>
         )}
 
-        <div className="agent-message-list" aria-live="polite">
+        <div
+          ref={messageListRef}
+          className="agent-message-list"
+          aria-live="polite"
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            stickToBottomRef.current =
+              element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+          }}
+        >
           {loading && (
             <div className="agent-loading">
               <LoaderCircle className="spin" size={17} />
               正在读取会话…
             </div>
+          )}
+          {!loading && hasOlderMessages && (
+            <button
+              type="button"
+              className="agent-load-history"
+              disabled={loadingOlderMessages}
+              onClick={() => void loadOlderMessages()}
+            >
+              {loadingOlderMessages
+                ? <LoaderCircle className="spin" size={12} />
+                : <Clock3 size={12} />}
+              {loadingOlderMessages ? "正在读取更早消息" : "加载更早消息"}
+            </button>
           )}
           {selectedSessionId && (
             <div className="agent-security-boundary" role="note">
@@ -902,6 +1323,23 @@ export function TaskAgentWorkbench({
               <span>
                 BTask 提供应用级软权限边界，并非操作系统沙箱；仅 Agent + development 可修改任务 worktree 或申请 Shell，Git 推送、合并与 PR 未开放。
               </span>
+            </div>
+          )}
+          {canRecover && activeSession?.errorMessage && (
+            <div className="agent-recovery-card" role="status">
+              <RotateCcw size={14} />
+              <span>
+                <strong>当前会话需要恢复</strong>
+                <small>{activeSession.errorMessage}</small>
+              </span>
+              <button
+                type="button"
+                className="button secondary compact"
+                disabled={recovering || !client.resumeSession}
+                onClick={() => void resumeSession()}
+              >
+                {recovering ? "恢复中" : "恢复会话"}
+              </button>
             </div>
           )}
           {permissionGrants.length > 0 && (
@@ -932,35 +1370,6 @@ export function TaskAgentWorkbench({
               ))}
             </section>
           )}
-          {permissionRequests.map((request) => (
-            <AgentPermissionCard
-              key={request.id}
-              request={request}
-              submitting={resolvingPermissions.has(request.id)}
-              onResolve={(decision, scope) => {
-                void resolvePermission(request, decision, scope);
-              }}
-            />
-          ))}
-          {toolCalls.map((tool) => (
-            <AgentToolCard
-              key={tool.id}
-              tool={tool}
-              loadOutput={
-                tool.outputRef && client.readToolOutput
-                  ? () => client.readToolOutput!({
-                    taskId,
-                    toolCallId: tool.id,
-                  })
-                  : undefined
-              }
-              onStop={
-                tool.toolName === "btask_shell" && tool.state === "running"
-                  ? () => stopToolExecution(tool)
-                  : undefined
-              }
-            />
-          ))}
           {!loading && selectedSessionId && messages.length === 0 && !hasGovernance && (
             <div className="agent-chat-empty">
               <Bot size={26} />
@@ -975,57 +1384,102 @@ export function TaskAgentWorkbench({
               <p>历史、附件和引用会持久化，并与其他任务严格隔离。</p>
             </div>
           )}
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={`agent-message agent-message-${message.role}`}
-            >
-              <header>
-                <strong>{message.role === "user" ? "你" : "PI"}</strong>
-                <span>{message.status}</span>
-              </header>
-              <p>{message.content || (message.status === "streaming" ? "…" : "")}</p>
-              {message.references && message.references.length > 0 && (
-                <div className="agent-message-references">
-                  {message.references.map((reference) => {
-                    const resource = [...resources, ...artifacts].find(
-                      (candidate) => candidate.id === reference.resourceId,
-                    ) ?? {
-                      id: reference.resourceId,
-                      taskId: reference.taskId,
-                      targetType: reference.targetType,
-                      kind: reference.kind,
-                      sourceType: reference.sourceType,
-                      logicalPath: reference.logicalPath,
-                      mimeType: reference.mimeType,
-                      byteSize: reference.byteSize ?? 0,
-                      sha256: "",
-                      immutable: reference.immutable,
-                      readable: true,
-                      createdAt: reference.createdAt,
-                    };
-                    return (
-                      <span key={`${reference.resourceId}-${reference.method}`}>
-                        <button type="button" onClick={() => void showPreview(resource)}>
-                          {reference.mimeType?.startsWith("image/") ? <ImageIcon size={11} /> : <FileText size={11} />}
-                          {resourceName(resource)}
-                        </button>
-                        {message.role === "user" && client.removeReference && (
-                          <button
-                            type="button"
-                            aria-label={`删除引用 ${resourceName(resource)}`}
-                            onClick={() => void removeMessageReference(message, reference.resourceId)}
-                          >
-                            <X size={10} />
+          {timelineItems.map((item) => {
+            if (item.type === "permission") {
+              return (
+                <AgentPermissionCard
+                  key={`permission-${item.id}`}
+                  request={item.request}
+                  submitting={resolvingPermissions.has(item.request.id)}
+                  onResolve={(decision, scope) => {
+                    void resolvePermission(item.request, decision, scope);
+                  }}
+                />
+              );
+            }
+            if (item.type === "tool") {
+              return (
+                <AgentToolCard
+                  key={`tool-${item.id}`}
+                  tool={item.tool}
+                  loadOutput={
+                    item.tool.outputRef && client.readToolOutput
+                      ? () => client.readToolOutput!({
+                        taskId,
+                        toolCallId: item.tool.id,
+                      })
+                      : undefined
+                  }
+                  onStop={
+                    item.tool.toolName === "btask_shell" && item.tool.state === "running"
+                      ? () => stopToolExecution(item.tool)
+                      : undefined
+                  }
+                />
+              );
+            }
+            const message = item.message;
+            return (
+              <article
+                key={`message-${message.id}`}
+                className={`agent-message agent-message-${message.role}`}
+              >
+                <header>
+                  <strong>
+                    {message.role === "user"
+                      ? "你"
+                      : message.role === "system"
+                        ? "系统"
+                        : "PI"}
+                  </strong>
+                  <span>{MESSAGE_STATUS_LABELS[message.status]}</span>
+                </header>
+                <p>{message.content || (message.status === "streaming" ? "…" : "")}</p>
+                {message.references && message.references.length > 0 && (
+                  <div className="agent-message-references">
+                    {message.references.map((reference) => {
+                      const resource = [...resources, ...artifacts].find(
+                        (candidate) => candidate.id === reference.resourceId,
+                      ) ?? {
+                        id: reference.resourceId,
+                        taskId: reference.taskId,
+                        targetType: reference.targetType,
+                        kind: reference.kind,
+                        sourceType: reference.sourceType,
+                        logicalPath: reference.logicalPath,
+                        mimeType: reference.mimeType,
+                        byteSize: reference.byteSize ?? 0,
+                        sha256: "",
+                        immutable: reference.immutable,
+                        readable: true,
+                        createdAt: reference.createdAt,
+                      };
+                      return (
+                        <span key={`${reference.resourceId}-${reference.method}`}>
+                          <button type="button" onClick={() => void showPreview(resource)}>
+                            {reference.mimeType?.startsWith("image/")
+                              ? <ImageIcon size={11} />
+                              : <FileText size={11} />}
+                            {resourceName(resource)}
                           </button>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-            </article>
-          ))}
+                          {message.role === "user" && client.removeReference && (
+                            <button
+                              type="button"
+                              aria-label={`删除引用 ${resourceName(resource)}`}
+                              onClick={() =>
+                                void removeMessageReference(message, reference.resourceId)}
+                            >
+                              <X size={10} />
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
 
         <form
@@ -1033,7 +1487,7 @@ export function TaskAgentWorkbench({
           onSubmit={(event) => void sendPrompt(event)}
           onDragEnter={(event) => {
             event.preventDefault();
-            if (selectedSessionId && !busy) setDragActive(true);
+            if (selectedSessionId && !stopping) setDragActive(true);
           }}
           onDragOver={(event) => event.preventDefault()}
           onDragLeave={(event) => {
@@ -1071,18 +1525,32 @@ export function TaskAgentWorkbench({
             )}
             <div className="agent-composer-input">
               <textarea
+                ref={textareaRef}
                 value={draft}
                 aria-label="发送给 PI 的消息"
+                aria-describedby="agent-composer-shortcuts"
                 placeholder={
                   selectedSessionId
-                    ? "输入消息，键入 @ 引用当前任务资源；可粘贴或拖放附件……"
+                    ? busy
+                      ? "运行中：输入明确的 Steer 引导或 Follow-up 后续消息……"
+                      : "输入消息，键入 @ 引用当前任务资源；可粘贴或拖放附件……"
                     : "请先新建 PI 会话"
                 }
-                disabled={!selectedSessionId || busy}
+                disabled={!selectedSessionId || stopping || recovering}
                 onPaste={handlePaste}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
+                  if (
+                    busy &&
+                    event.key === "Enter" &&
+                    (event.metaKey || event.ctrlKey)
+                  ) {
+                    event.preventDefault();
+                    void queuePrompt("steer");
+                  } else if (busy && event.key === "Enter" && event.altKey) {
+                    event.preventDefault();
+                    void queuePrompt("follow_up");
+                  } else if (!busy && event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     event.currentTarget.form?.requestSubmit();
                   }
@@ -1112,20 +1580,73 @@ export function TaskAgentWorkbench({
               className="icon-button"
               aria-label="添加任务附件"
               title="添加任务附件"
-              disabled={!selectedSessionId || busy || importing}
+              disabled={
+                !selectedSessionId ||
+                importing ||
+                stopping ||
+                Boolean(submittingAction)
+              }
               onClick={() => fileInputRef.current?.click()}
             >
               {importing ? <LoaderCircle className="spin" size={14} /> : <Paperclip size={14} />}
             </button>
-            <button
-              type="submit"
-              className="button primary compact"
-              disabled={!selectedSessionId || (!draft.trim() && selectedResources.length === 0) || busy || sending}
-            >
-              {sending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}
-              发送
-            </button>
+            {busy ? (
+              <>
+                <button
+                  type="button"
+                  className="button secondary compact"
+                  disabled={
+                    (!draft.trim() && selectedResources.length === 0) ||
+                    Boolean(submittingAction) ||
+                    stopping ||
+                    !client.steerPrompt
+                  }
+                  onClick={() => void queuePrompt("steer")}
+                >
+                  {submittingAction === "steer"
+                    ? <LoaderCircle className="spin" size={13} />
+                    : <Send size={13} />}
+                  Steer 引导
+                </button>
+                <button
+                  type="button"
+                  className="button secondary compact"
+                  disabled={
+                    (!draft.trim() && selectedResources.length === 0) ||
+                    Boolean(submittingAction) ||
+                    stopping ||
+                    !client.followUpPrompt
+                  }
+                  onClick={() => void queuePrompt("follow_up")}
+                >
+                  {submittingAction === "follow_up"
+                    ? <LoaderCircle className="spin" size={13} />
+                    : <Clock3 size={13} />}
+                  Follow-up 后续
+                </button>
+              </>
+            ) : (
+              <button
+                type="submit"
+                className="button primary compact"
+                disabled={
+                  !selectedSessionId ||
+                  (!draft.trim() && selectedResources.length === 0) ||
+                  Boolean(submittingAction)
+                }
+              >
+                {submittingAction === "send"
+                  ? <LoaderCircle className="spin" size={14} />
+                  : <Send size={14} />}
+                发送
+              </button>
+            )}
           </div>
+          <small id="agent-composer-shortcuts" className="agent-composer-shortcuts">
+            {busy
+              ? "⌘/Ctrl + Enter：Steer · Alt + Enter：Follow-up · Enter：换行"
+              : "Enter：发送 · Shift + Enter：换行"}
+          </small>
           {dragActive && <div className="agent-drop-overlay">松开以保存到当前任务附件</div>}
         </form>
       </div>
@@ -1137,6 +1658,8 @@ export function TaskAgentWorkbench({
               <GitBranch size={15} />
             ) : resourcePanel === "runs" ? (
               <Activity size={15} />
+            ) : resourcePanel === "context" ? (
+              <Boxes size={15} />
             ) : (
               <FolderOpen size={15} />
             )}
@@ -1146,7 +1669,9 @@ export function TaskAgentWorkbench({
                   ? "Git 变更"
                   : resourcePanel === "runs"
                     ? "运行历史"
-                    : "上下文与文件"}
+                    : resourcePanel === "context"
+                      ? "任务上下文"
+                      : "任务文件"}
               </strong>
               <small>仅当前任务</small>
             </span>
@@ -1155,17 +1680,17 @@ export function TaskAgentWorkbench({
         <div className="agent-resource-tabs">
           <button
             type="button"
-            className={resourcePanel === "resources" ? "active" : ""}
-            onClick={() => setResourcePanel("resources")}
+            className={resourcePanel === "context" ? "active" : ""}
+            onClick={() => setResourcePanel("context")}
           >
-            资源 {resources.length}
+            上下文 {contextResources.length}
           </button>
           <button
             type="button"
-            className={resourcePanel === "artifacts" ? "active" : ""}
-            onClick={() => setResourcePanel("artifacts")}
+            className={resourcePanel === "files" ? "active" : ""}
+            onClick={() => setResourcePanel("files")}
           >
-            Artifacts {artifacts.length}
+            文件 {fileResources.length}
           </button>
           <button
             type="button"
@@ -1182,9 +1707,9 @@ export function TaskAgentWorkbench({
             运行
           </button>
         </div>
-        {(resourcePanel === "resources" || resourcePanel === "artifacts") && (
+        {(resourcePanel === "context" || resourcePanel === "files") && (
           <div className="agent-resource-list">
-            {(resourcePanel === "resources" ? resources : artifacts).map((resource) => (
+            {visibleResources.map((resource) => (
               <button
                 type="button"
                 key={resource.id}
@@ -1194,7 +1719,7 @@ export function TaskAgentWorkbench({
                 {resource.mimeType?.startsWith("image/") ? (
                   <ImageIcon size={13} />
                 ) : (
-                  <FileText size={13} />
+                  <File size={13} />
                 )}
                 <span>
                   <strong>{resourceName(resource)}</strong>
@@ -1203,8 +1728,10 @@ export function TaskAgentWorkbench({
                 {resource.proposalState && <em>{resource.proposalState}</em>}
               </button>
             ))}
-            {(resourcePanel === "resources" ? resources : artifacts).length === 0 && (
-              <p>当前任务暂无{resourcePanel === "resources" ? "可引用资源" : " artifacts"}。</p>
+            {visibleResources.length === 0 && (
+              <p>
+                当前任务暂无{resourcePanel === "context" ? "上下文资源" : "附件或 artifacts"}。
+              </p>
             )}
           </div>
         )}
@@ -1224,7 +1751,7 @@ export function TaskAgentWorkbench({
             refreshVersion={runRefreshVersion}
           />
         )}
-        {(resourcePanel === "resources" || resourcePanel === "artifacts") && previewResource && (
+        {(resourcePanel === "context" || resourcePanel === "files") && previewResource && (
           <section className="agent-resource-preview">
             <header>
               <span><strong>{resourceName(previewResource)}</strong><small>{previewResource.logicalPath}</small></span>
@@ -1244,7 +1771,8 @@ export function TaskAgentWorkbench({
             {preview?.kind === "text" && <pre>{preview.content}</pre>}
           </section>
         )}
-      </aside>
+        </aside>
+      </div>
     </section>
   );
 }

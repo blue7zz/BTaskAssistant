@@ -120,6 +120,63 @@ describe("PI agent bridge", () => {
     expect(messages.at(-1)?.status).toBe("cancelled");
   });
 
+  it("pages browser history and keeps Steer separate from Follow-up", async () => {
+    vi.useFakeTimers();
+    const events: AgentEvent[] = [];
+    const unsubscribe = agentClient.subscribe((event) => events.push(event));
+    const session = await agentClient.createSession({
+      taskId: "task_queue",
+      title: "队列测试",
+      mode: "agent",
+      model: "",
+      thinkingLevel: "high",
+    });
+    await agentClient.sendPrompt({
+      taskId: session.taskId,
+      sessionId: session.id,
+      message: "先开始",
+      resourceIds: [],
+    });
+    const steering = await agentClient.steerPrompt?.({
+      taskId: session.taskId,
+      sessionId: session.id,
+      message: "先检查错误",
+      resourceIds: [],
+    });
+    const followUp = await agentClient.followUpPrompt?.({
+      taskId: session.taskId,
+      sessionId: session.id,
+      message: "最后总结",
+      resourceIds: [],
+    });
+    expect(steering?.status).toBe("pending");
+    expect(followUp?.status).toBe("pending");
+
+    const latest = await agentClient.listHistoryPage?.({
+      taskId: session.taskId,
+      sessionId: session.id,
+      cursor: "",
+      limit: 2,
+    });
+    expect(latest).toMatchObject({
+      hasMore: true,
+      messages: [
+        { content: "先检查错误" },
+        { content: "最后总结" },
+      ],
+    });
+
+    await vi.runAllTimersAsync();
+    const messages = await agentClient.listMessages(session.taskId, session.id);
+    expect(messages.some((message) => message.content === "浏览器模拟引导回复：先检查错误")).toBe(true);
+    expect(messages.some((message) => message.content === "浏览器模拟后续回复：最后总结")).toBe(true);
+    expect(events.some((event) =>
+      event.kind === "queue.updated" && event.payload.steeringCount === 1)).toBe(true);
+    expect(events.some((event) =>
+      event.kind === "queue.updated" && event.payload.followUpCount === 1)).toBe(true);
+    unsubscribe();
+  });
+
   it("keeps browser attachments and message references task scoped", async () => {
     vi.useFakeTimers();
     const sessionA = await agentClient.createSession({
@@ -201,6 +258,10 @@ describe("PI agent bridge", () => {
         App: {
           ListAgentSessions: listSessions,
           ListAgentMessages: vi.fn().mockResolvedValue([]),
+          GetAgentHistoryPage: vi.fn().mockResolvedValue({
+            messages: [],
+            hasMore: false,
+          }),
           ListExecutionRuns: vi.fn().mockResolvedValue([]),
           ListAgentToolCalls: vi.fn().mockResolvedValue([]),
           ListAgentPermissionRequests: vi.fn().mockResolvedValue([]),
@@ -209,7 +270,10 @@ describe("PI agent bridge", () => {
           RevokeAgentPermissionGrant: vi.fn(),
           ReadAgentToolOutput: vi.fn(),
           CreateAgentSession: vi.fn(),
+          ResumeAgentSession: vi.fn(),
           SendAgentPrompt: vi.fn(),
+          SteerAgent: vi.fn(),
+          FollowUpAgent: vi.fn(),
           AbortAgentRun: vi.fn(),
           ListAgentResources: vi.fn().mockResolvedValue([]),
           ListAgentArtifacts: vi.fn().mockResolvedValue([]),

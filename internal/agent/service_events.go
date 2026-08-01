@@ -677,9 +677,20 @@ func (service *Service) syncEntriesLocked(
 		for index := range existing {
 			message := &existing[index]
 			if message.PIEntryID == nil && message.Role == role && message.Content != nil && *message.Content == content {
+				wasPending := message.Status == "pending"
 				message.PIEntryID = &entry.ID
+				if wasPending {
+					completedAt := service.timestamp()
+					message.Status = "complete"
+					message.CompletedAt = &completedAt
+				}
 				if err := service.store.UpsertAgentMessage(*message); err != nil {
 					return err
+				}
+				if wasPending {
+					_ = service.emitLocked(managed, "message.end", stringValue(message.RunID), "", map[string]any{
+						"messageId": message.ID, "status": "complete", "content": content,
+					})
 				}
 				matched = true
 				break

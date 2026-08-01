@@ -443,6 +443,84 @@ func (s *SQLiteStore) AgentMessages(taskID string, sessionID string) ([]AgentMes
 	return records, nil
 }
 
+// AgentMessagePage returns the newest messages before beforeSequence. A zero
+// cursor starts at the current tail. Records are returned in timeline order so
+// callers can prepend older pages without re-sorting the complete history.
+func (s *SQLiteStore) AgentMessagePage(
+	taskID string,
+	sessionID string,
+	beforeSequence int64,
+	limit int,
+) ([]AgentMessageRecord, bool, error) {
+	if err := validateScopedID(taskID, sessionID, "agent session"); err != nil {
+		return nil, false, err
+	}
+	if beforeSequence < 0 {
+		return nil, false, errors.New("agent history cursor must not be negative")
+	}
+	if limit < 1 || limit > 200 {
+		return nil, false, errors.New("agent history page size must be between 1 and 200")
+	}
+	database, unlock, err := s.repositoryRead()
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+
+	query := `
+		SELECT id, task_id, session_id, run_id, role, kind, status, content,
+		       content_ref, sequence, pi_entry_id, created_at, completed_at
+		  FROM agent_messages
+		 WHERE task_id = ? AND session_id = ?`
+	args := []any{taskID, sessionID}
+	if beforeSequence > 0 {
+		query += " AND sequence < ?"
+		args = append(args, beforeSequence)
+	}
+	query += " ORDER BY sequence DESC LIMIT ?"
+	args = append(args, limit+1)
+	rows, err := database.Query(query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	records := make([]AgentMessageRecord, 0, limit+1)
+	for rows.Next() {
+		record, scanErr := scanAgentMessage(rows)
+		if scanErr != nil {
+			_ = rows.Close()
+			return nil, false, scanErr
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, false, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+	for left, right := 0, len(records)-1; left < right; left, right = left+1, right-1 {
+		records[left], records[right] = records[right], records[left]
+	}
+	for index := range records {
+		references, referenceErr := agentReferencesWithDB(
+			database,
+			taskID,
+			sessionID,
+			records[index].ID,
+		)
+		if referenceErr != nil {
+			return nil, false, referenceErr
+		}
+		records[index].References = references
+	}
+	return records, hasMore, nil
+}
+
 func (s *SQLiteStore) AppendAgentEvent(record AgentEventRecord) error {
 	if err := validateAgentEventRecord(record); err != nil {
 		return err

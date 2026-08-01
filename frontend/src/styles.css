@@ -6063,6 +6063,119 @@ body.panel-resizing .workspace-grid {
 }
 
 .task-agent-workbench {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  container-type: inline-size;
+  background: #f7f7fa;
+}
+
+.agent-workbench-topbar {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 13px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: white;
+}
+
+.agent-workbench-identity {
+  display: flex;
+  width: min(200px, 22%);
+  min-width: 120px;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-workbench-identity strong {
+  overflow: hidden;
+  color: #34353c;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-status {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.agent-workbench-status > span {
+  display: flex;
+  max-width: 145px;
+  min-width: 64px;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 7px;
+  border: 1px solid #e8e7ee;
+  border-radius: 7px;
+  background: #fafafd;
+}
+
+.agent-workbench-status small,
+.agent-workbench-actions label > span {
+  color: #9b9da5;
+  font-size: 6px;
+}
+
+.agent-workbench-status strong {
+  overflow: hidden;
+  color: #60626a;
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.agent-workbench-actions label {
+  display: flex;
+  min-width: 86px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-workbench-actions select {
+  max-width: 130px;
+  min-height: 27px;
+  padding: 0 6px;
+  border: 1px solid #dcdae9;
+  border-radius: 7px;
+  outline: none;
+  color: #68647d;
+  background: white;
+  font-size: 7px;
+}
+
+.agent-workbench-actions .button {
+  min-height: 27px;
+  white-space: nowrap;
+}
+
+.agent-workbench-actions .icon-button {
+  width: 27px;
+  height: 27px;
+  min-height: 27px;
+}
+
+.agent-workbench-body {
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -6098,6 +6211,18 @@ body.panel-resizing .workspace-grid {
 .agent-session-heading strong {
   color: #383941;
   font-size: 11px;
+}
+
+.agent-session-count {
+  display: grid;
+  min-width: 21px;
+  min-height: 21px;
+  place-items: center;
+  border-radius: 999px;
+  color: #6c6695;
+  background: #eceafd;
+  font-size: 7px;
+  font-weight: 700;
 }
 
 .agent-session-heading .icon-button {
@@ -6254,6 +6379,17 @@ body.panel-resizing .workspace-grid {
   font-size: 7.5px;
 }
 
+.agent-queue-counts {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid #dedaf7;
+  border-radius: 999px;
+  color: #625bb4 !important;
+  background: #f1efff;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .agent-stop-button {
   color: #a2464d;
   border-color: #ecced1;
@@ -6303,6 +6439,59 @@ body.panel-resizing .workspace-grid {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #d5d6db transparent;
+}
+
+.agent-load-history {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid #dedee5;
+  border-radius: 999px;
+  color: #787a83;
+  background: white;
+  font: inherit;
+  font-size: 7.5px;
+  cursor: pointer;
+}
+
+.agent-load-history:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.agent-recovery-card {
+  display: flex;
+  width: min(100%, 620px);
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid #efdbb7;
+  border-radius: 9px;
+  color: #8d651f;
+  background: #fff9ec;
+}
+
+.agent-recovery-card > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-recovery-card strong,
+.agent-recovery-card small {
+  overflow: hidden;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-recovery-card small {
+  color: #9c8357;
+  font-size: 7px;
 }
 
 .agent-security-boundary {
@@ -6745,9 +6934,10 @@ body.panel-resizing .workspace-grid {
 
 .agent-composer {
   position: relative;
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
   align-items: flex-end;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 11px 13px 13px;
   border-top: 1px solid var(--line);
@@ -6782,7 +6972,16 @@ body.panel-resizing .workspace-grid {
 .agent-composer-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 5px;
+}
+
+.agent-composer-shortcuts {
+  grid-column: 1 / -1;
+  color: #a0a2aa;
+  font-size: 6.5px;
+  text-align: right;
 }
 
 .agent-composer-actions .icon-button {
@@ -7419,8 +7618,74 @@ body.panel-resizing .workspace-grid {
   font-size: 7px;
 }
 
-@container (max-width: 520px) {
-  .task-agent-workbench {
+@container (max-width: 900px) {
+  .agent-workbench-topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .agent-workbench-identity {
+    width: min(240px, 36%);
+  }
+
+  .agent-workbench-status {
+    order: 3;
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .agent-workbench-actions {
+    margin-left: auto;
+  }
+
+  .agent-workbench-body {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 285px);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .agent-session-panel {
+    max-height: 118px;
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .agent-session-heading {
+    padding-bottom: 6px;
+  }
+
+  .agent-session-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .agent-session-list > button {
+    min-width: 155px;
+  }
+
+  .agent-runtime-note {
+    display: none;
+  }
+}
+
+@container (max-width: 620px) {
+  .agent-workbench-identity {
+    width: 100%;
+    max-width: none;
+  }
+
+  .agent-workbench-actions {
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+  }
+
+  .agent-workbench-actions label {
+    flex: 0 0 100px;
+  }
+
+  .agent-workbench-body {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr) minmax(160px, 220px);
   }
@@ -7448,6 +7713,15 @@ body.panel-resizing .workspace-grid {
   .agent-resource-panel {
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+
+  .agent-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-composer-actions,
+  .agent-composer-shortcuts {
+    grid-column: 1;
   }
 }
 

@@ -39,6 +39,7 @@ type Store interface {
 	UpsertAgentMessage(storage.AgentMessageRecord) error
 	UpsertAgentMessageAndUpdateSession(storage.AgentMessageRecord, storage.AgentSessionRecord) error
 	AgentMessages(string, string) ([]storage.AgentMessageRecord, error)
+	AgentMessagePage(string, string, int64, int) ([]storage.AgentMessageRecord, bool, error)
 	UpsertAgentMessageWithReferences(storage.AgentMessageRecord, storage.AgentSessionRecord, []storage.AgentReferenceRecord) error
 	AddAgentMessageReference(storage.AgentReferenceRecord) error
 	AgentMessageReferences(string, string, string) ([]storage.AgentReferenceRecord, error)
@@ -98,6 +99,24 @@ type PromptRequest struct {
 	SessionID   string   `json:"sessionId"`
 	Message     string   `json:"message"`
 	ResourceIDs []string `json:"resourceIds"`
+}
+
+type SessionRequest struct {
+	TaskID    string `json:"taskId"`
+	SessionID string `json:"sessionId"`
+}
+
+type HistoryPageRequest struct {
+	TaskID    string `json:"taskId"`
+	SessionID string `json:"sessionId"`
+	Cursor    string `json:"cursor"`
+	Limit     int    `json:"limit"`
+}
+
+type HistoryPage struct {
+	Messages   []storage.AgentMessageRecord `json:"messages"`
+	NextCursor string                       `json:"nextCursor,omitempty"`
+	HasMore    bool                         `json:"hasMore"`
 }
 
 type AttachmentUpload struct {
@@ -203,6 +222,7 @@ type AgentAPI interface {
 	RecoverInterrupted() error
 	Sessions(string) ([]storage.AgentSessionRecord, error)
 	Messages(string, string) ([]storage.AgentMessageRecord, error)
+	HistoryPage(HistoryPageRequest) (HistoryPage, error)
 	Runs(string, string) ([]storage.ExecutionRunRecord, error)
 	ToolCalls(string, string) ([]storage.ToolCallRecord, error)
 	PermissionRequests(string, string) ([]PermissionRequest, error)
@@ -216,7 +236,10 @@ type AgentAPI interface {
 	PreviewResource(ResourcePreviewRequest) (taskspace.FilePreview, error)
 	RemoveReference(RemoveReferenceRequest) error
 	CreateSession(context.Context, CreateSessionRequest) (storage.AgentSessionRecord, error)
+	ResumeSession(context.Context, SessionRequest) (storage.AgentSessionRecord, error)
 	SendPrompt(context.Context, PromptRequest) (storage.ExecutionRunRecord, error)
+	Steer(context.Context, PromptRequest) (storage.AgentMessageRecord, error)
+	FollowUp(context.Context, PromptRequest) (storage.AgentMessageRecord, error)
 	Abort(context.Context, AbortRequest) error
 	StopToolExecution(execution.StopRequest) error
 	ActiveTask(string) bool

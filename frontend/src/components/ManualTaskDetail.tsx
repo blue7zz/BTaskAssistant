@@ -45,8 +45,8 @@ export function ManualTaskDetail({
   onError,
 }: ManualTaskDetailProps) {
   const updateTaskRecord = useWorkspaceStore((state) => state.updateTaskRecord);
-  const [activeView, setActiveView] = useState<"record" | "pi">("record");
-  const [piOpened, setPIOpened] = useState(false);
+  const [activeView, setActiveView] = useState<"record" | "pi">("pi");
+  const [piOpened, setPIOpened] = useState(true);
 
   const run = (action: () => void, message: string) => {
     try {
@@ -59,7 +59,7 @@ export function ManualTaskDetail({
 
   return (
     <section className="manual-task-detail">
-      <header className="manual-task-header">
+      {activeView === "record" && <header className="manual-task-header">
         <div>
           <span className="eyebrow">
             {activeView === "record" ? "纯手工记录" : "原生 PI 会话"}
@@ -97,7 +97,7 @@ export function ManualTaskDetail({
             更新于 {formatDate(task.updatedAt)}
           </span>
         </div>
-      </header>
+      </header>}
 
       <nav className="manual-task-tabs" role="tablist" aria-label="任务工作台">
         <button
@@ -180,6 +180,7 @@ export function ManualTaskDetail({
             key={task.id}
             taskId={task.id}
             taskTitle={task.title}
+            onEditTask={onEdit}
           />
         </div>
       )}

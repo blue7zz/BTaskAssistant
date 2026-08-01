@@ -2,11 +2,53 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 )
+
+func TestAgentMessagePageReadsOnlyTheRequestedHistoryWindow(t *testing.T) {
+	store := newNormalizedRepositoryStore(t)
+	seedNormalizedTask(t, store, "task_history")
+	session := repositorySession("task_history", "session-history")
+	if err := store.UpsertAgentSession(session); err != nil {
+		t.Fatal(err)
+	}
+	for sequence := int64(1); sequence <= 205; sequence++ {
+		content := fmt.Sprintf("message-%03d", sequence)
+		if err := store.UpsertAgentMessage(AgentMessageRecord{
+			ID: fmt.Sprintf("message-%03d", sequence), TaskID: session.TaskID,
+			SessionID: session.ID, Role: "assistant", Kind: "text",
+			Status: "complete", Content: &content, Sequence: sequence,
+			CreatedAt: repositoryTestTime,
+		}); err != nil {
+			t.Fatalf("insert message %d: %v", sequence, err)
+		}
+	}
+
+	latest, hasMore, err := store.AgentMessagePage(session.TaskID, session.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMore || len(latest) != 50 || latest[0].Sequence != 156 || latest[49].Sequence != 205 {
+		t.Fatalf("unexpected latest page: hasMore=%v first=%d last=%d count=%d", hasMore, latest[0].Sequence, latest[len(latest)-1].Sequence, len(latest))
+	}
+	older, olderHasMore, err := store.AgentMessagePage(session.TaskID, session.ID, latest[0].Sequence, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !olderHasMore || len(older) != 50 || older[0].Sequence != 106 || older[49].Sequence != 155 {
+		t.Fatalf("unexpected older page: hasMore=%v first=%d last=%d count=%d", olderHasMore, older[0].Sequence, older[len(older)-1].Sequence, len(older))
+	}
+	if _, _, err := store.AgentMessagePage(session.TaskID, session.ID, -1, 50); err == nil {
+		t.Fatal("negative history cursor was accepted")
+	}
+	if _, _, err := store.AgentMessagePage(session.TaskID, session.ID, 0, 201); err == nil {
+		t.Fatal("oversized history page was accepted")
+	}
+}
 
 const (
 	repositoryTestTime   = "2026-08-01T08:00:00Z"

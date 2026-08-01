@@ -225,6 +225,18 @@ func (a *App) ListAgentMessages(
 	return a.agentService.Messages(taskID, sessionID)
 }
 
+func (a *App) GetAgentHistoryPage(
+	request agent.HistoryPageRequest,
+) (agent.HistoryPage, error) {
+	if a.startupErr != nil {
+		return agent.HistoryPage{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return agent.HistoryPage{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.HistoryPage(request)
+}
+
 func (a *App) ListExecutionRuns(
 	taskID string,
 	sessionID string,
@@ -415,6 +427,18 @@ func (a *App) CreateAgentSession(
 	return a.agentService.CreateSession(a.appContext(), request)
 }
 
+func (a *App) ResumeAgentSession(
+	request agent.SessionRequest,
+) (storage.AgentSessionRecord, error) {
+	if a.startupErr != nil {
+		return storage.AgentSessionRecord{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return storage.AgentSessionRecord{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.ResumeSession(a.appContext(), request)
+}
+
 func (a *App) SendAgentPrompt(
 	request agent.PromptRequest,
 ) (storage.ExecutionRunRecord, error) {
@@ -425,6 +449,30 @@ func (a *App) SendAgentPrompt(
 		return storage.ExecutionRunRecord{}, errors.New("PI 会话服务未初始化")
 	}
 	return a.agentService.SendPrompt(a.appContext(), request)
+}
+
+func (a *App) SteerAgent(
+	request agent.PromptRequest,
+) (storage.AgentMessageRecord, error) {
+	if a.startupErr != nil {
+		return storage.AgentMessageRecord{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return storage.AgentMessageRecord{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Steer(a.appContext(), request)
+}
+
+func (a *App) FollowUpAgent(
+	request agent.PromptRequest,
+) (storage.AgentMessageRecord, error) {
+	if a.startupErr != nil {
+		return storage.AgentMessageRecord{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return storage.AgentMessageRecord{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.FollowUp(a.appContext(), request)
 }
 
 func (a *App) AbortAgentRun(request agent.AbortRequest) error {

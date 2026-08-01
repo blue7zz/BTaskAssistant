@@ -229,6 +229,24 @@ export interface AgentPromptRequest {
   resourceIds: string[];
 }
 
+export interface AgentSessionRequest {
+  taskId: string;
+  sessionId: string;
+}
+
+export interface AgentHistoryPageRequest {
+  taskId: string;
+  sessionId: string;
+  cursor: string;
+  limit: number;
+}
+
+export interface AgentHistoryPage {
+  messages: AgentMessage[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
 export interface AgentResourceSearchRequest {
   taskId: string;
   query: string;

@@ -79,8 +79,8 @@ describe("App smoke test", () => {
     });
 
     expect(container.textContent).toContain("验证任务工作台");
-    expect(container.textContent).toContain("纯手工记录");
-    expect(container.textContent).toContain("优先级：中");
+    expect(container.textContent).toContain("任务 Agent 工作台");
+    expect(container.textContent).toContain("当前任务独立");
     expect(container.textContent).toContain("文本记录");
     expect(container.textContent).toContain("测试来源");
     expect(

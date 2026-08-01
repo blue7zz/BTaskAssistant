@@ -103,6 +103,110 @@ func TestServicePersistsMultiTurnMessagesAndStableEvents(t *testing.T) {
 	}
 }
 
+func TestServicePagesHistoryAndUsesDistinctSteerAndFollowUpCommands(t *testing.T) {
+	store := newServiceTestStore(t, "task_queue", "队列任务")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_queue", Title: "队列会话", Mode: "agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: session.TaskID, SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steering, err := service.Steer(context.Background(), PromptRequest{
+		TaskID: session.TaskID, SessionID: session.ID, Message: "先处理错误路径",
+	})
+	if err != nil {
+		t.Fatalf("steer: %v", err)
+	}
+	followUp, err := service.FollowUp(context.Background(), PromptRequest{
+		TaskID: session.TaskID, SessionID: session.ID, Message: "完成后总结测试",
+	})
+	if err != nil {
+		t.Fatalf("follow-up: %v", err)
+	}
+	if steering.Status != "pending" || followUp.Status != "pending" {
+		t.Fatalf("queued messages were not visibly pending: %#v %#v", steering, followUp)
+	}
+	runtime := factory.runtime(0)
+	if !runtime.called("steer") || !runtime.called("follow_up") {
+		t.Fatal("PI queue commands were conflated")
+	}
+	page, err := service.HistoryPage(HistoryPageRequest{
+		TaskID: session.TaskID, SessionID: session.ID, Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.HasMore || page.NextCursor == "" || len(page.Messages) != 2 ||
+		page.Messages[0].ID != steering.ID || page.Messages[1].ID != followUp.ID {
+		t.Fatalf("unexpected latest history page: %#v", page)
+	}
+	older, err := service.HistoryPage(HistoryPageRequest{
+		TaskID: session.TaskID, SessionID: session.ID, Cursor: page.NextCursor, Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(older.Messages) != 2 || older.Messages[0].Role != "user" || older.Messages[1].Role != "assistant" {
+		t.Fatalf("unexpected older history page: %#v", older)
+	}
+	if _, err := service.HistoryPage(HistoryPageRequest{
+		TaskID: session.TaskID, SessionID: session.ID, Cursor: "not-a-cursor", Limit: 2,
+	}); err == nil {
+		t.Fatal("invalid history cursor was accepted")
+	}
+	if err := service.Abort(context.Background(), AbortRequest{
+		TaskID: session.TaskID, SessionID: session.ID, RunID: run.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceExplicitlyResumesAFailedSession(t *testing.T) {
+	store := newServiceTestStore(t, "task_resume_action", "显式恢复任务")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_resume_action", Title: "恢复会话", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory.runtime(0).crash(errors.New("fake PI crash"), "provider exited")
+	waitForSessionState(t, store, session.TaskID, session.ID, "failed")
+
+	resumed, err := service.ResumeSession(context.Background(), SessionRequest{
+		TaskID: session.TaskID, SessionID: session.ID,
+	})
+	if err != nil {
+		t.Fatalf("resume session: %v", err)
+	}
+	if resumed.State != "idle" || resumed.ErrorMessage != nil || factory.count() != 2 {
+		t.Fatalf("unexpected resumed session %#v; runtimes=%d", resumed, factory.count())
+	}
+}
+
 func TestServiceAbortCancelsOnlyMatchingRun(t *testing.T) {
 	store := newServiceTestStore(t, "task_abort", "停止任务")
 	factory := &fakeRuntimeFactory{}

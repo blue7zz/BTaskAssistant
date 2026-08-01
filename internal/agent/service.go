@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -170,6 +171,41 @@ func (service *Service) Messages(
 	return service.store.AgentMessages(taskID, sessionID)
 }
 
+func (service *Service) HistoryPage(request HistoryPageRequest) (HistoryPage, error) {
+	if _, err := service.store.AgentSession(request.TaskID, request.SessionID); err != nil {
+		return HistoryPage{}, err
+	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = 60
+	}
+	if limit < 1 || limit > 200 {
+		return HistoryPage{}, errors.New("PI 历史分页大小必须在 1 到 200 之间")
+	}
+	var beforeSequence int64
+	if request.Cursor != "" {
+		parsed, err := strconv.ParseInt(request.Cursor, 10, 64)
+		if err != nil || parsed < 1 {
+			return HistoryPage{}, errors.New("PI 历史游标无效")
+		}
+		beforeSequence = parsed
+	}
+	messages, hasMore, err := service.store.AgentMessagePage(
+		request.TaskID,
+		request.SessionID,
+		beforeSequence,
+		limit,
+	)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	page := HistoryPage{Messages: messages, HasMore: hasMore}
+	if hasMore && len(messages) > 0 {
+		page.NextCursor = strconv.FormatInt(messages[0].Sequence, 10)
+	}
+	return page, nil
+}
+
 func (service *Service) Runs(
 	taskID string,
 	sessionID string,
@@ -250,19 +286,36 @@ func (service *Service) CreateSession(
 	return updated, nil
 }
 
+func (service *Service) ResumeSession(
+	ctx context.Context,
+	request SessionRequest,
+) (storage.AgentSessionRecord, error) {
+	managed, err := service.loadManagedSession(request.TaskID, request.SessionID)
+	if err != nil {
+		return storage.AgentSessionRecord{}, err
+	}
+	workspace, err := service.store.EnsureTaskWorkspace(request.TaskID)
+	if err != nil {
+		return storage.AgentSessionRecord{}, err
+	}
+	managed.mutex.Lock()
+	defer managed.mutex.Unlock()
+	if managed.run != nil {
+		return managed.record, errors.New("PI 正在运行，无需恢复当前会话")
+	}
+	if err := service.startRuntimeLocked(ctx, managed, workspace); err != nil {
+		return managed.record, err
+	}
+	return managed.record, nil
+}
+
 func (service *Service) SendPrompt(
 	ctx context.Context,
 	request PromptRequest,
 ) (storage.ExecutionRunRecord, error) {
-	request.Message = strings.TrimSpace(request.Message)
-	if request.Message == "" {
-		if len(request.ResourceIDs) == 0 {
-			return storage.ExecutionRunRecord{}, errors.New("消息不能为空")
-		}
-		request.Message = "请查看所附的当前任务资源。"
-	}
-	if len([]byte(request.Message)) > maxPromptBytes || strings.ContainsRune(request.Message, '\x00') {
-		return storage.ExecutionRunRecord{}, errors.New("消息不能超过 256 KiB 且不得包含 NUL")
+	request, err := normalizePromptRequest(request)
+	if err != nil {
+		return storage.ExecutionRunRecord{}, err
 	}
 	managed, err := service.loadManagedSession(request.TaskID, request.SessionID)
 	if err != nil {
@@ -388,6 +441,116 @@ func (service *Service) SendPrompt(
 		return storage.ExecutionRunRecord{}, err
 	}
 	return managed.run.record, nil
+}
+
+func normalizePromptRequest(request PromptRequest) (PromptRequest, error) {
+	request.Message = strings.TrimSpace(request.Message)
+	if request.Message == "" {
+		if len(request.ResourceIDs) == 0 {
+			return PromptRequest{}, errors.New("消息不能为空")
+		}
+		request.Message = "请查看所附的当前任务资源。"
+	}
+	if len([]byte(request.Message)) > maxPromptBytes || strings.ContainsRune(request.Message, '\x00') {
+		return PromptRequest{}, errors.New("消息不能超过 256 KiB 且不得包含 NUL")
+	}
+	return request, nil
+}
+
+func (service *Service) Steer(
+	ctx context.Context,
+	request PromptRequest,
+) (storage.AgentMessageRecord, error) {
+	return service.queuePrompt(ctx, request, "steer")
+}
+
+func (service *Service) FollowUp(
+	ctx context.Context,
+	request PromptRequest,
+) (storage.AgentMessageRecord, error) {
+	return service.queuePrompt(ctx, request, "follow_up")
+}
+
+func (service *Service) queuePrompt(
+	ctx context.Context,
+	request PromptRequest,
+	command string,
+) (storage.AgentMessageRecord, error) {
+	request, err := normalizePromptRequest(request)
+	if err != nil {
+		return storage.AgentMessageRecord{}, err
+	}
+	if command != "steer" && command != "follow_up" {
+		return storage.AgentMessageRecord{}, errors.New("PI 队列命令不受支持")
+	}
+	managed, err := service.loadManagedSession(request.TaskID, request.SessionID)
+	if err != nil {
+		return storage.AgentMessageRecord{}, err
+	}
+	workspace, err := service.store.EnsureTaskWorkspace(request.TaskID)
+	if err != nil {
+		return storage.AgentMessageRecord{}, err
+	}
+
+	managed.mutex.Lock()
+	defer managed.mutex.Unlock()
+	managed.workspaceRoot = workspace.RootPath
+	if managed.run == nil || managed.runtime == nil || managed.run.stopRequested {
+		return storage.AgentMessageRecord{}, errors.New("当前没有可接收队列消息的 PI 运行")
+	}
+	now := service.timestamp()
+	promptReferences, err := service.resolvePromptReferences(workspace, request, now)
+	if err != nil {
+		return storage.AgentMessageRecord{}, err
+	}
+	runID := managed.run.record.ID
+	content := request.Message
+	message := storage.AgentMessageRecord{
+		ID: newID("message"), TaskID: request.TaskID, SessionID: request.SessionID,
+		RunID: &runID, Role: "user", Kind: "text", Status: "pending",
+		Content: &content, Sequence: service.nextSequenceLocked(managed), CreatedAt: now,
+	}
+	service.touchSessionLocked(managed)
+	if err := service.store.UpsertAgentMessageWithReferences(
+		message,
+		managed.record,
+		promptReferences.references,
+	); err != nil {
+		return storage.AgentMessageRecord{}, err
+	}
+	_ = service.emitLocked(managed, "message.start", runID, "", map[string]any{
+		"messageId": message.ID, "role": "user", "kind": "text", "content": content,
+	})
+	fields := map[string]any{"message": promptReferences.prompt}
+	if len(promptReferences.images) > 0 {
+		fields["images"] = promptReferences.images
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, service.requestTimeout)
+	err = managed.runtime.Call(requestCtx, command, fields, nil)
+	cancel()
+	if err != nil {
+		completedAt := service.timestamp()
+		message.Status = "error"
+		message.CompletedAt = &completedAt
+		_ = service.store.UpsertAgentMessage(message)
+		_ = service.emitLocked(managed, "message.end", runID, "", map[string]any{
+			"messageId": message.ID, "status": "error", "content": content,
+		})
+		return message, err
+	}
+	references, err := service.store.AgentMessageReferences(
+		request.TaskID,
+		request.SessionID,
+		message.ID,
+	)
+	if err != nil {
+		return storage.AgentMessageRecord{}, err
+	}
+	message.References = references
+	_ = service.emitLocked(managed, "queue.queued", runID, "", map[string]any{
+		"messageId": message.ID, "behavior": command,
+	})
+	return message, nil
 }
 
 func (service *Service) Abort(ctx context.Context, request AbortRequest) error {

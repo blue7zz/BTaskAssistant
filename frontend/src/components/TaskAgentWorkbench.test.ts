@@ -467,7 +467,7 @@ describe("TaskAgentWorkbench", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    await act(async () => button(container, "Artifacts 1").click());
+    await act(async () => button(container, "文件 1").click());
     const artifactButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((candidate) => candidate.textContent?.includes("result.md"));
     await act(async () => {
@@ -610,6 +610,275 @@ describe("TaskAgentWorkbench", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("task_new · PI");
     expect(container.textContent).not.toContain("task_old · PI");
+  });
+
+  it("loads a 10,000-message fixture by bounded cursor pages", async () => {
+    const activeSession = session("task_long_history");
+    const fixture: AgentMessage[] = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `message_${index + 1}`,
+      taskId: activeSession.taskId,
+      sessionId: activeSession.id,
+      role: "assistant" as const,
+      kind: "text" as const,
+      status: "complete" as const,
+      content: `历史消息 ${index + 1}`,
+      sequence: index + 1,
+      createdAt: "2026-08-01T08:00:00Z",
+    }));
+    const listHistoryPage = vi.fn(async (request: {
+      cursor: string;
+      limit: number;
+    }) => {
+      const cursor = request.cursor ? Number(request.cursor) : Number.POSITIVE_INFINITY;
+      const eligible = fixture.filter((message) => message.sequence < cursor);
+      const messages = eligible.slice(-request.limit);
+      return {
+        messages,
+        hasMore: eligible.length > messages.length,
+        nextCursor: eligible.length > messages.length
+          ? String(messages[0].sequence)
+          : undefined,
+      };
+    });
+    const listMessages = vi.fn().mockRejectedValue(new Error("不得读取完整历史"));
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([activeSession]),
+      listMessages,
+      listHistoryPage,
+      listRuns: vi.fn().mockResolvedValue([]),
+      createSession: vi.fn(),
+      sendPrompt: vi.fn(),
+      abortRun: vi.fn(),
+      subscribe: () => () => undefined,
+    };
+
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: activeSession.taskId,
+        taskTitle: "长历史任务",
+        client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(listMessages).not.toHaveBeenCalled();
+    expect(listHistoryPage).toHaveBeenCalledWith({
+      taskId: activeSession.taskId,
+      sessionId: activeSession.id,
+      cursor: "",
+      limit: 60,
+    });
+    expect(container.querySelectorAll(".agent-message")).toHaveLength(60);
+    expect(container.textContent).toContain("历史消息 10000");
+    expect(Array.from(container.querySelectorAll(".agent-message p")).some(
+      (message) => message.textContent === "历史消息 1",
+    )).toBe(false);
+
+    await act(async () => {
+      button(container, "加载更早消息").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(listHistoryPage).toHaveBeenLastCalledWith({
+      taskId: activeSession.taskId,
+      sessionId: activeSession.id,
+      cursor: "9941",
+      limit: 60,
+    });
+    expect(container.querySelectorAll(".agent-message")).toHaveLength(120);
+  });
+
+  it("uses distinct active-run actions for Steer and Follow-up", async () => {
+    const activeSession = { ...session("task_steer"), state: "running" as const };
+    const activeRun = { ...run(activeSession.taskId, activeSession.id), state: "running" };
+    const steerPrompt = vi.fn().mockImplementation(async (request) => ({
+      id: "message_steer",
+      taskId: request.taskId,
+      sessionId: request.sessionId,
+      runId: activeRun.id,
+      role: "user" as const,
+      kind: "text" as const,
+      status: "pending" as const,
+      content: request.message,
+      sequence: 10,
+      createdAt: "2026-08-01T08:02:00Z",
+    }));
+    const followUpPrompt = vi.fn().mockImplementation(async (request) => ({
+      id: "message_follow_up",
+      taskId: request.taskId,
+      sessionId: request.sessionId,
+      runId: activeRun.id,
+      role: "user" as const,
+      kind: "text" as const,
+      status: "pending" as const,
+      content: request.message,
+      sequence: 11,
+      createdAt: "2026-08-01T08:03:00Z",
+    }));
+    const sendPrompt = vi.fn();
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([activeSession]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([activeRun]),
+      createSession: vi.fn(),
+      sendPrompt,
+      steerPrompt,
+      followUpPrompt,
+      abortRun: vi.fn(),
+      subscribe: () => () => undefined,
+    };
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: activeSession.taskId,
+        taskTitle: "运行中任务",
+        client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    await act(async () => {
+      setter?.call(textarea, "先处理错误路径");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      button(container, "Steer 引导").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setter?.call(textarea, "结束后补充总结");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      button(container, "Follow-up 后续").click();
+      await Promise.resolve();
+    });
+
+    expect(steerPrompt).toHaveBeenCalledWith({
+      taskId: activeSession.taskId,
+      sessionId: activeSession.id,
+      message: "先处理错误路径",
+      resourceIds: [],
+    });
+    expect(followUpPrompt).toHaveBeenCalledWith({
+      taskId: activeSession.taskId,
+      sessionId: activeSession.id,
+      message: "结束后补充总结",
+      resourceIds: [],
+    });
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("已排队");
+  });
+
+  it("recovers a failed PI session only through the scoped recovery action", async () => {
+    const failedSession: AgentSession = {
+      ...session("task_recovery"),
+      state: "failed",
+      errorMessage: "PI 进程异常退出",
+    };
+    const resumeSession = vi.fn().mockResolvedValue({
+      ...failedSession,
+      state: "idle",
+      errorMessage: undefined,
+    });
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([failedSession]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([]),
+      createSession: vi.fn(),
+      resumeSession,
+      sendPrompt: vi.fn(),
+      abortRun: vi.fn(),
+      subscribe: () => () => undefined,
+    };
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: failedSession.taskId,
+        taskTitle: "恢复任务",
+        client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("当前会话需要恢复");
+    await act(async () => {
+      button(container, "恢复会话").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(resumeSession).toHaveBeenCalledWith({
+      taskId: failedSession.taskId,
+      sessionId: failedSession.id,
+    });
+    expect(container.textContent).not.toContain("当前会话需要恢复");
+  });
+
+  it("drops a late context response after switching task pages", async () => {
+    let resolveOldContext: ((value: AgentResource[]) => void) | undefined;
+    const oldContext = new Promise<AgentResource[]>((resolve) => {
+      resolveOldContext = resolve;
+    });
+    const resource = (taskId: string, name: string): AgentResource => ({
+      id: `resource_${taskId}`,
+      taskId,
+      targetType: "resource",
+      kind: "context",
+      sourceType: "task",
+      logicalPath: `context/${name}.md`,
+      mimeType: "text/markdown",
+      byteSize: 10,
+      sha256: "hash",
+      immutable: false,
+      readable: true,
+      createdAt: "2026-08-01T08:00:00Z",
+    });
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockImplementation(async (taskId) => [session(taskId)]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([]),
+      listResources: vi.fn()
+        .mockReturnValueOnce(oldContext)
+        .mockResolvedValueOnce([resource("task_context_new", "new-context")]),
+      listArtifacts: vi.fn().mockResolvedValue([]),
+      createSession: vi.fn(),
+      sendPrompt: vi.fn(),
+      abortRun: vi.fn(),
+      subscribe: () => () => undefined,
+    };
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: "task_context_old",
+        taskTitle: "旧上下文",
+        client,
+      }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: "task_context_new",
+        taskTitle: "新上下文",
+        client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveOldContext?.([resource("task_context_old", "old-context")]);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("new-context.md");
+    expect(container.textContent).not.toContain("old-context.md");
   });
 
   it("renders task-scoped permission requests and submits a decision only once", async () => {

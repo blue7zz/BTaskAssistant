@@ -1,4 +1,12 @@
-import { ChevronDown, ChevronRight, LoaderCircle, Wrench } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  LoaderCircle,
+  Terminal,
+  TestTube2,
+  Wrench,
+} from "lucide-react";
 import { useState } from "react";
 import type { AgentToolCall, AgentToolOutput } from "../domain/agent";
 
@@ -35,6 +43,24 @@ function durationText(tool: AgentToolCall): string {
   const milliseconds = finishedAt - startedAt;
   if (milliseconds < 1000) return `${milliseconds} ms`;
   return `${(milliseconds / 1000).toFixed(1)} 秒`;
+}
+
+function cardPresentation(tool: AgentToolCall) {
+  if (tool.toolName === "btask_shell") {
+    const command = `${tool.argsJson ?? ""} ${tool.target ?? ""}`.toLowerCase();
+    if (/\b(test|vitest|jest|go test|pytest|build|typecheck|lint|vet)\b/u.test(command)) {
+      return { label: "测试", Icon: TestTube2 };
+    }
+    return { label: "命令", Icon: Terminal };
+  }
+  if (
+    tool.toolName.includes("resource") ||
+    tool.toolName.includes("worktree_file") ||
+    tool.toolName.includes("artifact")
+  ) {
+    return { label: "文件", Icon: FileCode2 };
+  }
+  return { label: "工具", Icon: Wrench };
 }
 
 export function AgentToolCard({ tool, loadOutput, onStop }: AgentToolCardProps) {
@@ -80,10 +106,12 @@ export function AgentToolCard({ tool, loadOutput, onStop }: AgentToolCardProps) 
     }
   };
 
+  const { label, Icon } = cardPresentation(tool);
+
   return (
     <article
       className={`agent-governance-card agent-tool-card risk-${tool.riskLevel}`}
-      aria-label={`工具调用 ${tool.toolName}`}
+      aria-label={`${label}卡片 ${tool.toolName}`}
     >
       <div className="agent-tool-summary-row">
         <button
@@ -93,10 +121,10 @@ export function AgentToolCard({ tool, loadOutput, onStop }: AgentToolCardProps) 
           onClick={() => void toggleDetails()}
         >
           <span className="agent-governance-icon">
-            <Wrench size={13} />
+            <Icon size={13} />
           </span>
           <span>
-            <strong>{tool.toolName}</strong>
+            <strong>{label} · {tool.toolName}</strong>
             <small>{tool.capability} · {tool.target || "未声明目标"}</small>
           </span>
           <span className={`agent-risk-badge risk-${tool.riskLevel}`}>

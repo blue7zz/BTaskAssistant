@@ -1,6 +1,8 @@
 import type {
   AbortAgentRunRequest,
   AgentEvent,
+  AgentHistoryPage,
+  AgentHistoryPageRequest,
   AgentMessage,
   AgentPermissionGrant,
   AgentPermissionRequest,
@@ -11,6 +13,7 @@ import type {
   AgentResourceSearchRequest,
   AgentRun,
   AgentSession,
+  AgentSessionRequest,
   AgentToolCall,
   AgentToolOutput,
   AgentToolOutputRequest,
@@ -37,6 +40,7 @@ interface NativeAgentApp {
     taskId: string,
     sessionId: string,
   ): Promise<AgentMessage[]>;
+  GetAgentHistoryPage(request: AgentHistoryPageRequest): Promise<AgentHistoryPage>;
   ListExecutionRuns(taskId: string, sessionId: string): Promise<AgentRun[]>;
   ListAgentToolCalls(taskId: string, sessionId: string): Promise<AgentToolCall[]>;
   ListAgentPermissionRequests(
@@ -57,7 +61,10 @@ interface NativeAgentApp {
   CreateAgentSession(
     request: CreateAgentSessionRequest,
   ): Promise<AgentSession>;
+  ResumeAgentSession(request: AgentSessionRequest): Promise<AgentSession>;
   SendAgentPrompt(request: AgentPromptRequest): Promise<AgentRun>;
+  SteerAgent(request: AgentPromptRequest): Promise<AgentMessage>;
+  FollowUpAgent(request: AgentPromptRequest): Promise<AgentMessage>;
   AbortAgentRun(request: AbortAgentRunRequest): Promise<void>;
   StopAgentToolExecution?(request: StopAgentToolExecutionRequest): Promise<void>;
   SelectGitRepository?(): Promise<string>;
@@ -81,6 +88,7 @@ export interface AgentClient {
   runtimeMode(): "native" | "browser-mock";
   listSessions(taskId: string): Promise<AgentSession[]>;
   listMessages(taskId: string, sessionId: string): Promise<AgentMessage[]>;
+  listHistoryPage?(request: AgentHistoryPageRequest): Promise<AgentHistoryPage>;
   listRuns(taskId: string, sessionId: string): Promise<AgentRun[]>;
   listToolCalls?(taskId: string, sessionId: string): Promise<AgentToolCall[]>;
   listPermissionRequests?(
@@ -99,7 +107,10 @@ export interface AgentClient {
   ): Promise<AgentPermissionGrant>;
   readToolOutput?(request: AgentToolOutputRequest): Promise<AgentToolOutput>;
   createSession(request: CreateAgentSessionRequest): Promise<AgentSession>;
+  resumeSession?(request: AgentSessionRequest): Promise<AgentSession>;
   sendPrompt(request: AgentPromptRequest): Promise<AgentRun>;
+  steerPrompt?(request: AgentPromptRequest): Promise<AgentMessage>;
+  followUpPrompt?(request: AgentPromptRequest): Promise<AgentMessage>;
   abortRun(request: AbortAgentRunRequest): Promise<void>;
   stopToolExecution?(request: StopAgentToolExecutionRequest): Promise<void>;
   selectGitRepository?(): Promise<string>;
@@ -131,6 +142,7 @@ function nativeAgentApp(): NativeAgentApp {
   if (
     typeof app?.ListAgentSessions !== "function" ||
     typeof app.ListAgentMessages !== "function" ||
+    typeof app.GetAgentHistoryPage !== "function" ||
     typeof app.ListExecutionRuns !== "function" ||
     typeof app.ListAgentToolCalls !== "function" ||
     typeof app.ListAgentPermissionRequests !== "function" ||
@@ -139,7 +151,10 @@ function nativeAgentApp(): NativeAgentApp {
     typeof app.RevokeAgentPermissionGrant !== "function" ||
     typeof app.ReadAgentToolOutput !== "function" ||
     typeof app.CreateAgentSession !== "function" ||
+    typeof app.ResumeAgentSession !== "function" ||
     typeof app.SendAgentPrompt !== "function" ||
+    typeof app.SteerAgent !== "function" ||
+    typeof app.FollowUpAgent !== "function" ||
     typeof app.AbortAgentRun !== "function" ||
     typeof app.ListAgentResources !== "function" ||
     typeof app.ListAgentArtifacts !== "function" ||
@@ -194,10 +209,19 @@ const browserResources = new Map<string, AgentResource[]>();
 const browserPreviews = new Map<string, AgentResourcePreview>();
 const browserListeners = new Set<(event: AgentEvent) => void>();
 const browserTimers = new Set<number>();
-const browserRuns = new Map<
-  string,
-  { run: AgentRun; assistantId: string; timers: number[]; }
->();
+interface BrowserQueuedMessage {
+  message: AgentMessage;
+  behavior: "steer" | "follow_up";
+}
+
+interface BrowserActiveRun {
+  run: AgentRun;
+  assistantId: string;
+  timers: number[];
+  queued: BrowserQueuedMessage[];
+}
+
+const browserRuns = new Map<string, BrowserActiveRun>();
 let browserID = 0;
 let browserTick = 0;
 
@@ -364,7 +388,8 @@ function scheduleBrowserRun(
     });
   });
   schedule(10 * (parts.length + 1), () => {
-    if (!browserRuns.has(run.id)) return;
+    const active = browserRuns.get(run.id);
+    if (!active) return;
     const completedAt = browserTimestamp();
     assistant.status = "complete";
     assistant.completedAt = completedAt;
@@ -378,6 +403,71 @@ function scheduleBrowserRun(
       { messageId: assistant.id, status: "complete", content: assistant.content },
       run.id,
     );
+    const messages = browserMessages.get(messageKey(session.taskId, session.id))!;
+    for (const queued of active.queued) {
+      const queuedAt = browserTimestamp();
+      queued.message.status = "complete";
+      queued.message.completedAt = queuedAt;
+      emitBrowserEvent(
+        session,
+        "message.end",
+        {
+          messageId: queued.message.id,
+          status: "complete",
+          content: queued.message.content,
+        },
+        run.id,
+      );
+      const queuedReply = queued.behavior === "steer"
+        ? `浏览器模拟引导回复：${queued.message.content ?? ""}`
+        : `浏览器模拟后续回复：${queued.message.content ?? ""}`;
+      const queuedAssistant: AgentMessage = {
+        id: nextBrowserID("message"),
+        taskId: session.taskId,
+        sessionId: session.id,
+        runId: run.id,
+        role: "assistant",
+        kind: "text",
+        status: "complete",
+        content: queuedReply,
+        sequence: session.lastSequence + 1,
+        createdAt: queuedAt,
+        completedAt: queuedAt,
+      };
+      session.lastSequence += 1;
+      messages.push(queuedAssistant);
+      emitBrowserEvent(
+        session,
+        "message.start",
+        { messageId: queuedAssistant.id, role: "assistant", kind: "text" },
+        run.id,
+      );
+      emitBrowserEvent(
+        session,
+        "message.delta",
+        {
+          messageId: queuedAssistant.id,
+          delta: queuedReply,
+          accumulatedChars: Array.from(queuedReply).length,
+        },
+        run.id,
+      );
+      emitBrowserEvent(
+        session,
+        "message.end",
+        { messageId: queuedAssistant.id, status: "complete", content: queuedReply },
+        run.id,
+      );
+      run.resultSummary = queuedReply;
+    }
+    if (active.queued.length > 0) {
+      emitBrowserEvent(
+        session,
+        "queue.updated",
+        { steeringCount: 0, followUpCount: 0 },
+        run.id,
+      );
+    }
     emitBrowserEvent(session, "agent.settled", {}, run.id);
     emitBrowserEvent(
       session,
@@ -389,6 +479,78 @@ function scheduleBrowserRun(
     browserRuns.delete(run.id);
   });
   return timers;
+}
+
+function queueBrowserPrompt(
+  request: AgentPromptRequest,
+  behavior: BrowserQueuedMessage["behavior"],
+): AgentMessage {
+  const content = request.message.trim() ||
+    ((request.resourceIds?.length ?? 0) > 0 ? "请查看所附的当前任务资源。" : "");
+  if (!content) throw new Error("消息不能为空");
+  const active = Array.from(browserRuns.values()).find(
+    ({ run }) =>
+      run.taskId === request.taskId && run.sessionId === request.sessionId,
+  );
+  if (!active) throw new Error("当前没有可接收队列消息的 PI 运行");
+  const session = browserSession(request.taskId, request.sessionId);
+  const createdAt = browserTimestamp();
+  const message: AgentMessage = {
+    id: nextBrowserID("message"),
+    taskId: request.taskId,
+    sessionId: request.sessionId,
+    runId: active.run.id,
+    role: "user",
+    kind: "text",
+    status: "pending",
+    content,
+    sequence: session.lastSequence + 1,
+    createdAt,
+    references: (request.resourceIds ?? []).map((resourceId, position) => {
+      const resource = ensureBrowserResources(request.taskId).find(
+        (candidate) => candidate.id === resourceId,
+      );
+      if (!resource) throw new Error("引用不属于当前任务");
+      return {
+        taskId: request.taskId,
+        sessionId: request.sessionId,
+        messageId: "",
+        resourceId,
+        targetType: resource.targetType,
+        method: resource.kind === "attachment" ? "attachment" : "mention",
+        position,
+        createdAt,
+        kind: resource.kind,
+        sourceType: resource.sourceType,
+        logicalPath: resource.logicalPath,
+        mimeType: resource.mimeType,
+        byteSize: resource.byteSize,
+        immutable: resource.immutable,
+      };
+    }),
+  };
+  message.references?.forEach((reference) => {
+    reference.messageId = message.id;
+  });
+  session.lastSequence += 1;
+  browserMessages.get(messageKey(request.taskId, request.sessionId))!.push(message);
+  active.queued.push({ message, behavior });
+  emitBrowserEvent(
+    session,
+    "message.start",
+    { messageId: message.id, role: "user", kind: "text", content },
+    active.run.id,
+  );
+  emitBrowserEvent(
+    session,
+    "queue.updated",
+    {
+      steeringCount: active.queued.filter((item) => item.behavior === "steer").length,
+      followUpCount: active.queued.filter((item) => item.behavior === "follow_up").length,
+    },
+    active.run.id,
+  );
+  return copyMessage(message);
 }
 
 const browserAgentClient: AgentClient = {
@@ -403,6 +565,26 @@ const browserAgentClient: AgentClient = {
     return (browserMessages.get(messageKey(taskId, sessionId)) ?? [])
       .map(copyMessage)
       .sort((left, right) => left.sequence - right.sequence);
+  },
+  async listHistoryPage(request) {
+    browserSession(request.taskId, request.sessionId);
+    const limit = Math.min(Math.max(request.limit || 60, 1), 200);
+    const cursor = request.cursor ? Number(request.cursor) : Number.POSITIVE_INFINITY;
+    if (request.cursor && (!Number.isSafeInteger(cursor) || cursor < 1)) {
+      throw new Error("PI 历史游标无效");
+    }
+    const eligible = (browserMessages.get(messageKey(request.taskId, request.sessionId)) ?? [])
+      .filter((message) => message.sequence < cursor)
+      .sort((left, right) => left.sequence - right.sequence);
+    const start = Math.max(0, eligible.length - limit);
+    const messages = eligible.slice(start).map(copyMessage);
+    return {
+      messages,
+      hasMore: start > 0,
+      nextCursor: start > 0 && messages.length > 0
+        ? String(messages[0].sequence)
+        : undefined,
+    };
   },
   async listRuns(taskId, sessionId) {
     browserSession(taskId, sessionId);
@@ -559,6 +741,16 @@ const browserAgentClient: AgentClient = {
     );
     return copySession(session);
   },
+  async resumeSession(request) {
+    const session = browserSession(request.taskId, request.sessionId);
+    if (Array.from(browserRuns.values()).some(({ run }) => run.sessionId === session.id)) {
+      throw new Error("PI 正在运行，无需恢复当前会话");
+    }
+    session.state = "idle";
+    session.errorMessage = undefined;
+    emitBrowserEvent(session, "session.state", { state: "idle" });
+    return copySession(session);
+  },
   async sendPrompt(request) {
     const content = request.message.trim() ||
       ((request.resourceIds?.length ?? 0) > 0 ? "请查看所附的当前任务资源。" : "");
@@ -664,10 +856,21 @@ const browserAgentClient: AgentClient = {
       run.id,
     );
     const reply = `浏览器模拟回复：${content}`;
-    const active = { run, assistantId: assistant.id, timers: [] as number[] };
+    const active: BrowserActiveRun = {
+      run,
+      assistantId: assistant.id,
+      timers: [],
+      queued: [],
+    };
     browserRuns.set(run.id, active);
     active.timers = scheduleBrowserRun(session, run, assistant, reply);
     return { ...run };
+  },
+  async steerPrompt(request) {
+    return queueBrowserPrompt(request, "steer");
+  },
+  async followUpPrompt(request) {
+    return queueBrowserPrompt(request, "follow_up");
   },
   async abortRun(request) {
     const active = browserRuns.get(request.runId);
@@ -747,6 +950,7 @@ const nativeAgentClient: AgentClient = {
   listSessions: (taskId) => nativeAgentApp().ListAgentSessions(taskId),
   listMessages: (taskId, sessionId) =>
     nativeAgentApp().ListAgentMessages(taskId, sessionId),
+  listHistoryPage: (request) => nativeAgentApp().GetAgentHistoryPage(request),
   listRuns: (taskId, sessionId) =>
     nativeAgentApp().ListExecutionRuns(taskId, sessionId),
   listToolCalls: (taskId, sessionId) =>
@@ -761,7 +965,10 @@ const nativeAgentClient: AgentClient = {
     nativeAgentApp().RevokeAgentPermissionGrant(request),
   readToolOutput: (request) => nativeAgentApp().ReadAgentToolOutput(request),
   createSession: (request) => nativeAgentApp().CreateAgentSession(request),
+  resumeSession: (request) => nativeAgentApp().ResumeAgentSession(request),
   sendPrompt: (request) => nativeAgentApp().SendAgentPrompt(request),
+  steerPrompt: (request) => nativeAgentApp().SteerAgent(request),
+  followUpPrompt: (request) => nativeAgentApp().FollowUpAgent(request),
   abortRun: (request) => nativeAgentApp().AbortAgentRun(request),
   stopToolExecution: (request) => {
     const app = nativeAgentApp();
@@ -830,6 +1037,10 @@ export const agentClient: AgentClient = {
       taskId,
       sessionId,
     ),
+  listHistoryPage: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listHistoryPage!(
+      request,
+    ),
   listRuns: (taskId, sessionId) =>
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listRuns(
       taskId,
@@ -864,8 +1075,20 @@ export const agentClient: AgentClient = {
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).createSession(
       request,
     ),
+  resumeSession: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).resumeSession!(
+      request,
+    ),
   sendPrompt: (request) =>
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).sendPrompt(
+      request,
+    ),
+  steerPrompt: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).steerPrompt!(
+      request,
+    ),
+  followUpPrompt: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).followUpPrompt!(
       request,
     ),
   abortRun: (request) =>
