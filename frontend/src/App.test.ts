@@ -7,7 +7,10 @@ import {
   DEFAULT_DAILY_REPORT_SETTINGS,
   createEmptyDailyReportDraft,
 } from "./domain/report";
-import { useWorkspaceStore } from "./store/workspace";
+import {
+  useWorkspaceHydrationStore,
+  useWorkspaceStore,
+} from "./store/workspace";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +21,10 @@ describe("App smoke test", () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    useWorkspaceHydrationStore.setState({
+      hydrated: true,
+      error: undefined,
+    });
     const dailyReportDraft = createEmptyDailyReportDraft("2026-07-30");
     useWorkspaceStore.setState({
       tasks: [],
@@ -59,6 +66,23 @@ describe("App smoke test", () => {
     expect(container.textContent).toContain("任务池还是空的");
     expect(container.textContent).toContain("添加第一个任务");
     expect(container.textContent).toContain("导入聊天记录");
+  });
+
+  it("shows a retry action instead of an endless loading screen after hydration fails", async () => {
+    useWorkspaceHydrationStore.setState({
+      hydrated: true,
+      error: "旧任务目录缺少所有权标记",
+    });
+
+    await act(async () => {
+      root.render(createElement(App));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("本地任务加载失败");
+    expect(container.textContent).toContain("旧任务目录缺少所有权标记");
+    expect(container.textContent).toContain("重新加载");
+    expect(container.textContent).not.toContain("正在加载本地任务");
   });
 
   it("renders a created task in the inbox workbench", async () => {

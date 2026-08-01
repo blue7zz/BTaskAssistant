@@ -172,12 +172,7 @@ func ensureTaskDirectory(root *os.Root, taskID string) error {
 		if err := root.Mkdir(taskID, 0o700); err != nil {
 			return fmt.Errorf("create task directory %q: %w", taskID, err)
 		}
-		marker, err := json.Marshal(taskMarker{ID: taskID})
-		if err != nil {
-			return err
-		}
-		marker = append(marker, '\n')
-		if err := writeRootFile(root, filepath.Join(taskID, taskMarkerFilename), marker); err != nil {
+		if err := writeTaskMarker(root, taskID); err != nil {
 			_ = root.Remove(taskID)
 			return err
 		}
@@ -191,6 +186,12 @@ func ensureTaskDirectory(root *os.Root, taskID string) error {
 	}
 	markerPath := filepath.Join(taskID, taskMarkerFilename)
 	markerInfo, err := root.Lstat(markerPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := adoptLegacyTaskDirectory(root, taskID); err != nil {
+			return err
+		}
+		return writeTaskMarker(root, taskID)
+	}
 	if err != nil || markerInfo.Mode()&os.ModeSymlink != 0 || !markerInfo.Mode().IsRegular() {
 		return fmt.Errorf("task directory %q is not managed by BTaskAssistant", taskID)
 	}
@@ -201,6 +202,42 @@ func ensureTaskDirectory(root *os.Root, taskID string) error {
 	var marker taskMarker
 	if err := json.Unmarshal(markerContent, &marker); err != nil || marker.ID != taskID {
 		return fmt.Errorf("task directory %q has an invalid ownership marker", taskID)
+	}
+	return nil
+}
+
+func writeTaskMarker(root *os.Root, taskID string) error {
+	marker, err := json.Marshal(taskMarker{ID: taskID})
+	if err != nil {
+		return err
+	}
+	marker = append(marker, '\n')
+	return writeRootFile(root, filepath.Join(taskID, taskMarkerFilename), marker)
+}
+
+func adoptLegacyTaskDirectory(root *os.Root, taskID string) error {
+	entries, err := fs.ReadDir(root.FS(), taskID)
+	if err != nil {
+		return fmt.Errorf("read legacy task directory %q: %w", taskID, err)
+	}
+	if len(entries) != 1 || entries[0].Name() != taskContextFilename {
+		return fmt.Errorf("task directory %q is not managed by BTaskAssistant", taskID)
+	}
+
+	contextPath := filepath.Join(taskID, taskContextFilename)
+	contextInfo, err := root.Lstat(contextPath)
+	if err != nil || contextInfo.Mode()&os.ModeSymlink != 0 || !contextInfo.Mode().IsRegular() {
+		return fmt.Errorf("task directory %q has an invalid legacy context", taskID)
+	}
+	content, err := root.ReadFile(contextPath)
+	if err != nil {
+		return fmt.Errorf("read legacy task context %q: %w", taskID, err)
+	}
+	var legacy struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(content, &legacy); err != nil || legacy.ID != taskID {
+		return fmt.Errorf("task directory %q has an invalid legacy context", taskID)
 	}
 	return nil
 }

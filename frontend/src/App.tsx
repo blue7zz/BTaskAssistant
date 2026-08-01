@@ -16,6 +16,7 @@ import {
   MessageSquareText,
   NotebookPen,
   Plus,
+  RefreshCw,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -43,6 +44,7 @@ import {
   type EngineStatus,
 } from "./lib/bridge";
 import {
+  useWorkspaceHydrationStore,
   useWorkspaceStore,
   type StatusFilter,
 } from "./store/workspace";
@@ -116,7 +118,8 @@ export default function App() {
   const planeSettings = useWorkspaceStore((state) => state.planeSettings);
   const selectedTaskID = useWorkspaceStore((state) => state.selectedTaskId);
   const statusFilter = useWorkspaceStore((state) => state.statusFilter);
-  const hydrated = useWorkspaceStore((state) => state.hydrated);
+  const hydrated = useWorkspaceHydrationStore((state) => state.hydrated);
+  const hydrationError = useWorkspaceHydrationStore((state) => state.error);
   const selectTask = useWorkspaceStore((state) => state.selectTask);
   const setStatusFilter = useWorkspaceStore((state) => state.setStatusFilter);
   const moveTaskToTrash = useWorkspaceStore(
@@ -128,6 +131,7 @@ export default function App() {
   );
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<ComposerMode>("task");
+  const [hydrationRetrying, setHydrationRetrying] = useState(false);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<Notice>();
   const [engines, setEngines] = useState<EngineStatus[]>([]);
@@ -470,6 +474,16 @@ export default function App() {
     "--task-list-width": `${taskListWidth}px`,
   } as CSSProperties;
 
+  const retryWorkspaceHydration = async () => {
+    setHydrationRetrying(true);
+    useWorkspaceHydrationStore.getState().start();
+    try {
+      await useWorkspaceStore.persist.rehydrate();
+    } finally {
+      setHydrationRetrying(false);
+    }
+  };
+
   if (!hydrated) {
     return (
       <div className="loading-screen">
@@ -477,6 +491,27 @@ export default function App() {
           <Archive size={26} />
         </div>
         <strong>正在加载本地任务…</strong>
+      </div>
+    );
+  }
+
+  if (hydrationError) {
+    return (
+      <div className="loading-screen" role="alert">
+        <div className="brand-mark large">
+          <Archive size={26} />
+        </div>
+        <strong>本地任务加载失败</strong>
+        <span className="loading-error-message">{hydrationError}</span>
+        <button
+          type="button"
+          className="button primary"
+          disabled={hydrationRetrying}
+          onClick={() => void retryWorkspaceHydration()}
+        >
+          <RefreshCw size={14} />
+          {hydrationRetrying ? "正在重试…" : "重新加载"}
+        </button>
       </div>
     );
   }

@@ -235,6 +235,98 @@ func TestSQLiteStoreLoadIsReadOnlyAndReconcileBackfillsTaskContexts(t *testing.T
 	}
 }
 
+func TestSQLiteStoreReconcileAdoptsLegacyTaskContextDirectory(t *testing.T) {
+	root := t.TempDir()
+	store := NewSQLiteStoreAt(filepath.Join(root, "btask.db"))
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.Open(); err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	payload := `{"state":{"tasks":[{"id":"task_legacy_directory","title":"旧目录任务","revision":3}]}}`
+	database, err := store.readyDatabase()
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO workspace_state(id, payload) VALUES (1, ?)`,
+		payload,
+	); err != nil {
+		t.Fatalf("seed workspace state: %v", err)
+	}
+
+	taskDirectory := filepath.Join(root, "tasks", "task_legacy_directory")
+	if err := os.MkdirAll(taskDirectory, 0o700); err != nil {
+		t.Fatalf("create legacy task directory: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(taskDirectory, taskContextFilename),
+		[]byte(`{"id":"task_legacy_directory","title":"旧目录任务"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write legacy task context: %v", err)
+	}
+
+	if err := store.ReconcileTaskContexts(); err != nil {
+		t.Fatalf("reconcile legacy task directory: %v", err)
+	}
+	markerContent, err := os.ReadFile(
+		filepath.Join(taskDirectory, taskMarkerFilename),
+	)
+	if err != nil {
+		t.Fatalf("read adopted ownership marker: %v", err)
+	}
+	var marker taskMarker
+	if err := json.Unmarshal(markerContent, &marker); err != nil || marker.ID != "task_legacy_directory" {
+		t.Fatalf("unexpected adopted marker %#v, error %v", marker, err)
+	}
+	workspace, err := store.TaskWorkspace("task_legacy_directory")
+	if err != nil || workspace.State != "ready" {
+		t.Fatalf("legacy task workspace was not reconciled: %#v, %v", workspace, err)
+	}
+}
+
+func TestSQLiteStoreRejectsUnverifiableLegacyTaskContextDirectory(t *testing.T) {
+	root := t.TempDir()
+	store := NewSQLiteStoreAt(filepath.Join(root, "btask.db"))
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.Open(); err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	payload := `{"state":{"tasks":[{"id":"task_unverifiable","title":"不得认领"}]}}`
+	database, err := store.readyDatabase()
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO workspace_state(id, payload) VALUES (1, ?)`,
+		payload,
+	); err != nil {
+		t.Fatalf("seed workspace state: %v", err)
+	}
+
+	taskDirectory := filepath.Join(root, "tasks", "task_unverifiable")
+	if err := os.MkdirAll(taskDirectory, 0o700); err != nil {
+		t.Fatalf("create unmanaged task directory: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(taskDirectory, taskContextFilename),
+		[]byte(`{"id":"task_other"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write mismatched legacy task context: %v", err)
+	}
+
+	err = store.ReconcileTaskContexts()
+	if err == nil || !strings.Contains(err.Error(), "invalid legacy context") {
+		t.Fatalf("expected unverifiable legacy directory error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(taskDirectory, taskMarkerFilename)); !os.IsNotExist(err) {
+		t.Fatalf("unverifiable directory must not receive an ownership marker: %v", err)
+	}
+}
+
 func TestSQLiteStorePreservesTaskDirectoriesAfterTaskDeletion(
 	t *testing.T,
 ) {

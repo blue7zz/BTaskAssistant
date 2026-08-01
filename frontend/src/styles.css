@@ -459,6 +459,18 @@ select:focus-visible {
   font-size: 12px;
 }
 
+.loading-error-message {
+  max-width: min(560px, calc(100vw - 64px));
+  color: #b54747;
+  line-height: 1.6;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.loading-screen > .button {
+  margin-top: 2px;
+}
+
 .empty-workspace {
   display: flex;
   min-height: 0;

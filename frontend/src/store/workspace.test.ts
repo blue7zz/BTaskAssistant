@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_PLANE_CANDIDATE_FILTERS,
   DEFAULT_PLANE_SETTINGS,
+  useWorkspaceHydrationStore,
   useWorkspaceStore,
 } from "./workspace";
 
@@ -42,6 +43,10 @@ describe("workspace store", () => {
   beforeEach(() => {
     window.go = undefined;
     window.localStorage.clear();
+    useWorkspaceHydrationStore.setState({
+      hydrated: true,
+      error: undefined,
+    });
     const dailyReportDraft = createEmptyDailyReportDraft("2026-07-30");
     useWorkspaceStore.setState({
       tasks: [],
@@ -65,6 +70,44 @@ describe("workspace store", () => {
       statusFilter: "all",
       hydrated: true,
     });
+  });
+
+  it("leaves the loading screen with a retryable error when migration persistence fails", async () => {
+    const loadState = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        version: 13,
+        state: {
+          tasks: [],
+          trashedTasks: [],
+          collectionCandidates: [],
+          statusFilter: "all",
+        },
+      }),
+    );
+    const saveState = vi
+      .fn()
+      .mockRejectedValue(new Error("旧任务目录缺少所有权标记"));
+    useWorkspaceStore.setState({
+      hydrated: false,
+    });
+    useWorkspaceHydrationStore.getState().start();
+    window.go = {
+      main: {
+        App: {
+          LoadState: loadState,
+          SaveState: saveState,
+        } as never,
+      },
+    };
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    expect(loadState).toHaveBeenCalledOnce();
+    expect(saveState).toHaveBeenCalled();
+    expect(useWorkspaceHydrationStore.getState().hydrated).toBe(true);
+    expect(useWorkspaceHydrationStore.getState().error).toContain(
+      "旧任务目录缺少所有权标记",
+    );
   });
 
   it("defaults legacy Plane settings to a visible task source", async () => {

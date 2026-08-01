@@ -73,6 +73,30 @@ export const DEFAULT_PLANE_CANDIDATE_FILTERS: PlaneCandidateFilters = {
   assignees: [],
 };
 
+function hydrationErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  const message = String(error ?? "").trim();
+  return message || "本地任务恢复失败，请重试";
+}
+
+interface WorkspaceHydrationStatus {
+  hydrated: boolean;
+  error?: string;
+  start(): void;
+  finish(error?: string): void;
+}
+
+export const useWorkspaceHydrationStore = create<WorkspaceHydrationStatus>()(
+  (set) => ({
+    hydrated: false,
+    error: undefined,
+    start: () => set({ hydrated: false, error: undefined }),
+    finish: (error) => set({ hydrated: true, error }),
+  }),
+);
+
 function normalizeDevelopmentEngine(value: unknown): DevelopmentEngine {
   return migrateEngineIdentity(value, CODEX_ENGINE) as DevelopmentEngine;
 }
@@ -1933,10 +1957,22 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         selectedTaskId: state.selectedTaskId,
         statusFilter: state.statusFilter,
       }),
-      onRehydrateStorage: () => (state) => {
-        if (!state) return;
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          useWorkspaceHydrationStore
+            .getState()
+            .finish(hydrationErrorMessage(error));
+          return;
+        }
+        if (!state) {
+          useWorkspaceHydrationStore
+            .getState()
+            .finish("本地任务恢复失败，请重试");
+          return;
+        }
         state.selectDailyReportDate(localDateString());
         state.setHydrated(true);
+        useWorkspaceHydrationStore.getState().finish();
       },
     },
   ),
