@@ -58,19 +58,20 @@ type ExecutionRunRecord struct {
 }
 
 type AgentMessageRecord struct {
-	ID          string  `json:"id"`
-	TaskID      string  `json:"taskId"`
-	SessionID   string  `json:"sessionId"`
-	RunID       *string `json:"runId,omitempty"`
-	Role        string  `json:"role"`
-	Kind        string  `json:"kind"`
-	Status      string  `json:"status"`
-	Content     *string `json:"content,omitempty"`
-	ContentRef  *string `json:"contentRef,omitempty"`
-	Sequence    int64   `json:"sequence"`
-	PIEntryID   *string `json:"piEntryId,omitempty"`
-	CreatedAt   string  `json:"createdAt"`
-	CompletedAt *string `json:"completedAt,omitempty"`
+	ID          string                 `json:"id"`
+	TaskID      string                 `json:"taskId"`
+	SessionID   string                 `json:"sessionId"`
+	RunID       *string                `json:"runId,omitempty"`
+	Role        string                 `json:"role"`
+	Kind        string                 `json:"kind"`
+	Status      string                 `json:"status"`
+	Content     *string                `json:"content,omitempty"`
+	ContentRef  *string                `json:"contentRef,omitempty"`
+	Sequence    int64                  `json:"sequence"`
+	PIEntryID   *string                `json:"piEntryId,omitempty"`
+	CreatedAt   string                 `json:"createdAt"`
+	CompletedAt *string                `json:"completedAt,omitempty"`
+	References  []AgentReferenceRecord `json:"references,omitempty"`
 }
 
 type AgentEventRecord struct {
@@ -413,7 +414,6 @@ func (s *SQLiteStore) AgentMessages(taskID string, sessionID string) ([]AgentMes
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	records := make([]AgentMessageRecord, 0)
 	for rows.Next() {
 		record, err := scanAgentMessage(rows)
@@ -422,7 +422,25 @@ func (s *SQLiteStore) AgentMessages(taskID string, sessionID string) ([]AgentMes
 		}
 		records = append(records, record)
 	}
-	return records, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	references, err := agentReferencesWithDB(database, taskID, sessionID, "")
+	if err != nil {
+		return nil, err
+	}
+	byMessage := make(map[string][]AgentReferenceRecord)
+	for _, reference := range references {
+		byMessage[reference.MessageID] = append(byMessage[reference.MessageID], reference)
+	}
+	for index := range records {
+		records[index].References = byMessage[records[index].ID]
+	}
+	return records, nil
 }
 
 func (s *SQLiteStore) AppendAgentEvent(record AgentEventRecord) error {

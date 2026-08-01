@@ -193,6 +193,14 @@ React：
 
 真实 PI 图片理解：external_validation_pending，需 provider 支持和凭据。
 
+### 阶段 3 自动验证记录（2026-08-01）
+
+- taskspace/storage/agent 专项测试覆盖同名跨任务文件、MIME/magic/数量/大小、路径穿越与 symlink、引用删除、重启恢复、v3→v4 幂等迁移、proposal 保护和未知工具失败关闭。
+- React/Vitest 覆盖当前任务 `@` 选择、纯附件发送、浏览器 Mock 的任务隔离、引用移除、artifact 即时刷新、预览与系统打开桥。
+- 本机 PI 0.82.1 隔离探针覆盖 get_state 和真实内嵌 gate Extension 加载/heartbeat；不需要 provider 凭据。
+- 阶段提交前必须再执行 `go test ./...`、`go vet ./...`、前端 typecheck/test/build、真实 PI probe/gate，以及 Wails build。最终命令结果写入阶段交付汇报。
+- 真实模型图片理解、模型主动调用 list/read/write、系统文件选择器与桌面 WebView 人工验收为 `external_validation_pending`。
+
 ## 8. 阶段 4：权限与工具
 
 Go：

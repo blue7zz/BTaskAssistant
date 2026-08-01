@@ -339,6 +339,48 @@ func (s *SQLiteStore) WorkspaceArtifacts(taskID string) ([]WorkspaceArtifactReco
 	return records, rows.Err()
 }
 
+func (s *SQLiteStore) WorkspaceArtifact(
+	taskID string,
+	artifactID string,
+) (WorkspaceArtifactRecord, error) {
+	if err := validateScopedID(taskID, artifactID, "workspace artifact"); err != nil {
+		return WorkspaceArtifactRecord{}, err
+	}
+	database, unlock, err := s.repositoryRead()
+	if err != nil {
+		return WorkspaceArtifactRecord{}, err
+	}
+	defer unlock()
+	return scanWorkspaceArtifact(database.QueryRow(`
+		SELECT id, task_id, session_id, run_id, logical_path, kind, mime_type,
+		       byte_size, sha256, created_at, updated_at, deleted_at
+		  FROM workspace_artifacts
+		 WHERE task_id = ? AND id = ? AND deleted_at IS NULL`, taskID, artifactID))
+}
+
+func (s *SQLiteStore) WorkspaceArtifactByPath(
+	taskID string,
+	logicalPath string,
+) (WorkspaceArtifactRecord, error) {
+	if !taskIDPattern.MatchString(taskID) {
+		return WorkspaceArtifactRecord{}, fmt.Errorf("invalid task id %q", taskID)
+	}
+	logicalPath, err := taskspace.ValidateLogicalPath(logicalPath)
+	if err != nil || logicalPath == "." || !strings.HasPrefix(logicalPath, "artifacts/") {
+		return WorkspaceArtifactRecord{}, errors.New("workspace artifact path must be canonical under artifacts")
+	}
+	database, unlock, err := s.repositoryRead()
+	if err != nil {
+		return WorkspaceArtifactRecord{}, err
+	}
+	defer unlock()
+	return scanWorkspaceArtifact(database.QueryRow(`
+		SELECT id, task_id, session_id, run_id, logical_path, kind, mime_type,
+		       byte_size, sha256, created_at, updated_at, deleted_at
+		  FROM workspace_artifacts
+		 WHERE task_id = ? AND logical_path = ? AND deleted_at IS NULL`, taskID, logicalPath))
+}
+
 func validateGitBindingRecord(record GitBindingRecord) error {
 	if err := validateScopedID(record.TaskID, record.ID, "git binding"); err != nil {
 		return err

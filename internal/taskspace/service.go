@@ -179,10 +179,10 @@ func (s Service) Ensure(rootPath string, snapshot TaskSnapshot) (Result, error) 
 		})
 	}
 	for _, resource := range previousResources {
-		if !strings.HasPrefix(resource.SourceType, "legacy_") {
+		if !isRetainedResource(resource) {
 			continue
 		}
-		if err := validateRetainedLegacyResource(resource, snapshot.ID); err != nil {
+		if err := validateRetainedResource(resource, snapshot.ID); err != nil {
 			return Result{}, err
 		}
 		content, err := taskRoot.ReadFile(resource.LogicalPath)
@@ -740,7 +740,12 @@ func readResourcesMirror(root *os.Root, taskID string) ([]Resource, error) {
 	return mirror.Resources, nil
 }
 
-func validateRetainedLegacyResource(resource Resource, taskID string) error {
+func isRetainedResource(resource Resource) bool {
+	return strings.HasPrefix(resource.SourceType, "legacy_") ||
+		resource.SourceType == "message_attachment"
+}
+
+func validateRetainedResource(resource Resource, taskID string) error {
 	if resource.TaskID != taskID || resource.StoragePath != resource.LogicalPath ||
 		resource.ID != resourceID(taskID, resource.LogicalPath) ||
 		!resource.Immutable || !resource.Readable || resource.ByteSize < 0 ||
@@ -756,7 +761,10 @@ func validateRetainedLegacyResource(resource Resource, taskID string) error {
 		(resource.SourceType == "legacy_document" &&
 			resource.Kind == "attachment" && strings.HasPrefix(logicalPath, "attachments/documents/")) ||
 		(resource.SourceType == "legacy_image" &&
-			resource.Kind == "attachment" && strings.HasPrefix(logicalPath, "attachments/images/"))
+			resource.Kind == "attachment" && strings.HasPrefix(logicalPath, "attachments/images/")) ||
+		(resource.SourceType == "message_attachment" && resource.Kind == "attachment" &&
+			(strings.HasPrefix(logicalPath, "attachments/images/") ||
+				strings.HasPrefix(logicalPath, "attachments/documents/")))
 	if !validLocation {
 		return fmt.Errorf("retained legacy resource %q is outside its managed location", resource.LogicalPath)
 	}

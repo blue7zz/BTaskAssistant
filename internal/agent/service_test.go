@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -189,7 +190,7 @@ func TestServiceAllowsOnlyOneActiveRunPerTaskAcrossSessions(t *testing.T) {
 	waitForRunState(t, store, "task_single", active.ID, "cancelled")
 }
 
-func TestServiceStopsUnexpectedToolIntentInNoToolsSession(t *testing.T) {
+func TestServiceStopsToolsOutsideTheTaskGateAllowlist(t *testing.T) {
 	store := newServiceTestStore(t, "task_no_tools", "无工具任务")
 	factory := &fakeRuntimeFactory{}
 	service := NewService(store, ServiceOptions{
@@ -213,16 +214,16 @@ func TestServiceStopsUnexpectedToolIntentInNoToolsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	factory.runtime(0).emit(map[string]any{
-		"type": "message_update",
-		"assistantMessageEvent": map[string]any{
-			"type": "toolcall_start",
-		},
+		"type":       "tool_execution_start",
+		"toolCallId": "external-shell",
+		"toolName":   "bash",
+		"args":       map[string]any{"command": "pwd"},
 	})
 	waitForRunState(t, store, "task_no_tools", run.ID, "failed")
 	stored, err := store.ExecutionRun("task_no_tools", run.ID)
 	if err != nil || stored.ErrorMessage == nil ||
-		!strings.Contains(*stored.ErrorMessage, "无工具") {
-		t.Fatalf("unexpected no-tools failure %#v, %v", stored, err)
+		!strings.Contains(*stored.ErrorMessage, "未允许") {
+		t.Fatalf("unexpected task-gate failure %#v, %v", stored, err)
 	}
 }
 
@@ -266,6 +267,201 @@ func TestServiceTaskIsolationAndAbnormalExit(t *testing.T) {
 	if err != nil || storedBeta.State != "idle" {
 		t.Fatalf("other task changed after crash %#v, %v", storedBeta, err)
 	}
+}
+
+func TestServiceImportsAndPromptsWithTaskScopedReferences(t *testing.T) {
+	store := newServiceTestStore(t, "task_reference_a", "引用任务 A")
+	seedServiceTask(t, store, "task_reference_b", "引用任务 B")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{RuntimeFactory: factory, RequestTimeout: time.Second})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+
+	imageBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	for _, taskID := range []string{"task_reference_a", "task_reference_b"} {
+		if _, err := service.ImportAttachments(ImportAttachmentsRequest{
+			TaskID: taskID,
+			Files: []AttachmentUpload{
+				{Name: "same.md", MIMEType: "text/markdown", DataBase64: base64.StdEncoding.EncodeToString([]byte("document for " + taskID))},
+				{Name: "same.png", MIMEType: "image/png", DataBase64: imageBase64},
+			},
+		}); err != nil {
+			t.Fatalf("import %s attachments: %v", taskID, err)
+		}
+	}
+	resourcesA, err := service.Resources(ResourceSearchRequest{TaskID: "task_reference_a", Query: "same", Limit: 10})
+	if err != nil || len(resourcesA) != 2 {
+		t.Fatalf("unexpected task A resources %#v, error %v", resourcesA, err)
+	}
+	resourcesB, err := service.Resources(ResourceSearchRequest{TaskID: "task_reference_b", Query: "same", Limit: 10})
+	if err != nil || len(resourcesB) != 2 {
+		t.Fatalf("unexpected task B resources %#v, error %v", resourcesB, err)
+	}
+	for _, left := range resourcesA {
+		for _, right := range resourcesB {
+			if left.ID == right.ID {
+				t.Fatalf("resource id crossed task scope: %s", left.ID)
+			}
+		}
+	}
+	if _, err := service.PreviewResource(ResourcePreviewRequest{
+		TaskID: "task_reference_b", ResourceID: resourcesA[0].ID,
+	}); err == nil {
+		t.Fatal("task B previewed a task A resource id")
+	}
+
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_reference_a", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{resourcesA[0].ID, resourcesA[1].ID}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_reference_a", SessionID: session.ID,
+		Message: "检查引用", ResourceIDs: resourceIDs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRunState(t, store, "task_reference_a", run.ID, "succeeded")
+	promptFields := factory.runtime(0).lastCallFields("prompt")
+	prompt, _ := promptFields["message"].(string)
+	if !strings.Contains(prompt, resourcesA[0].ID) || !strings.Contains(prompt, resourcesA[1].ID) ||
+		strings.Contains(prompt, "document for task_reference_a") {
+		t.Fatalf("prompt reference manifest is incorrect: %q", prompt)
+	}
+	images, ok := promptFields["images"].([]map[string]any)
+	if !ok || len(images) != 1 || images[0]["mimeType"] != "image/png" {
+		t.Fatalf("prompt image payload is incorrect: %#v", promptFields["images"])
+	}
+	messages, err := service.Messages("task_reference_a", session.ID)
+	if err != nil || len(messages) < 2 || len(messages[0].References) != 2 {
+		t.Fatalf("message references were not persisted: %#v, error %v", messages, err)
+	}
+	removed := messages[0].References[0]
+	if err := service.RemoveReference(RemoveReferenceRequest{
+		TaskID: "task_reference_a", SessionID: session.ID,
+		MessageID: messages[0].ID, ResourceID: removed.ResourceID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	messages, err = service.Messages("task_reference_a", session.ID)
+	if err != nil || len(messages[0].References) != 1 {
+		t.Fatalf("reference removal was not durable: %#v, error %v", messages, err)
+	}
+	if _, err := service.PreviewResource(ResourcePreviewRequest{
+		TaskID: "task_reference_a", ResourceID: removed.ResourceID,
+	}); err != nil {
+		t.Fatalf("removing a reference deleted immutable attachment bytes: %v", err)
+	}
+	if _, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_reference_a", SessionID: session.ID,
+	}); err == nil {
+		t.Fatal("empty prompt without references was accepted")
+	}
+	attachmentOnlyRun, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_reference_a", SessionID: session.ID,
+		ResourceIDs: []string{resourcesA[0].ID},
+	})
+	if err != nil {
+		t.Fatalf("send attachment-only prompt: %v", err)
+	}
+	waitForRunState(t, store, "task_reference_a", attachmentOnlyRun.ID, "succeeded")
+	attachmentOnlyPrompt, _ := factory.runtime(0).lastCallFields("prompt")["message"].(string)
+	if !strings.Contains(attachmentOnlyPrompt, "请查看所附的当前任务资源") ||
+		!strings.Contains(attachmentOnlyPrompt, resourcesA[0].ID) {
+		t.Fatalf("attachment-only prompt did not receive the safe fallback and manifest: %q", attachmentOnlyPrompt)
+	}
+
+	restarted := NewService(store, ServiceOptions{RuntimeFactory: &fakeRuntimeFactory{}})
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = restarted.Close(ctx)
+	}()
+	restartedMessages, err := restarted.Messages("task_reference_a", session.ID)
+	if err != nil || len(restartedMessages[0].References) != 1 {
+		t.Fatalf("references did not survive service restart: %#v, error %v", restartedMessages, err)
+	}
+}
+
+func TestPlanGateWritesArtifactsAndRequirementProposals(t *testing.T) {
+	store := newServiceTestStore(t, "task_gate_artifact", "Artifact 任务")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{RuntimeFactory: factory, RequestTimeout: time.Second})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_gate_artifact", Mode: "plan",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.SendPrompt(context.Background(), PromptRequest{
+		TaskID: "task_gate_artifact", SessionID: session.ID, Message: "hold",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := factory.runtime(0)
+	runtime.emit(map[string]any{
+		"type": "tool_execution_start", "toolCallId": "artifact-call",
+		"toolName": "btask_write_artifact",
+		"args":     map[string]any{"kind": "proposal", "name": "scope.md"},
+	})
+	options := factory.processOptions(0)
+	request := gateBridgeRequest{
+		Version: options.Gate.Version, Nonce: options.Gate.Nonce,
+		TaskID: "task_gate_artifact", SessionID: session.ID, Mode: "plan",
+		ToolCallID: "artifact-call", Operation: "write_artifact",
+		Args: json.RawMessage(`{"kind":"proposal","name":"scope.md","content":"# 范围修改建议\n"}`),
+	}
+	placeholder, _ := json.Marshal(request)
+	runtime.emit(map[string]any{
+		"type": "extension_ui_request", "id": "gate-request-1",
+		"method": "input", "title": "btask-gate", "placeholder": string(placeholder),
+	})
+	response := runtime.waitNotification(t)
+	value, _ := response["value"].(string)
+	var bridgeResponse gateBridgeResponse
+	if err := json.Unmarshal([]byte(value), &bridgeResponse); err != nil || !bridgeResponse.OK {
+		t.Fatalf("artifact gate response failed: %#v, decode error %v", response, err)
+	}
+	artifacts, err := service.Artifacts("task_gate_artifact")
+	if err != nil || len(artifacts) != 1 || artifacts[0].LogicalPath != "artifacts/proposals/scope.md" ||
+		artifacts[0].ProposalState == nil || *artifacts[0].ProposalState != "pending" {
+		t.Fatalf("proposal artifact was not indexed: %#v, error %v", artifacts, err)
+	}
+	preview, err := service.PreviewResource(ResourcePreviewRequest{
+		TaskID: "task_gate_artifact", ResourceID: artifacts[0].ID,
+	})
+	if err != nil || !strings.Contains(preview.Content, "范围修改建议") {
+		t.Fatalf("proposal preview is unavailable: %#v, error %v", preview, err)
+	}
+	proposals, err := store.RequirementProposals("task_gate_artifact")
+	if err != nil || len(proposals) != 1 || proposals[0].BaseRevision != 1 || proposals[0].State != "pending" {
+		t.Fatalf("requirement proposal row is incorrect: %#v, error %v", proposals, err)
+	}
+	messages, err := service.Messages("task_gate_artifact", session.ID)
+	if err != nil || len(messages) < 2 || len(messages[1].References) != 1 ||
+		messages[1].References[0].Method != "generated" {
+		t.Fatalf("generated artifact was not linked to the assistant message: %#v, error %v", messages, err)
+	}
+	runtime.emit(map[string]any{
+		"type": "tool_execution_end", "toolCallId": "artifact-call",
+		"toolName": "btask_write_artifact", "result": map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "created"}},
+		},
+	})
+	runtime.emit(map[string]any{"type": "agent_settled"})
+	waitForRunState(t, store, "task_gate_artifact", run.ID, "succeeded")
 }
 
 func waitForSessionState(
@@ -451,6 +647,7 @@ func waitForRunState(
 type fakeRuntimeFactory struct {
 	mutex    sync.Mutex
 	runtimes []*fakeRuntime
+	options  []ProcessOptions
 }
 
 type lazyFileRuntimeFactory struct {
@@ -469,6 +666,7 @@ func (factory *lazyFileRuntimeFactory) Start(
 	runtime.persistOnPrompt = true
 	factory.mutex.Lock()
 	factory.runtimes = append(factory.runtimes, runtime)
+	factory.options = append(factory.options, options)
 	factory.mutex.Unlock()
 	return runtime, SessionState{SessionID: newID("pi"), SessionFile: path}, nil
 }
@@ -487,6 +685,7 @@ func (factory *fakeRuntimeFactory) Start(
 	runtime := newFakeRuntime(path)
 	factory.mutex.Lock()
 	factory.runtimes = append(factory.runtimes, runtime)
+	factory.options = append(factory.options, options)
 	factory.mutex.Unlock()
 	return runtime, SessionState{SessionID: newID("pi"), SessionFile: path}, nil
 }
@@ -503,9 +702,17 @@ func (factory *fakeRuntimeFactory) runtime(index int) *fakeRuntime {
 	return factory.runtimes[index]
 }
 
+func (factory *fakeRuntimeFactory) processOptions(index int) ProcessOptions {
+	factory.mutex.Lock()
+	defer factory.mutex.Unlock()
+	return factory.options[index]
+}
+
 type fakeRuntime struct {
 	mutex           sync.Mutex
 	calls           []string
+	callFields      []map[string]any
+	notifications   []map[string]any
 	events          chan rawEvent
 	done            chan struct{}
 	exit            ProcessExit
@@ -528,6 +735,7 @@ func (runtime *fakeRuntime) Call(
 ) error {
 	runtime.mutex.Lock()
 	runtime.calls = append(runtime.calls, command)
+	runtime.callFields = append(runtime.callFields, fields)
 	runtime.mutex.Unlock()
 	switch command {
 	case "get_entries":
@@ -560,6 +768,17 @@ func (runtime *fakeRuntime) Call(
 	case "abort":
 		runtime.emit(map[string]any{"type": "agent_settled"})
 	}
+	return nil
+}
+
+func (runtime *fakeRuntime) Send(_ context.Context, fields map[string]any) error {
+	runtime.mutex.Lock()
+	defer runtime.mutex.Unlock()
+	copy := make(map[string]any, len(fields))
+	for key, value := range fields {
+		copy[key] = value
+	}
+	runtime.notifications = append(runtime.notifications, copy)
 	return nil
 }
 
@@ -599,6 +818,34 @@ func (runtime *fakeRuntime) called(command string) bool {
 		}
 	}
 	return false
+}
+
+func (runtime *fakeRuntime) lastCallFields(command string) map[string]any {
+	runtime.mutex.Lock()
+	defer runtime.mutex.Unlock()
+	for index := len(runtime.calls) - 1; index >= 0; index-- {
+		if runtime.calls[index] == command {
+			return runtime.callFields[index]
+		}
+	}
+	return nil
+}
+
+func (runtime *fakeRuntime) waitNotification(t *testing.T) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runtime.mutex.Lock()
+		if len(runtime.notifications) > 0 {
+			value := runtime.notifications[len(runtime.notifications)-1]
+			runtime.mutex.Unlock()
+			return value
+		}
+		runtime.mutex.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for PI extension bridge response")
+	return nil
 }
 
 func (runtime *fakeRuntime) emit(value any) {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentEvent,
   AgentMessage,
+  AgentResource,
   AgentRun,
   AgentSession,
 } from "../domain/agent";
@@ -12,7 +13,7 @@ import type { AgentClient } from "../lib/agentBridge";
 import { useWorkspaceStore } from "../store/workspace";
 import { TaskAgentWorkbench } from "./TaskAgentWorkbench";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean; })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 function session(taskId: string, id = `session_${taskId}`): AgentSession {
@@ -270,6 +271,214 @@ describe("TaskAgentWorkbench", () => {
       runId: "run_task_stream",
     });
     expect(button(container, "发送").disabled).toBe(true);
+  });
+
+  it("selects only current-task @ resources and sends their ids", async () => {
+    const activeSession = session("task_mentions");
+    const requirement: AgentResource = {
+      id: "resource_requirement",
+      taskId: "task_mentions",
+      targetType: "resource",
+      kind: "context",
+      sourceType: "requirements",
+      logicalPath: "context/requirements/current.md",
+      mimeType: "text/markdown",
+      byteSize: 32,
+      sha256: "hash",
+      immutable: false,
+      readable: true,
+      createdAt: "2026-08-01T08:00:00Z",
+    };
+    const sendPrompt = vi.fn().mockResolvedValue(run("task_mentions", activeSession.id));
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([activeSession]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([]),
+      listResources: vi.fn().mockResolvedValue([requirement]),
+      listArtifacts: vi.fn().mockResolvedValue([]),
+      createSession: vi.fn(),
+      sendPrompt,
+      abortRun: vi.fn(),
+      subscribe: () => () => undefined,
+    };
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: "task_mentions", taskTitle: "引用任务", client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(textarea, "请检查 @require");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const option = container.querySelector<HTMLButtonElement>('[role="option"]');
+    expect(option?.textContent).toContain("current.md");
+    await act(async () => option?.click());
+    expect(container.textContent).toContain("current.md");
+    await act(async () => {
+      button(container, "发送").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sendPrompt).toHaveBeenCalledWith({
+      taskId: "task_mentions",
+      sessionId: activeSession.id,
+      message: "请检查 @current.md",
+      resourceIds: [requirement.id],
+    });
+  });
+
+  it("imports pasted files and permits an attachment-only message", async () => {
+    const activeSession = session("task_paste");
+    const attachment: AgentResource = {
+      id: "resource_pasted",
+      taskId: "task_paste",
+      targetType: "resource",
+      kind: "attachment",
+      sourceType: "message_attachment",
+      logicalPath: "attachments/documents/pasted.md",
+      mimeType: "text/markdown",
+      byteSize: 6,
+      sha256: "hash",
+      immutable: true,
+      readable: true,
+      createdAt: "2026-08-01T08:00:00Z",
+    };
+    const importAttachments = vi.fn().mockResolvedValue([attachment]);
+    const sendPrompt = vi.fn().mockResolvedValue(run("task_paste", activeSession.id));
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([activeSession]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([]),
+      listResources: vi.fn().mockResolvedValue([]),
+      listArtifacts: vi.fn().mockResolvedValue([]),
+      importAttachments,
+      createSession: vi.fn(),
+      sendPrompt,
+      abortRun: vi.fn(),
+      subscribe: () => () => undefined,
+    };
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: "task_paste", taskTitle: "粘贴任务", client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const pasted = new File(["pasted"], "pasted.md", { type: "text/markdown" });
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", { value: { files: [pasted] } });
+    await act(async () => {
+      textarea.dispatchEvent(paste);
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(importAttachments).toHaveBeenCalledWith({
+          taskId: "task_paste",
+          files: [expect.objectContaining({ name: "pasted.md", mimeType: "text/markdown" })],
+        });
+      });
+    });
+    expect(container.textContent).toContain("pasted.md");
+    await act(async () => {
+      button(container, "发送").click();
+      await Promise.resolve();
+    });
+    expect(sendPrompt).toHaveBeenCalledWith({
+      taskId: "task_paste",
+      sessionId: activeSession.id,
+      message: "请查看所附任务资源。",
+      resourceIds: [attachment.id],
+    });
+  });
+
+  it("refreshes and previews artifacts when the native gate reports a workspace change", async () => {
+    const activeSession = session("task_artifacts");
+    const artifact: AgentResource = {
+      id: "artifact_report",
+      taskId: "task_artifacts",
+      targetType: "artifact",
+      kind: "report",
+      sourceType: "generated_artifact",
+      logicalPath: "artifacts/reports/result.md",
+      mimeType: "text/markdown",
+      byteSize: 20,
+      sha256: "hash",
+      immutable: false,
+      readable: true,
+      createdAt: "2026-08-01T08:00:00Z",
+    };
+    let available = false;
+    const listeners = new Set<(value: AgentEvent) => void>();
+    const openArtifact = vi.fn().mockResolvedValue(undefined);
+    const client: AgentClient = {
+      runtimeMode: () => "native",
+      listSessions: vi.fn().mockResolvedValue([activeSession]),
+      listMessages: vi.fn().mockResolvedValue([]),
+      listRuns: vi.fn().mockResolvedValue([]),
+      listResources: vi.fn().mockResolvedValue([]),
+      listArtifacts: vi.fn().mockImplementation(async () => available ? [artifact] : []),
+      previewResource: vi.fn().mockResolvedValue({
+        path: artifact.logicalPath,
+        name: "result.md",
+        mimeType: "text/markdown",
+        byteSize: artifact.byteSize,
+        sha256: artifact.sha256,
+        kind: "text",
+        content: "# Gate result",
+        truncated: false,
+      }),
+      openArtifact,
+      createSession: vi.fn(),
+      sendPrompt: vi.fn(),
+      abortRun: vi.fn(),
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    await act(async () => {
+      root.render(createElement(TaskAgentWorkbench, {
+        taskId: "task_artifacts", taskTitle: "Artifact 任务", client,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    available = true;
+    await act(async () => {
+      for (const listener of listeners) {
+        listener(event(
+          "task_artifacts",
+          activeSession.id,
+          1,
+          "workspace.changed",
+          { reason: "artifact", paths: [artifact.logicalPath] },
+        ));
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => button(container, "Artifacts 1").click());
+    const artifactButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent?.includes("result.md"));
+    await act(async () => {
+      artifactButton?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Gate result");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="在系统中打开 artifact"]')?.click();
+      await Promise.resolve();
+    });
+    expect(openArtifact).toHaveBeenCalledWith("task_artifacts", artifact.id);
   });
 
   it("shows native PI startup failures without inventing a session", async () => {

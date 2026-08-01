@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,40 @@ func TestStartProcessUsesNativeRPCProbeAndStreamsEvents(t *testing.T) {
 	info, err := os.Stat(root)
 	if err != nil || info.Mode().Perm() != 0o755 {
 		t.Fatalf("PI process changed work directory permissions: %v, %v", info, err)
+	}
+}
+
+func TestStartProcessLoadsOnlyTheScopedGateExtension(t *testing.T) {
+	root := t.TempDir()
+	extensionPath := filepath.Join(root, "gate.ts")
+	if err := os.WriteFile(extensionPath, []byte("export default function () {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := helperProcessOptions(root)
+	options.AdditionalEnv = append(options.AdditionalEnv,
+		"BTASK_PI_GATE=1",
+		"BTASK_PI_GATE_VERSION=btask-gate/v1",
+		"BTASK_PI_GATE_NONCE=nonce-1",
+	)
+	options.Gate = &GateProcessOptions{
+		ExtensionPath: extensionPath,
+		Version:       "btask-gate/v1",
+		Nonce:         "nonce-1",
+		SHA256:        fileSHA256(t, extensionPath),
+	}
+	process, _, err := StartProcess(context.Background(), options)
+	if err != nil {
+		t.Fatalf("start helper PI with gate: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := process.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tampered := *options.Gate
+	tampered.SHA256 = strings.Repeat("0", 64)
+	if err := validateGateProcessOptions(tampered); err == nil {
+		t.Fatal("tampered gate extension hash was accepted")
 	}
 }
 
@@ -209,12 +244,20 @@ func TestPIHelperProcess(t *testing.T) {
 		"--no-context-files",
 		"--no-approve",
 		"--offline",
-		"--no-tools",
 	} {
 		if !helperHasArgument(required) {
 			fmt.Fprintf(os.Stderr, "missing required flag %s\n", required)
 			os.Exit(4)
 		}
+	}
+	if os.Getenv("BTASK_PI_GATE") == "1" {
+		if helperArgument("-e") == "" || !helperHasArgument("--no-builtin-tools") || helperHasArgument("--no-tools") {
+			fmt.Fprintln(os.Stderr, "gate flags are invalid")
+			os.Exit(4)
+		}
+	} else if !helperHasArgument("--no-tools") || helperHasArgument("--no-builtin-tools") {
+		fmt.Fprintln(os.Stderr, "utility tool flags are invalid")
+		os.Exit(4)
 	}
 	if os.Getenv("BTASK_PI_HANG_AFTER_EOF") == "1" {
 		configureHelperHang()
@@ -227,6 +270,15 @@ func TestPIHelperProcess(t *testing.T) {
 		_, _ = writer.Write(encoded)
 		_ = writer.WriteByte('\n')
 		_ = writer.Flush()
+	}
+	if os.Getenv("BTASK_PI_GATE") == "1" {
+		write(map[string]any{
+			"type":       "extension_ui_request",
+			"id":         "gate-heartbeat",
+			"method":     "setStatus",
+			"statusKey":  "btask-gate",
+			"statusText": os.Getenv("BTASK_PI_GATE_VERSION") + ":" + os.Getenv("BTASK_PI_GATE_NONCE"),
+		})
 	}
 	for reader.Scan() {
 		var request map[string]any
@@ -319,4 +371,14 @@ func helperHasArgument(name string) bool {
 		}
 	}
 	return false
+}
+
+func fileSHA256(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(content)
+	return fmt.Sprintf("%x", hash[:])
 }

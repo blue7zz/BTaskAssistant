@@ -3,10 +3,13 @@ package taskspace
 import "encoding/json"
 
 const (
-	SchemaVersion      = 1
-	ResourcePolicy     = "isolated"
-	ManagedBy          = "BTaskAssistant"
-	MaxAttachmentBytes = 16 * 1024 * 1024
+	SchemaVersion           = 1
+	ResourcePolicy          = "isolated"
+	ManagedBy               = "BTaskAssistant"
+	MaxAttachmentBytes      = 16 * 1024 * 1024
+	MaxAttachmentCount      = 10
+	MaxAttachmentBatchBytes = 32 * 1024 * 1024
+	MaxArtifactBytes        = 2 * 1024 * 1024
 )
 
 type Evidence struct {
@@ -127,6 +130,20 @@ type FilePreview struct {
 	Kind      string `json:"kind"`
 	Content   string `json:"content"`
 	Truncated bool   `json:"truncated"`
+}
+
+type AttachmentInput struct {
+	Name     string
+	MIMEType string
+	Content  []byte
+}
+
+type ArtifactFile struct {
+	LogicalPath string `json:"logicalPath"`
+	Kind        string `json:"kind"`
+	MIMEType    string `json:"mimeType"`
+	ByteSize    int64  `json:"byteSize"`
+	SHA256      string `json:"sha256"`
 }
 
 type resourcesMirror struct {

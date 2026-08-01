@@ -93,6 +93,8 @@ func (service *Service) handleRawEventLocked(
 		service.handleToolUpdateLocked(managed, raw.JSON)
 	case "tool_execution_end":
 		service.handleToolEndLocked(managed, raw.JSON)
+	case "extension_ui_request":
+		service.handleGateEventLocked(managed, raw.JSON)
 	case "turn_start", "turn_end":
 		// Turn lifecycle is retained in raw stdout; stable message/run events
 		// already carry the UI state needed for Phase 2.
@@ -173,9 +175,8 @@ func (service *Service) handleMessageUpdateLocked(
 			"unknown", managed.run.errorMessage, true,
 		))
 	default:
-		if strings.HasPrefix(delta.Type, "toolcall_") {
-			service.rejectUnexpectedNoToolsEventLocked(managed, delta.Type)
-		}
+		// Tool-call deltas are followed by a typed tool_execution_start event,
+		// which is the authoritative allowlist decision point.
 	}
 }
 
@@ -278,27 +279,58 @@ func (service *Service) handleToolStartLocked(managed *managedSession, raw json.
 		externalID = newID("pi-tool")
 	}
 	now := service.timestamp()
+	policy, allowed := gateToolPolicies[name]
 	record := storage.ToolCallRecord{
 		ID: newID("tool"), TaskID: managed.record.TaskID, SessionID: managed.record.ID,
 		RunID: managed.run.record.ID, ExternalToolCallID: externalID, ToolName: name,
-		Capability: "unexpected.no_tools", RiskLevel: "critical", State: "running",
+		Capability: policy.capability, RiskLevel: policy.riskLevel, State: "running",
 		ArgsJSON: stableArgsPreview(args), StartedAt: &now,
+	}
+	if !allowed || (name == "btask_write_artifact" && managed.record.Mode == "ask") {
+		record.Capability = "unexpected.tool"
+		record.RiskLevel = "critical"
 	}
 	if err := service.store.UpsertToolCall(record); err != nil {
 		managed.run.errorMessage = err.Error()
 		return
 	}
 	managed.run.tools[externalID] = record
-	message := unexpectedToolMessage(name)
-	managed.run.errorMessage = message
 	_ = service.emitLocked(managed, "tool.start", managed.run.record.ID, record.ID, map[string]any{
-		"toolName": name, "capability": "unexpected.no_tools", "subject": message,
-		"readOnly": false, "riskLevel": "critical", "argsPreview": stringValue(record.ArgsJSON),
+		"toolName": name, "capability": record.Capability, "subject": policy.subject,
+		"readOnly": policy.readOnly, "riskLevel": record.RiskLevel,
+		"argsPreview": stringValue(record.ArgsJSON),
 	})
+	if allowed && !(name == "btask_write_artifact" && managed.record.Mode == "ask") {
+		return
+	}
+	message := "PI 尝试调用当前任务策略未允许的工具：" + name
+	managed.run.errorMessage = message
 	_ = service.emitLocked(managed, "error", managed.run.record.ID, "", errorPayload(
-		"unknown", message, false,
+		"protocol_error", message, false,
 	))
 	go abortRuntime(managed.runtime, service.requestTimeout)
+}
+
+type gateToolPolicy struct {
+	capability string
+	riskLevel  string
+	subject    string
+	readOnly   bool
+}
+
+var gateToolPolicies = map[string]gateToolPolicy{
+	"btask_list_resources": {
+		capability: "task.resource.list", riskLevel: "low",
+		subject: "列出当前任务资源", readOnly: true,
+	},
+	"btask_read_resource": {
+		capability: "task.resource.read", riskLevel: "low",
+		subject: "读取当前任务资源", readOnly: true,
+	},
+	"btask_write_artifact": {
+		capability: "task.artifact.write", riskLevel: "medium",
+		subject: "写入当前任务 artifacts", readOnly: false,
+	},
 }
 
 func (service *Service) handleToolUpdateLocked(managed *managedSession, raw json.RawMessage) {

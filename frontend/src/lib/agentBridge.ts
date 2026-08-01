@@ -3,9 +3,15 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentPromptRequest,
+  AgentResource,
+  AgentResourcePreview,
+  AgentResourcePreviewRequest,
+  AgentResourceSearchRequest,
   AgentRun,
   AgentSession,
   CreateAgentSessionRequest,
+  ImportAgentAttachmentsRequest,
+  RemoveAgentReferenceRequest,
 } from "../domain/agent";
 
 const AGENT_EVENT_NAME = "agent:event";
@@ -22,6 +28,12 @@ interface NativeAgentApp {
   ): Promise<AgentSession>;
   SendAgentPrompt(request: AgentPromptRequest): Promise<AgentRun>;
   AbortAgentRun(request: AbortAgentRunRequest): Promise<void>;
+  ListAgentResources(request: AgentResourceSearchRequest): Promise<AgentResource[]>;
+  ListAgentArtifacts(taskId: string): Promise<AgentResource[]>;
+  ImportAgentAttachments(request: ImportAgentAttachmentsRequest): Promise<AgentResource[]>;
+  PreviewAgentResource(request: AgentResourcePreviewRequest): Promise<AgentResourcePreview>;
+  RemoveAgentMessageReference(request: RemoveAgentReferenceRequest): Promise<void>;
+  OpenAgentArtifact(taskId: string, artifactId: string): Promise<void>;
 }
 
 export interface AgentClient {
@@ -32,6 +44,12 @@ export interface AgentClient {
   createSession(request: CreateAgentSessionRequest): Promise<AgentSession>;
   sendPrompt(request: AgentPromptRequest): Promise<AgentRun>;
   abortRun(request: AbortAgentRunRequest): Promise<void>;
+  listResources?(request: AgentResourceSearchRequest): Promise<AgentResource[]>;
+  listArtifacts?(taskId: string): Promise<AgentResource[]>;
+  importAttachments?(request: ImportAgentAttachmentsRequest): Promise<AgentResource[]>;
+  previewResource?(request: AgentResourcePreviewRequest): Promise<AgentResourcePreview>;
+  removeReference?(request: RemoveAgentReferenceRequest): Promise<void>;
+  openArtifact?(taskId: string, artifactId: string): Promise<void>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
 }
 
@@ -49,7 +67,13 @@ function nativeAgentApp(): NativeAgentApp {
     typeof app.ListExecutionRuns !== "function" ||
     typeof app.CreateAgentSession !== "function" ||
     typeof app.SendAgentPrompt !== "function" ||
-    typeof app.AbortAgentRun !== "function"
+    typeof app.AbortAgentRun !== "function" ||
+    typeof app.ListAgentResources !== "function" ||
+    typeof app.ListAgentArtifacts !== "function" ||
+    typeof app.ImportAgentAttachments !== "function" ||
+    typeof app.PreviewAgentResource !== "function" ||
+    typeof app.RemoveAgentMessageReference !== "function" ||
+    typeof app.OpenAgentArtifact !== "function"
   ) {
     throw new Error("当前桌面客户端不包含 PI 会话服务，请更新后重试");
   }
@@ -93,11 +117,13 @@ export function parseAgentEvent(payload: unknown): AgentEvent | undefined {
 const browserSessions = new Map<string, AgentSession[]>();
 const browserMessages = new Map<string, AgentMessage[]>();
 const browserRunHistory = new Map<string, AgentRun[]>();
+const browserResources = new Map<string, AgentResource[]>();
+const browserPreviews = new Map<string, AgentResourcePreview>();
 const browserListeners = new Set<(event: AgentEvent) => void>();
 const browserTimers = new Set<number>();
 const browserRuns = new Map<
   string,
-  { run: AgentRun; assistantId: string; timers: number[] }
+  { run: AgentRun; assistantId: string; timers: number[]; }
 >();
 let browserID = 0;
 let browserTick = 0;
@@ -136,7 +162,67 @@ function copySession(session: AgentSession): AgentSession {
 }
 
 function copyMessage(message: AgentMessage): AgentMessage {
-  return { ...message };
+  return {
+    ...message,
+    references: message.references?.map((reference) => ({ ...reference })),
+  };
+}
+
+function resourceKey(taskId: string, resourceId: string): string {
+  return `${taskId}\u0000${resourceId}`;
+}
+
+function ensureBrowserResources(taskId: string): AgentResource[] {
+  const current = browserResources.get(taskId);
+  if (current) return current;
+  const createdAt = browserTimestamp();
+  const resources: AgentResource[] = [
+    ["task", "context/task.md", `# ${taskId}\n\n浏览器模拟任务上下文。`],
+    ["requirements", "context/requirements/current.md", "# 当前需求\n\n浏览器模拟需求。"],
+    ["acceptance_criteria", "context/acceptance-criteria.md", "# 验收标准\n\n- [ ] 浏览器模拟验收。"],
+  ].map(([sourceType, logicalPath, content], index) => {
+    const id = `resource_${taskId}_context_${index}`;
+    browserPreviews.set(resourceKey(taskId, id), {
+      path: logicalPath,
+      name: logicalPath.split("/").at(-1) ?? logicalPath,
+      mimeType: "text/markdown",
+      byteSize: new TextEncoder().encode(content).byteLength,
+      sha256: "browser-preview",
+      kind: "text",
+      content,
+      truncated: false,
+    });
+    return {
+      id,
+      taskId,
+      targetType: "resource" as const,
+      kind: "context",
+      sourceType,
+      logicalPath,
+      mimeType: "text/markdown",
+      byteSize: new TextEncoder().encode(content).byteLength,
+      sha256: "browser-preview",
+      immutable: sourceType !== "task",
+      readable: true,
+      createdAt,
+    };
+  });
+  browserResources.set(taskId, resources);
+  return resources;
+}
+
+function decodeBrowserBase64(value: string): Uint8Array {
+  let decoded: string;
+  try {
+    decoded = window.atob(value);
+  } catch {
+    throw new Error("附件不是有效的 Base64 数据");
+  }
+  const result = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) {
+    result[index] = decoded.charCodeAt(index);
+  }
+  return result;
 }
 
 function browserSession(taskId: string, sessionId: string): AgentSession {
@@ -251,6 +337,105 @@ const browserAgentClient: AgentClient = {
       (run) => ({ ...run }),
     );
   },
+  async listResources(request) {
+    const query = request.query.trim().toLowerCase();
+    const limit = Math.min(Math.max(request.limit || 50, 1), 100);
+    return ensureBrowserResources(request.taskId)
+      .filter((resource) =>
+        !query ||
+        `${resource.logicalPath} ${resource.kind} ${resource.sourceType ?? ""}`
+          .toLowerCase()
+          .includes(query),
+      )
+      .slice(0, limit)
+      .map((resource) => ({ ...resource }));
+  },
+  async listArtifacts(taskId) {
+    return ensureBrowserResources(taskId)
+      .filter((resource) => resource.targetType === "artifact")
+      .map((resource) => ({ ...resource }));
+  },
+  async importAttachments(request) {
+    if (request.files.length < 1 || request.files.length > 10) {
+      throw new Error("每次只能导入 1 至 10 个附件");
+    }
+    const resources = ensureBrowserResources(request.taskId);
+    const created: AgentResource[] = [];
+    let batchBytes = 0;
+    for (const file of request.files) {
+      const bytes = decodeBrowserBase64(file.dataBase64);
+      if (bytes.byteLength === 0 || bytes.byteLength > 16 * 1024 * 1024) {
+        throw new Error(`附件 ${file.name} 必须小于 16 MiB`);
+      }
+      batchBytes += bytes.byteLength;
+      if (batchBytes > 32 * 1024 * 1024) {
+        throw new Error("单次附件总大小不能超过 32 MiB");
+      }
+      const isImage = ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+        file.mimeType,
+      );
+      const isText =
+        file.mimeType.startsWith("text/") ||
+        ["application/json", "application/xml"].includes(file.mimeType);
+      if (!isImage && !isText) throw new Error(`浏览器模拟不支持 ${file.mimeType || "未知类型"}`);
+      const id = nextBrowserID(`resource_${request.taskId}`);
+      const directory = isImage ? "attachments/images" : "attachments/documents";
+      const logicalPath = `${directory}/${id}-${file.name.replace(/[^\p{L}\p{N}._-]+/gu, "-")}`;
+      const resource: AgentResource = {
+        id,
+        taskId: request.taskId,
+        targetType: "resource",
+        kind: "attachment",
+        sourceType: "message_attachment",
+        logicalPath,
+        mimeType: file.mimeType,
+        byteSize: bytes.byteLength,
+        sha256: "browser-preview",
+        immutable: true,
+        readable: true,
+        createdAt: browserTimestamp(),
+      };
+      const content = isImage
+        ? `data:${file.mimeType};base64,${file.dataBase64}`
+        : new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      browserPreviews.set(resourceKey(request.taskId, id), {
+        path: logicalPath,
+        name: file.name,
+        mimeType: file.mimeType,
+        byteSize: bytes.byteLength,
+        sha256: "browser-preview",
+        kind: isImage ? "image" : "text",
+        content,
+        truncated: false,
+      });
+      resources.push(resource);
+      created.push({ ...resource });
+    }
+    return created;
+  },
+  async previewResource(request) {
+    const exists = ensureBrowserResources(request.taskId).some(
+      (resource) => resource.id === request.resourceId,
+    );
+    const preview = browserPreviews.get(resourceKey(request.taskId, request.resourceId));
+    if (!exists || !preview) throw new Error("当前任务资源不存在或不支持预览");
+    return { ...preview };
+  },
+  async removeReference(request) {
+    const message = browserMessages
+      .get(messageKey(request.taskId, request.sessionId))
+      ?.find((candidate) => candidate.id === request.messageId);
+    if (!message) throw new Error("当前任务消息不存在");
+    message.references = message.references?.filter(
+      (reference) => reference.resourceId !== request.resourceId,
+    );
+  },
+  async openArtifact(taskId, artifactId) {
+    const artifact = ensureBrowserResources(taskId).find(
+      (resource) => resource.id === artifactId && resource.targetType === "artifact",
+    );
+    if (!artifact) throw new Error("当前任务 artifact 不存在");
+  },
   async createSession(request) {
     if (!request.taskId.trim()) throw new Error("任务 ID 不能为空");
     const createdAt = browserTimestamp();
@@ -281,7 +466,8 @@ const browserAgentClient: AgentClient = {
     return copySession(session);
   },
   async sendPrompt(request) {
-    const content = request.message.trim();
+    const content = request.message.trim() ||
+      ((request.resourceIds?.length ?? 0) > 0 ? "请查看所附的当前任务资源。" : "");
     if (!content) throw new Error("消息不能为空");
     if (
       Array.from(browserRuns.values()).some(
@@ -308,7 +494,32 @@ const browserAgentClient: AgentClient = {
       sequence: session.lastSequence + 1,
       createdAt: startedAt,
       completedAt: startedAt,
+      references: (request.resourceIds ?? []).map((resourceId, position) => {
+        const resource = ensureBrowserResources(request.taskId).find(
+          (candidate) => candidate.id === resourceId,
+        );
+        if (!resource) throw new Error("引用不属于当前任务");
+        return {
+          taskId: request.taskId,
+          sessionId: request.sessionId,
+          messageId: "",
+          resourceId,
+          targetType: resource.targetType,
+          method: resource.kind === "attachment" ? "attachment" : "mention",
+          position,
+          createdAt: startedAt,
+          kind: resource.kind,
+          sourceType: resource.sourceType,
+          logicalPath: resource.logicalPath,
+          mimeType: resource.mimeType,
+          byteSize: resource.byteSize,
+          immutable: resource.immutable,
+        };
+      }),
     };
+    user.references?.forEach((reference) => {
+      reference.messageId = user.id;
+    });
     const assistant: AgentMessage = {
       id: nextBrowserID("message"),
       taskId: request.taskId,
@@ -417,6 +628,12 @@ const nativeAgentClient: AgentClient = {
   createSession: (request) => nativeAgentApp().CreateAgentSession(request),
   sendPrompt: (request) => nativeAgentApp().SendAgentPrompt(request),
   abortRun: (request) => nativeAgentApp().AbortAgentRun(request),
+  listResources: (request) => nativeAgentApp().ListAgentResources(request),
+  listArtifacts: (taskId) => nativeAgentApp().ListAgentArtifacts(taskId),
+  importAttachments: (request) => nativeAgentApp().ImportAgentAttachments(request),
+  previewResource: (request) => nativeAgentApp().PreviewAgentResource(request),
+  removeReference: (request) => nativeAgentApp().RemoveAgentMessageReference(request),
+  openArtifact: (taskId, artifactId) => nativeAgentApp().OpenAgentArtifact(taskId, artifactId),
   subscribe(listener) {
     if (typeof window.runtime?.EventsOn !== "function") return () => undefined;
     const unsubscribe = window.runtime.EventsOn(AGENT_EVENT_NAME, (payload) => {
@@ -455,6 +672,18 @@ export const agentClient: AgentClient = {
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).abortRun(
       request,
     ),
+  listResources: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listResources!(request),
+  listArtifacts: (taskId) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).listArtifacts!(taskId),
+  importAttachments: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).importAttachments!(request),
+  previewResource: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).previewResource!(request),
+  removeReference: (request) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).removeReference!(request),
+  openArtifact: (taskId, artifactId) =>
+    (nativeAppPresent() ? nativeAgentClient : browserAgentClient).openArtifact!(taskId, artifactId),
   subscribe: (listener) =>
     (nativeAppPresent() ? nativeAgentClient : browserAgentClient).subscribe(
       listener,
@@ -467,6 +696,8 @@ export function resetBrowserAgentMockForTests(): void {
   browserSessions.clear();
   browserMessages.clear();
   browserRunHistory.clear();
+  browserResources.clear();
+  browserPreviews.clear();
   browserListeners.clear();
   browserRuns.clear();
   browserID = 0;

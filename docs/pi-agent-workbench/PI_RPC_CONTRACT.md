@@ -40,7 +40,7 @@ pi \
   --mode rpc \
   --session-dir <task-workspace>/.btask/pi-sessions \
   --no-extensions \
-  --extension <app-owned>/btask-gate.ts \
+  -e <task-workspace>/.btask/pi-agent/btask-gate.ts \
   --no-skills \
   --no-prompt-templates \
   --no-themes \
@@ -52,7 +52,8 @@ pi \
 
 说明：
 
-- --no-extensions 禁止全局和项目自动发现；PI 0.82.1 仍允许显式 --extension 路径。
+- --no-extensions 禁止全局和项目自动发现；PI 0.82.1 仍允许显式 `-e/--extension` 路径。
+- btask-gate.ts 由 Go 内嵌模板原子物化到当前任务，配置中固化 task、session、mode、version 和一次性 nonce；启动前再次校验 regular-file、0600 mode 和 SHA-256，不从项目或全局目录发现 Extension。
 - --no-builtin-tools 禁止 read/bash/edit/write 等内建工具，但保留 BTask Extension 注册的自有工具。
 - Ask、Plan、Agent 三种模式通过 BTask 注册工具集合和策略决定，不通过 OMP approval mode。
 - cwd 是当前任务空间；进入开发模式后仓库写工具只接受当前任务 repos/<repo> worktree 内目标。
@@ -75,7 +76,7 @@ PI 0.82.1 RPC 没有 ready 帧，也没有协议版本协商命令。BTask 不�
 
 gate handshake：
 
-- BTask 启动时生成一次性 nonce，通过最小环境变量 BTASK_GATE_NONCE 传给自有 Extension。
+- BTask 启动时生成一次性 nonce，并与 task/session/mode/version 一起写入当前任务的内嵌 Extension 配置。
 - Extension 在 session_start 后发出 RPC Extension UI setStatus 请求，statusKey 固定为 btask-gate，statusText 包含协议版本和 nonce。
 - Supervisor 只在 nonce、版本和显式 Extension 路径全部匹配后开放 custom writer/shell 工具。
 - 超时、extension_error、重载、Session 切换后缺少新 handshake 都失败关闭。
@@ -201,6 +202,7 @@ BTask 发送前必须：
 - 只从当前任务 attachments/images 或明确引用资源读取。
 - MIME allowlist 与解码后 magic bytes 同时校验。
 - 执行大小、数量和总请求上限。
+- 图片原始字节总量当前上限为 10 MiB，以给 base64 膨胀、消息文本和 JSON envelope 留出空间，确保完整请求仍低于 16 MiB RPC 单帧上限。
 - 数据库只保存 attachment id、路径、MIME、大小和 hash；不把 base64 放入 Agent message 快照。
 - 非图片文档通过 BTask read 工具和引用装配，不伪装为 PI image。
 
@@ -211,7 +213,17 @@ RPC Extension UI 请求：
 - select、confirm、input、editor：阻塞并等待相同 id 的 extension_ui_response。
 - notify、setStatus、setWidget、setTitle、set_editor_text：fire-and-forget。
 
-BTask gate Extension 在 tool_call 中生成结构化 permission envelope，并使用 confirm 请求等待 BTask 决策。Envelope 至少包含：
+阶段 3 的固定资源门禁使用 `input` 作为 Extension 与 Go 的结构化桥。请求 title 固定为 `btask-gate`，placeholder 是 JSON，至少包含：
+
+- version、nonce
+- taskId、sessionId、mode
+- toolCallId
+- operation：list_resources、read_resource 或 write_artifact
+- args
+
+Go 只在存在活动 run、toolCallId 已由同名 allowlist 工具启动、身份字段全部匹配时执行；回复使用同 id 的 `extension_ui_response`。Ask 只注册 list/read，Plan/Agent 才注册受控 artifact writer。未知工具、错 nonce、跨任务资源、非法路径或 writer 身份不匹配均失败关闭。
+
+阶段 4 在此固定桥上增加人工审批。届时 BTask gate Extension 在 tool_call 中生成结构化 permission envelope，并使用 confirm 请求等待 BTask 决策。Envelope 至少包含：
 
 - version
 - nonce

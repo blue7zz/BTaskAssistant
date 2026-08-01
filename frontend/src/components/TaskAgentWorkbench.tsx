@@ -1,23 +1,34 @@
 import {
   AlertTriangle,
+  AtSign,
   Bot,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  Image as ImageIcon,
   LoaderCircle,
   MessageSquare,
+  Paperclip,
   Plus,
   Send,
   Square,
+  X,
 } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
 } from "react";
 import type {
   AgentEvent,
   AgentMessage,
   AgentMessageStatus,
+  AgentResource,
+  AgentResourcePreview,
   AgentSession,
 } from "../domain/agent";
 import { agentClient, type AgentClient } from "../lib/agentBridge";
@@ -84,6 +95,35 @@ function formatSessionTime(value: string): string {
   }).format(timestamp);
 }
 
+function resourceName(resource: Pick<AgentResource, "logicalPath">): string {
+  return resource.logicalPath.split("/").at(-1) ?? resource.logicalPath;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KiB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function readFileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("读取附件失败"));
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const separator = value.indexOf(",");
+      if (separator < 0) reject(new Error(`附件 ${file.name} 编码失败`));
+      else resolve(value.slice(separator + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function mentionQuery(value: string): string | undefined {
+  const match = value.match(/(?:^|\s)@([^\s@]*)$/u);
+  return match?.[1];
+}
+
 export function TaskAgentWorkbench({
   taskId,
   taskTitle,
@@ -94,6 +134,17 @@ export function TaskAgentWorkbench({
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [newSessionMode, setNewSessionMode] = useState<AgentSession["mode"]>("ask");
+  const [resources, setResources] = useState<AgentResource[]>([]);
+  const [artifacts, setArtifacts] = useState<AgentResource[]>([]);
+  const [mentionOptions, setMentionOptions] = useState<AgentResource[]>([]);
+  const [selectedResources, setSelectedResources] = useState<AgentResource[]>([]);
+  const [resourcePanel, setResourcePanel] = useState<"resources" | "artifacts">("resources");
+  const [preview, setPreview] = useState<AgentResourcePreview>();
+  const [previewResource, setPreviewResource] = useState<AgentResource>();
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -101,6 +152,7 @@ export function TaskAgentWorkbench({
   const [activeRunId, setActiveRunId] = useState("");
   const [error, setError] = useState("");
   const epochRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedSessionRef = useRef("");
   const terminalRunsRef = useRef(new Set<string>());
   const lastEventSequenceRef = useRef(new Map<string, number>());
@@ -127,6 +179,97 @@ export function TaskAgentWorkbench({
     [client, taskId],
   );
 
+  const reloadResources = useCallback(
+    async (epoch = epochRef.current) => {
+      if (!client.listResources) {
+        if (epoch === epochRef.current) {
+          setResources([]);
+          setArtifacts([]);
+        }
+        return;
+      }
+      const [loadedResources, loadedArtifacts] = await Promise.all([
+        client.listResources({ taskId, query: "", limit: 100 }),
+        client.listArtifacts?.(taskId) ?? Promise.resolve([]),
+      ]);
+      if (epoch !== epochRef.current) return;
+      setResources(loadedResources.filter((resource) => resource.targetType === "resource"));
+      setArtifacts(loadedArtifacts);
+    },
+    [client, taskId],
+  );
+
+  const showPreview = useCallback(
+    async (resource: AgentResource) => {
+      if (!client.previewResource) return;
+      const epoch = epochRef.current;
+      setPreviewResource(resource);
+      setPreview(undefined);
+      setPreviewLoading(true);
+      setError("");
+      try {
+        const loaded = await client.previewResource({
+          taskId,
+          resourceId: resource.id,
+        });
+        if (epoch === epochRef.current) setPreview(loaded);
+      } catch (reason) {
+        if (epoch === epochRef.current) setError(errorText(reason));
+      } finally {
+        if (epoch === epochRef.current) setPreviewLoading(false);
+      }
+    },
+    [client, taskId],
+  );
+
+  const importFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      if (!client.importAttachments) {
+        setError("当前客户端不支持任务附件");
+        return;
+      }
+      if (files.length > 10) {
+        setError("每次最多选择 10 个附件");
+        return;
+      }
+      const oversized = files.find((file) => file.size === 0 || file.size > 16 * 1024 * 1024);
+      if (oversized) {
+        setError(`附件 ${oversized.name} 必须大于 0 且不超过 16 MiB`);
+        return;
+      }
+      const batchBytes = files.reduce((total, file) => total + file.size, 0);
+      if (batchBytes > 32 * 1024 * 1024) {
+        setError("单次附件总大小不能超过 32 MiB");
+        return;
+      }
+      const epoch = epochRef.current;
+      setImporting(true);
+      setError("");
+      try {
+        const uploads = await Promise.all(
+          files.map(async (file) => ({
+            name: file.name,
+            mimeType: file.type,
+            dataBase64: await readFileBase64(file),
+          })),
+        );
+        const imported = await client.importAttachments({ taskId, files: uploads });
+        if (epoch !== epochRef.current) return;
+        setSelectedResources((current) => [
+          ...current,
+          ...imported.filter((resource) => !current.some((item) => item.id === resource.id)),
+        ]);
+        await reloadResources(epoch);
+      } catch (reason) {
+        if (epoch === epochRef.current) setError(errorText(reason));
+      } finally {
+        if (epoch === epochRef.current) setImporting(false);
+      }
+    },
+    [client, reloadResources, taskId],
+  );
+
   useEffect(() => {
     const epoch = ++epochRef.current;
     terminalRunsRef.current.clear();
@@ -136,6 +279,14 @@ export function TaskAgentWorkbench({
     setSelectedSessionId("");
     setMessages([]);
     setDraft("");
+    setResources([]);
+    setArtifacts([]);
+    setMentionOptions([]);
+    setSelectedResources([]);
+    setPreview(undefined);
+    setPreviewResource(undefined);
+    setResourcePanel("resources");
+    setDragActive(false);
     setActiveRunId("");
     setError("");
     setLoading(true);
@@ -155,11 +306,11 @@ export function TaskAgentWorkbench({
           current.map((session) =>
             session.id === event.sessionId
               ? {
-                  ...session,
-                  state: (state || session.state) as AgentSession["state"],
-                  errorMessage:
-                    state === "failed" ? eventError(event) : undefined,
-                }
+                ...session,
+                state: (state || session.state) as AgentSession["state"],
+                errorMessage:
+                  state === "failed" ? eventError(event) : undefined,
+              }
               : session,
           ),
         );
@@ -201,10 +352,10 @@ export function TaskAgentWorkbench({
           current.map((message) =>
             message.id === messageId
               ? {
-                  ...message,
-                  content: `${message.content ?? ""}${delta}`,
-                  status: "streaming",
-                }
+                ...message,
+                content: `${message.content ?? ""}${delta}`,
+                status: "streaming",
+              }
               : message,
           ),
         );
@@ -218,18 +369,22 @@ export function TaskAgentWorkbench({
           current.map((message) =>
             message.id === messageId
               ? {
-                  ...message,
-                  status,
-                  content:
-                    typeof content === "string" ? content : message.content,
-                  completedAt: event.occurredAt,
-                }
+                ...message,
+                status,
+                content:
+                  typeof content === "string" ? content : message.content,
+                completedAt: event.occurredAt,
+              }
               : message,
           ),
         );
         void reloadMessages(event.sessionId, epoch).catch(() => undefined);
       } else if (event.kind === "error") {
         setError(eventError(event));
+      } else if (event.kind === "workspace.changed") {
+        void reloadResources(epoch).catch((reason) => {
+          if (epoch === epochRef.current) setError(errorText(reason));
+        });
       }
 
       if (event.kind === "run.state" && event.runId) {
@@ -276,12 +431,15 @@ export function TaskAgentWorkbench({
       .finally(() => {
         if (epoch === epochRef.current) setLoading(false);
       });
+    void reloadResources(epoch).catch((reason) => {
+      if (epoch === epochRef.current) setError(errorText(reason));
+    });
 
     return () => {
       epochRef.current += 1;
       unsubscribe();
     };
-  }, [client, reloadMessages, taskId]);
+  }, [client, reloadMessages, reloadResources, taskId]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -300,6 +458,69 @@ export function TaskAgentWorkbench({
       });
   }, [reloadMessages, selectedSessionId]);
 
+  const activeMentionQuery = mentionQuery(draft);
+  useEffect(() => {
+    if (activeMentionQuery === undefined || !client.listResources || !selectedSessionId) {
+      setMentionOptions([]);
+      return;
+    }
+    const epoch = epochRef.current;
+    void client
+      .listResources({ taskId, query: activeMentionQuery, limit: 8 })
+      .then((loaded) => {
+        if (epoch === epochRef.current) setMentionOptions(loaded);
+      })
+      .catch((reason) => {
+        if (epoch === epochRef.current) setError(errorText(reason));
+      });
+  }, [activeMentionQuery, client, selectedSessionId, taskId]);
+
+  const selectMention = (resource: AgentResource) => {
+    setSelectedResources((current) =>
+      current.some((item) => item.id === resource.id) ? current : [...current, resource],
+    );
+    setDraft((current) => {
+      const match = current.match(/(?:^|\s)@[^\s@]*$/u);
+      if (!match || match.index === undefined) return current;
+      const leadingSpace = match[0].startsWith(" ") ? " " : "";
+      return `${current.slice(0, match.index)}${leadingSpace}@${resourceName(resource)} `;
+    });
+    setMentionOptions([]);
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void importFiles(files);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    if (!selectedSessionId || activeRunId) return;
+    void importFiles(Array.from(event.dataTransfer.files));
+  };
+
+  const removeMessageReference = async (
+    message: AgentMessage,
+    resourceId: string,
+  ) => {
+    if (!client.removeReference) return;
+    const epoch = epochRef.current;
+    try {
+      await client.removeReference({
+        taskId,
+        sessionId: message.sessionId,
+        messageId: message.id,
+        resourceId,
+      });
+      if (epoch === epochRef.current) await reloadMessages(message.sessionId, epoch);
+    } catch (reason) {
+      if (epoch === epochRef.current) setError(errorText(reason));
+    }
+  };
+
   const createSession = async () => {
     const epoch = epochRef.current;
     setCreating(true);
@@ -308,7 +529,7 @@ export function TaskAgentWorkbench({
       const session = await client.createSession({
         taskId,
         title: `${taskTitle} · PI`,
-        mode: "ask",
+        mode: newSessionMode,
         model: piSettings.model,
         thinkingLevel: piSettings.thinkingEffort,
       });
@@ -329,7 +550,8 @@ export function TaskAgentWorkbench({
 
   const sendPrompt = async (event: FormEvent) => {
     event.preventDefault();
-    const message = draft.trim();
+    const originalDraft = draft;
+    const message = draft.trim() || (selectedResources.length > 0 ? "请查看所附任务资源。" : "");
     const sessionId = selectedSessionRef.current;
     if (!message || !sessionId || activeRunId) return;
     const epoch = epochRef.current;
@@ -337,13 +559,19 @@ export function TaskAgentWorkbench({
     setError("");
     setDraft("");
     try {
-      const run = await client.sendPrompt({ taskId, sessionId, message });
+      const run = await client.sendPrompt({
+        taskId,
+        sessionId,
+        message,
+        resourceIds: selectedResources.map((resource) => resource.id),
+      });
       if (epoch !== epochRef.current) return;
+      setSelectedResources([]);
       if (!terminalRunsRef.current.has(run.id)) setActiveRunId(run.id);
       await reloadMessages(sessionId, epoch);
     } catch (reason) {
       if (epoch !== epochRef.current) return;
-      setDraft(message);
+      setDraft(originalDraft);
       setError(errorText(reason));
     } finally {
       if (epoch === epochRef.current) setSending(false);
@@ -379,23 +607,35 @@ export function TaskAgentWorkbench({
             <span className="eyebrow">任务级 Session</span>
             <strong>PI 会话</strong>
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="新建 PI 会话"
-            title="新建 PI 会话"
-            disabled={creating || busy}
-            onClick={() => void createSession()}
-          >
-            {creating ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}
-          </button>
+          <div className="agent-session-actions">
+            <select
+              aria-label="新会话模式"
+              value={newSessionMode}
+              disabled={creating || busy}
+              onChange={(event) => setNewSessionMode(event.target.value as AgentSession["mode"])}
+            >
+              <option value="ask">Ask</option>
+              <option value="plan">Plan</option>
+              <option value="agent">Agent</option>
+            </select>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="新建 PI 会话"
+              title="新建 PI 会话"
+              disabled={creating || busy}
+              onClick={() => void createSession()}
+            >
+              {creating ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}
+            </button>
+          </div>
         </div>
         <div className="agent-runtime-note">
           <Bot size={14} />
           <span>
             {client.runtimeMode() === "browser-mock"
               ? "浏览器模拟，不启动本机 PI"
-              : "原生 PI RPC · 无工具隔离"}
+              : "原生 PI RPC · 任务资源门禁 · 无 Shell/Git"}
           </span>
         </div>
         <div className="agent-session-list">
@@ -414,7 +654,7 @@ export function TaskAgentWorkbench({
               <span>
                 <strong>{session.title}</strong>
                 <small>
-                  {session.state} · {formatSessionTime(session.lastActiveAt)}
+                  {session.mode} · {session.state} · {formatSessionTime(session.lastActiveAt)}
                 </small>
               </span>
             </button>
@@ -476,14 +716,14 @@ export function TaskAgentWorkbench({
             <div className="agent-chat-empty">
               <Bot size={26} />
               <strong>开始当前任务的第一轮对话</strong>
-              <p>Phase 2 会话处于无工具模式，PI 不能读写文件或执行命令。</p>
+              <p>PI 可读取当前任务资源；Plan/Agent 仅可写入受控 artifacts。</p>
             </div>
           )}
           {!loading && !selectedSessionId && (
             <div className="agent-chat-empty">
               <MessageSquare size={25} />
               <strong>新建一个任务级 PI 会话</strong>
-              <p>历史消息会增量保存在 SQLite，并与其他任务隔离。</p>
+              <p>历史、附件和引用会持久化，并与其他任务严格隔离。</p>
             </div>
           )}
           {messages.map((message) => (
@@ -496,38 +736,205 @@ export function TaskAgentWorkbench({
                 <span>{message.status}</span>
               </header>
               <p>{message.content || (message.status === "streaming" ? "…" : "")}</p>
+              {message.references && message.references.length > 0 && (
+                <div className="agent-message-references">
+                  {message.references.map((reference) => {
+                    const resource = [...resources, ...artifacts].find(
+                      (candidate) => candidate.id === reference.resourceId,
+                    ) ?? {
+                      id: reference.resourceId,
+                      taskId: reference.taskId,
+                      targetType: reference.targetType,
+                      kind: reference.kind,
+                      sourceType: reference.sourceType,
+                      logicalPath: reference.logicalPath,
+                      mimeType: reference.mimeType,
+                      byteSize: reference.byteSize ?? 0,
+                      sha256: "",
+                      immutable: reference.immutable,
+                      readable: true,
+                      createdAt: reference.createdAt,
+                    };
+                    return (
+                      <span key={`${reference.resourceId}-${reference.method}`}>
+                        <button type="button" onClick={() => void showPreview(resource)}>
+                          {reference.mimeType?.startsWith("image/") ? <ImageIcon size={11} /> : <FileText size={11} />}
+                          {resourceName(resource)}
+                        </button>
+                        {message.role === "user" && client.removeReference && (
+                          <button
+                            type="button"
+                            aria-label={`删除引用 ${resourceName(resource)}`}
+                            onClick={() => void removeMessageReference(message, reference.resourceId)}
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </article>
           ))}
         </div>
 
-        <form className="agent-composer" onSubmit={(event) => void sendPrompt(event)}>
-          <textarea
-            value={draft}
-            aria-label="发送给 PI 的消息"
-            placeholder={
-              selectedSessionId
-                ? "输入消息；当前阶段 PI 不可调用工具……"
-                : "请先新建 PI 会话"
-            }
-            disabled={!selectedSessionId || busy}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
+        <form
+          className={`agent-composer${dragActive ? " drag-active" : ""}`}
+          onSubmit={(event) => void sendPrompt(event)}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            if (selectedSessionId && !busy) setDragActive(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false);
+          }}
+          onDrop={handleDrop}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              void importFiles(Array.from(event.target.files ?? []));
+              event.currentTarget.value = "";
             }}
           />
-          <button
-            type="submit"
-            className="button primary compact"
-            disabled={!selectedSessionId || !draft.trim() || busy || sending}
-          >
-            {sending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}
-            发送
-          </button>
+          <div className="agent-composer-main">
+            {selectedResources.length > 0 && (
+              <div className="agent-selected-resources" aria-label="待发送引用">
+                {selectedResources.map((resource) => (
+                  <span key={resource.id}>
+                    {resource.mimeType?.startsWith("image/") ? <ImageIcon size={11} /> : <FileText size={11} />}
+                    {resourceName(resource)}
+                    <button
+                      type="button"
+                      aria-label={`移除待发送引用 ${resourceName(resource)}`}
+                      onClick={() => setSelectedResources((current) => current.filter((item) => item.id !== resource.id))}
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="agent-composer-input">
+              <textarea
+                value={draft}
+                aria-label="发送给 PI 的消息"
+                placeholder={
+                  selectedSessionId
+                    ? "输入消息，键入 @ 引用当前任务资源；可粘贴或拖放附件……"
+                    : "请先新建 PI 会话"
+                }
+                disabled={!selectedSessionId || busy}
+                onPaste={handlePaste}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+              />
+              {activeMentionQuery !== undefined && mentionOptions.length > 0 && (
+                <div className="agent-mention-picker" role="listbox" aria-label="当前任务资源">
+                  {mentionOptions.map((resource) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selectedResources.some((item) => item.id === resource.id)}
+                      key={resource.id}
+                      onClick={() => selectMention(resource)}
+                    >
+                      <AtSign size={11} />
+                      <span><strong>{resourceName(resource)}</strong><small>{resource.logicalPath}</small></span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="agent-composer-actions">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="添加任务附件"
+              title="添加任务附件"
+              disabled={!selectedSessionId || busy || importing}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {importing ? <LoaderCircle className="spin" size={14} /> : <Paperclip size={14} />}
+            </button>
+            <button
+              type="submit"
+              className="button primary compact"
+              disabled={!selectedSessionId || (!draft.trim() && selectedResources.length === 0) || busy || sending}
+            >
+              {sending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}
+              发送
+            </button>
+          </div>
+          {dragActive && <div className="agent-drop-overlay">松开以保存到当前任务附件</div>}
         </form>
       </div>
+
+      <aside className="agent-resource-panel" aria-label="当前任务上下文和文件">
+        <header>
+          <div><FolderOpen size={15} /><span><strong>上下文与文件</strong><small>仅当前任务</small></span></div>
+        </header>
+        <div className="agent-resource-tabs">
+          <button
+            type="button"
+            className={resourcePanel === "resources" ? "active" : ""}
+            onClick={() => setResourcePanel("resources")}
+          >资源 {resources.length}</button>
+          <button
+            type="button"
+            className={resourcePanel === "artifacts" ? "active" : ""}
+            onClick={() => setResourcePanel("artifacts")}
+          >Artifacts {artifacts.length}</button>
+        </div>
+        <div className="agent-resource-list">
+          {(resourcePanel === "resources" ? resources : artifacts).map((resource) => (
+            <button
+              type="button"
+              key={resource.id}
+              className={previewResource?.id === resource.id ? "active" : ""}
+              onClick={() => void showPreview(resource)}
+            >
+              {resource.mimeType?.startsWith("image/") ? <ImageIcon size={13} /> : <FileText size={13} />}
+              <span><strong>{resourceName(resource)}</strong><small>{resource.kind} · {formatBytes(resource.byteSize)}</small></span>
+              {resource.proposalState && <em>{resource.proposalState}</em>}
+            </button>
+          ))}
+          {(resourcePanel === "resources" ? resources : artifacts).length === 0 && (
+            <p>当前任务暂无{resourcePanel === "resources" ? "可引用资源" : " artifacts"}。</p>
+          )}
+        </div>
+        {previewResource && (
+          <section className="agent-resource-preview">
+            <header>
+              <span><strong>{resourceName(previewResource)}</strong><small>{previewResource.logicalPath}</small></span>
+              <div>
+                {previewResource.targetType === "artifact" && client.openArtifact && (
+                  <button
+                    type="button"
+                    aria-label="在系统中打开 artifact"
+                    onClick={() => void client.openArtifact?.(taskId, previewResource.id).catch((reason) => setError(errorText(reason)))}
+                  ><ExternalLink size={11} /></button>
+                )}
+                <button type="button" aria-label="关闭预览" onClick={() => { setPreview(undefined); setPreviewResource(undefined); }}><X size={11} /></button>
+              </div>
+            </header>
+            {previewLoading && <div className="agent-preview-loading"><LoaderCircle className="spin" size={14} />正在预览…</div>}
+            {preview?.kind === "image" && <img src={preview.content} alt={preview.name} />}
+            {preview?.kind === "text" && <pre>{preview.content}</pre>}
+          </section>
+        )}
+      </aside>
     </section>
   );
 }

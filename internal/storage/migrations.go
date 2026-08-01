@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 type migration struct {
 	version    int
@@ -288,6 +288,58 @@ var schemaMigrations = []migration{
 			)`,
 			`CREATE INDEX legacy_task_migrations_state
 			 ON legacy_task_migrations(state, started_at)`,
+		},
+	},
+	{
+		version: 4,
+		statements: []string{
+			`CREATE TABLE message_attachments (
+				task_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				message_id TEXT NOT NULL,
+				resource_id TEXT NOT NULL,
+				position INTEGER NOT NULL CHECK (position >= 0),
+				created_at TEXT NOT NULL,
+				PRIMARY KEY (message_id, resource_id),
+				UNIQUE (message_id, position),
+				FOREIGN KEY (task_id, session_id) REFERENCES agent_sessions(task_id, id) ON DELETE RESTRICT,
+				FOREIGN KEY (task_id, message_id) REFERENCES agent_messages(task_id, id) ON DELETE RESTRICT,
+				FOREIGN KEY (task_id, resource_id) REFERENCES task_resources(task_id, id) ON DELETE RESTRICT
+			)`,
+			`CREATE INDEX message_attachments_task_session
+			 ON message_attachments(task_id, session_id, message_id, position)`,
+			`CREATE TABLE resource_references (
+				task_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				message_id TEXT NOT NULL,
+				resource_id TEXT NOT NULL,
+				target_type TEXT NOT NULL CHECK (target_type IN ('resource', 'artifact')),
+				method TEXT NOT NULL CHECK (method IN ('mention', 'attachment', 'generated')),
+				position INTEGER NOT NULL CHECK (position >= 0),
+				created_at TEXT NOT NULL,
+				PRIMARY KEY (message_id, resource_id, method),
+				UNIQUE (message_id, position),
+				FOREIGN KEY (task_id, session_id) REFERENCES agent_sessions(task_id, id) ON DELETE RESTRICT,
+				FOREIGN KEY (task_id, message_id) REFERENCES agent_messages(task_id, id) ON DELETE RESTRICT
+			)`,
+			`CREATE INDEX resource_references_task_session
+			 ON resource_references(task_id, session_id, message_id, position)`,
+			`CREATE TABLE requirement_proposals (
+				task_id TEXT NOT NULL,
+				artifact_id TEXT NOT NULL,
+				base_revision INTEGER NOT NULL CHECK (base_revision >= 0),
+				state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'rejected')),
+				accepted_revision INTEGER,
+				created_at TEXT NOT NULL,
+				resolved_at TEXT,
+				PRIMARY KEY (artifact_id),
+				FOREIGN KEY (task_id, artifact_id) REFERENCES workspace_artifacts(task_id, id) ON DELETE RESTRICT,
+				CHECK ((state = 'pending' AND accepted_revision IS NULL AND resolved_at IS NULL) OR
+				       (state = 'accepted' AND accepted_revision IS NOT NULL AND resolved_at IS NOT NULL) OR
+				       (state = 'rejected' AND accepted_revision IS NULL AND resolved_at IS NOT NULL))
+			)`,
+			`CREATE INDEX requirement_proposals_task_state
+			 ON requirement_proposals(task_id, state, created_at)`,
 		},
 	},
 }

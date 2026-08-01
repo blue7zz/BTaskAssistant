@@ -356,9 +356,11 @@ pending request 在 app 重启时一律转 expired；不能恢复为已允许。
 
 ### 4.12 阶段 3 扩展表
 
-- message_attachments：message_id、resource_id、position、created_at。
-- resource_references：session_id、message_id、resource_id、引用方式和创建时间。
-- requirement_proposals：task_id、artifact_id、base_revision、state、accepted_revision、created_at、resolved_at。
+- message_attachments：task/session/message/resource 复合范围、position、created_at；只允许引用当前任务 task_resources。
+- resource_references：task/session/message、resource_id、target_type（resource/artifact）、method（mention/attachment/generated）、position 和 created_at。多态目标在 repository transaction 内再次按 task_id 校验。
+- requirement_proposals：task_id、artifact_id、base_revision、state、accepted_revision、created_at、resolved_at；阶段 3 只创建 pending，阶段 4 才能由人工动作决议。
+
+v4 已由 migration runner 实现，空库和 v3 升级都会顺序执行；重复打开数据库不重放迁移。消息与引用、Session sequence 更新在同一 `BEGIN IMMEDIATE` transaction 中提交。
 
 ### 4.13 legacy_task_migrations
 

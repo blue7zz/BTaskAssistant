@@ -230,6 +230,96 @@ func (a *App) ListExecutionRuns(
 	return a.agentService.Runs(taskID, sessionID)
 }
 
+func (a *App) ListAgentResources(
+	request agent.ResourceSearchRequest,
+) ([]agent.ResourceDescriptor, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Resources(request)
+}
+
+func (a *App) ListAgentArtifacts(
+	taskID string,
+) ([]agent.ResourceDescriptor, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.Artifacts(taskID)
+}
+
+func (a *App) ImportAgentAttachments(
+	request agent.ImportAttachmentsRequest,
+) ([]agent.ResourceDescriptor, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.ImportAttachments(request)
+}
+
+func (a *App) PreviewAgentResource(
+	request agent.ResourcePreviewRequest,
+) (taskspace.FilePreview, error) {
+	if a.startupErr != nil {
+		return taskspace.FilePreview{}, a.startupErr
+	}
+	if a.agentService == nil {
+		return taskspace.FilePreview{}, errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.PreviewResource(request)
+}
+
+func (a *App) RemoveAgentMessageReference(
+	request agent.RemoveReferenceRequest,
+) error {
+	if a.startupErr != nil {
+		return a.startupErr
+	}
+	if a.agentService == nil {
+		return errors.New("PI 会话服务未初始化")
+	}
+	return a.agentService.RemoveReference(request)
+}
+
+func (a *App) OpenAgentArtifact(
+	taskID string,
+	artifactID string,
+) error {
+	if a.startupErr != nil {
+		return a.startupErr
+	}
+	if a.ctx == nil {
+		return errors.New("桌面客户端尚未初始化")
+	}
+	workspace, err := a.store.EnsureTaskWorkspace(taskID)
+	if err != nil {
+		return err
+	}
+	artifact, err := a.store.WorkspaceArtifact(taskID, artifactID)
+	if err != nil {
+		return err
+	}
+	if _, err := (taskspace.Service{}).Read(
+		filepath.Dir(workspace.RootPath), taskID, artifact.LogicalPath,
+	); err != nil {
+		return fmt.Errorf("artifact cannot be opened safely: %w", err)
+	}
+	openPath := a.openPath
+	if openPath == nil {
+		openPath = openPathInFileManager
+	}
+	return openPath(a.ctx, filepath.Join(workspace.RootPath, filepath.FromSlash(artifact.LogicalPath)))
+}
+
 func (a *App) CreateAgentSession(
 	request agent.CreateSessionRequest,
 ) (storage.AgentSessionRecord, error) {

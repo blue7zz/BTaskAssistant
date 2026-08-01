@@ -80,4 +80,12 @@ type ProcessOptions struct {
 	ShutdownGrace  time.Duration
 	MaxFrameBytes  int
 	MaxStderrBytes int
+	Gate           *GateProcessOptions
+}
+
+type GateProcessOptions struct {
+	ExtensionPath string
+	Version       string
+	Nonce         string
+	SHA256        string
 }

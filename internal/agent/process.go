@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -127,8 +129,15 @@ func StartProcess(
 		"--no-context-files",
 		"--no-approve",
 		"--offline",
-		"--no-tools",
 	)
+	if options.Gate == nil {
+		args = append(args, "--no-tools")
+	} else {
+		if err := validateGateProcessOptions(*options.Gate); err != nil {
+			return nil, SessionState{}, err
+		}
+		args = append(args, "-e", options.Gate.ExtensionPath, "--no-builtin-tools")
+	}
 	command := exec.Command(executable, args...)
 	command.Dir = options.WorkDir
 	command.Env = environment
@@ -183,6 +192,14 @@ func StartProcess(
 		_ = process.Close(closeCtx)
 		return nil, SessionState{}, errors.New("原生 PI RPC 状态缺少 sessionId")
 	}
+	if options.Gate != nil {
+		if err := process.waitForGateHeartbeat(probeCtx, *options.Gate); err != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), options.ShutdownGrace)
+			defer cancel()
+			_ = process.Close(closeCtx)
+			return nil, SessionState{}, err
+		}
+	}
 	return process, state, nil
 }
 
@@ -193,6 +210,47 @@ func (process *Process) Call(
 	result any,
 ) error {
 	return process.client.Call(ctx, command, fields, result)
+}
+
+func (process *Process) Send(ctx context.Context, fields map[string]any) error {
+	return process.client.Send(ctx, fields)
+}
+
+func (process *Process) waitForGateHeartbeat(
+	ctx context.Context,
+	gate GateProcessOptions,
+) error {
+	wantStatus := gate.Version + ":" + gate.Nonce
+	for {
+		select {
+		case event, ok := <-process.Events():
+			if !ok {
+				return errors.New("PI gate extension ended before its heartbeat")
+			}
+			if event.Type == "extension_error" {
+				return errors.New("PI gate extension failed during startup")
+			}
+			if event.Type != "extension_ui_request" {
+				return fmt.Errorf("unexpected PI event %q before gate heartbeat", event.Type)
+			}
+			var heartbeat struct {
+				Method     string `json:"method"`
+				StatusKey  string `json:"statusKey"`
+				StatusText string `json:"statusText"`
+			}
+			if err := json.Unmarshal(event.JSON, &heartbeat); err != nil {
+				return fmt.Errorf("decode PI gate heartbeat: %w", err)
+			}
+			if heartbeat.Method != "setStatus" || heartbeat.StatusKey != "btask-gate" || heartbeat.StatusText != wantStatus {
+				return errors.New("PI gate extension heartbeat did not match its configured version and nonce")
+			}
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("wait for PI gate extension heartbeat: %w", ctx.Err())
+		case <-process.Done():
+			return errors.New("PI gate extension process ended during startup")
+		}
+	}
 }
 
 func (process *Process) Events() <-chan rawEvent {
@@ -303,6 +361,29 @@ func normalizeProcessOptions(options ProcessOptions) ProcessOptions {
 		options.MaxStderrBytes = defaultStderrLimit
 	}
 	return options
+}
+
+func validateGateProcessOptions(options GateProcessOptions) error {
+	if strings.TrimSpace(options.Version) == "" || strings.TrimSpace(options.Nonce) == "" || len(options.SHA256) != 64 {
+		return errors.New("PI gate extension version, nonce and SHA-256 are required")
+	}
+	absolute, err := filepath.Abs(options.ExtensionPath)
+	if err != nil || absolute != filepath.Clean(options.ExtensionPath) || filepath.Ext(absolute) != ".ts" {
+		return errors.New("PI gate extension path must be an absolute TypeScript file")
+	}
+	info, err := os.Lstat(absolute)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return errors.New("PI gate extension path is not a regular file")
+	}
+	content, err := os.ReadFile(absolute)
+	if err != nil {
+		return errors.New("PI gate extension cannot be read")
+	}
+	hash := sha256.Sum256(content)
+	if fmt.Sprintf("%x", hash[:]) != options.SHA256 {
+		return errors.New("PI gate extension SHA-256 does not match the embedded source")
+	}
+	return nil
 }
 
 func resolvePIExecutable(explicit string) (string, error) {

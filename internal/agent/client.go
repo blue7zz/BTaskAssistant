@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -78,6 +79,9 @@ func (client *rpcClient) Call(
 	if err != nil {
 		return fmt.Errorf("encode pi rpc %s request: %w", command, err)
 	}
+	if len(encoded)+1 > client.limit {
+		return ErrFrameTooLarge
+	}
 	encoded = append(encoded, '\n')
 
 	pending := pendingCall{command: command, result: make(chan rpcCallResult, 1)}
@@ -139,6 +143,35 @@ func (client *rpcClient) Call(
 		}
 		return err
 	}
+}
+
+func (client *rpcClient) Send(ctx context.Context, fields map[string]any) error {
+	requestType, _ := fields["type"].(string)
+	if strings.TrimSpace(requestType) == "" {
+		return errors.New("pi rpc notification type is required")
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return fmt.Errorf("encode pi rpc %s notification: %w", requestType, err)
+	}
+	if len(encoded)+1 > client.limit {
+		return ErrFrameTooLarge
+	}
+	encoded = append(encoded, '\n')
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-client.done:
+		return ErrRPCClosed
+	default:
+	}
+	client.writeMutex.Lock()
+	_, writeErr := client.writer.Write(encoded)
+	client.writeMutex.Unlock()
+	if writeErr != nil {
+		client.fail(fmt.Errorf("write pi rpc %s notification: %w", requestType, writeErr))
+	}
+	return writeErr
 }
 
 func (client *rpcClient) Events() <-chan rawEvent {

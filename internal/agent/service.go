@@ -45,6 +45,7 @@ type managedSession struct {
 	runtime       Runtime
 	run           *activeRun
 	closing       bool
+	gate          gateIdentity
 }
 
 type activeRun struct {
@@ -210,7 +211,10 @@ func (service *Service) SendPrompt(
 ) (storage.ExecutionRunRecord, error) {
 	request.Message = strings.TrimSpace(request.Message)
 	if request.Message == "" {
-		return storage.ExecutionRunRecord{}, errors.New("消息不能为空")
+		if len(request.ResourceIDs) == 0 {
+			return storage.ExecutionRunRecord{}, errors.New("消息不能为空")
+		}
+		request.Message = "请查看所附的当前任务资源。"
 	}
 	if len([]byte(request.Message)) > maxPromptBytes || strings.ContainsRune(request.Message, '\x00') {
 		return storage.ExecutionRunRecord{}, errors.New("消息不能超过 256 KiB 且不得包含 NUL")
@@ -235,6 +239,10 @@ func (service *Service) SendPrompt(
 	}
 
 	now := service.timestamp()
+	promptReferences, err := service.resolvePromptReferences(workspace, request, now)
+	if err != nil {
+		return storage.ExecutionRunRecord{}, err
+	}
 	runID := newID("run")
 	run := storage.ExecutionRunRecord{
 		ID:         runID,
@@ -263,7 +271,11 @@ func (service *Service) SendPrompt(
 		CreatedAt: now, CompletedAt: &now,
 	}
 	service.touchSessionLocked(managed)
-	if err := service.store.UpsertAgentMessageAndUpdateSession(userMessage, managed.record); err != nil {
+	if err := service.store.UpsertAgentMessageWithReferences(
+		userMessage,
+		managed.record,
+		promptReferences.references,
+	); err != nil {
 		service.failRunRecord(run, err.Error())
 		return storage.ExecutionRunRecord{}, err
 	}
@@ -308,10 +320,14 @@ func (service *Service) SendPrompt(
 
 	requestCtx, cancel := context.WithTimeout(ctx, service.requestTimeout)
 	defer cancel()
+	promptFields := map[string]any{"message": promptReferences.prompt}
+	if len(promptReferences.images) > 0 {
+		promptFields["images"] = promptReferences.images
+	}
 	if err := managed.runtime.Call(
 		requestCtx,
 		"prompt",
-		map[string]any{"message": request.Message},
+		promptFields,
 		nil,
 	); err != nil {
 		service.finishRunLocked(managed, "failed", sanitizeError(err.Error(), workspace.RootPath))
@@ -449,6 +465,22 @@ func (service *Service) startRuntimeLocked(
 		RequestTimeout: service.requestTimeout,
 		ShutdownGrace:  service.shutdownGrace,
 	}
+	gate, err := installGateExtension(
+		workspace.RootPath,
+		managed.record.TaskID,
+		managed.record.ID,
+		managed.record.Mode,
+	)
+	if err != nil {
+		service.failSessionLocked(managed, sanitizeError(err.Error(), workspace.RootPath))
+		return err
+	}
+	options.Gate = &GateProcessOptions{
+		ExtensionPath: gate.ExtensionPath,
+		Version:       gate.Version,
+		Nonce:         gate.Nonce,
+		SHA256:        gate.SHA256,
+	}
 	runtime, state, err := service.factory.Start(ctx, options)
 	if err != nil {
 		service.failSessionLocked(managed, sanitizeError(err.Error(), workspace.RootPath))
@@ -521,6 +553,7 @@ func (service *Service) startRuntimeLocked(
 		managed.record.ExternalSessionID = &state.SessionID
 	}
 	managed.runtime = runtime
+	managed.gate = gate
 	managed.record.State = "idle"
 	managed.record.ErrorMessage = nil
 	service.touchSessionLocked(managed)

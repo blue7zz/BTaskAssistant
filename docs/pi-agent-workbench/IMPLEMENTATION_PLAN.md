@@ -372,6 +372,15 @@ schema 3 → 4：
 - 禁用引用/写工具不会破坏聊天读取。
 - 不自动删除导入附件。
 
+### 阶段 3 实施记录（2026-08-01）
+
+- taskspace 已实现任务内附件导入、MIME/magic/hash/数量与容量校验，以及只允许 plans/reports/proposals/exports 的原子 artifact 写入。
+- schema v4 已实现消息附件、资源引用和需求提案；消息引用可移除但 immutable 资源字节保留，重启后从 SQLite 与资源镜像恢复。
+- 原生 PI 启动改为 `--no-extensions` + 显式 `-e` + `--no-builtin-tools`，并验证 version/nonce heartbeat；固定 gate 只暴露当前任务 list/read 和 Plan/Agent artifact writer。
+- 前端已实现 `@` 选择、粘贴/拖放附件、引用 chip、资源与 artifact 列表、图片/文本预览及系统打开。
+- 未开放 Shell、Git、任意文件系统路径或外部写入；需求变更只能生成 `artifacts/proposals` 的 pending 提案。
+- 真实 provider 图片理解、由模型主动触发 custom tool，以及 Wails 桌面人工预览仍按 TEST_PLAN 标记 `external_validation_pending`，不由无凭据自动测试替代。
+
 ## 8. 阶段 4：权限与工具审批
 
 ### 依赖

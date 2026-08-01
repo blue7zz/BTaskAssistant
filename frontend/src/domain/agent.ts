@@ -48,6 +48,52 @@ export interface AgentMessage {
   piEntryId?: string;
   createdAt: string;
   completedAt?: string;
+  references?: AgentReference[];
+}
+
+export interface AgentReference {
+  taskId: string;
+  sessionId: string;
+  messageId: string;
+  resourceId: string;
+  targetType: "resource" | "artifact";
+  method: "mention" | "attachment" | "generated";
+  position: number;
+  createdAt: string;
+  kind: string;
+  sourceType?: string;
+  logicalPath: string;
+  mimeType?: string;
+  byteSize?: number;
+  immutable: boolean;
+}
+
+export interface AgentResource {
+  id: string;
+  taskId: string;
+  targetType: "resource" | "artifact";
+  kind: string;
+  sourceType?: string;
+  logicalPath: string;
+  mimeType?: string;
+  byteSize: number;
+  sha256: string;
+  immutable: boolean;
+  readable: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  proposalState?: "pending" | "accepted" | "rejected";
+}
+
+export interface AgentResourcePreview {
+  path: string;
+  name: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  kind: "text" | "image";
+  content: string;
+  truncated: boolean;
 }
 
 export interface AgentRun {
@@ -91,6 +137,36 @@ export interface AgentPromptRequest {
   taskId: string;
   sessionId: string;
   message: string;
+  resourceIds: string[];
+}
+
+export interface AgentResourceSearchRequest {
+  taskId: string;
+  query: string;
+  limit: number;
+}
+
+export interface AgentAttachmentUpload {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
+export interface ImportAgentAttachmentsRequest {
+  taskId: string;
+  files: AgentAttachmentUpload[];
+}
+
+export interface AgentResourcePreviewRequest {
+  taskId: string;
+  resourceId: string;
+}
+
+export interface RemoveAgentReferenceRequest {
+  taskId: string;
+  sessionId: string;
+  messageId: string;
+  resourceId: string;
 }
 
 export interface AbortAgentRunRequest {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -152,6 +153,40 @@ func TestRPCClientWriteFailureLeavesEventClosureToReader(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("reader did not close events")
+	}
+}
+
+func TestRPCClientSendsExtensionNotificationWithoutRequestID(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	var stdin bytes.Buffer
+	client := newRPCClient(stdoutReader, &stdin, MaxRPCFrameBytes)
+	t.Cleanup(func() { _ = stdoutWriter.Close() })
+
+	fields := map[string]any{
+		"type":  "extension_ui_response",
+		"id":    "extension-request",
+		"value": `{"ok":true}`,
+	}
+	if err := client.Send(context.Background(), fields); err != nil {
+		t.Fatalf("send notification: %v", err)
+	}
+	var received map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdin.Bytes()), &received); err != nil {
+		t.Fatalf("decode notification: %v", err)
+	}
+	if received["type"] != fields["type"] || received["id"] != fields["id"] ||
+		received["value"] != fields["value"] || len(received) != len(fields) {
+		t.Fatalf("notification changed in transit: %#v", received)
+	}
+
+	oversized := map[string]any{"type": "extension_ui_response", "value": strings.Repeat("x", MaxRPCFrameBytes)}
+	if err := client.Send(context.Background(), oversized); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("expected oversized notification rejection, got %v", err)
+	}
+	if err := client.Call(
+		context.Background(), "prompt", map[string]any{"message": strings.Repeat("x", MaxRPCFrameBytes)}, nil,
+	); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("expected oversized request rejection, got %v", err)
 	}
 }
 

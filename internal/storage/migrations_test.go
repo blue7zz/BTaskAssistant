@@ -65,13 +65,16 @@ func TestMigrationRunnerUpgradesLegacyV2AndPreservesWorkspaceState(t *testing.T)
 		"git_bindings",
 		"workspace_artifacts",
 		"legacy_task_migrations",
+		"message_attachments",
+		"resource_references",
+		"requirement_proposals",
 	} {
 		var count int
 		if err := database.QueryRow(
 			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`,
 			table,
 		).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("missing v3 table %q: count %d, error %v", table, count, err)
+			t.Fatalf("missing normalized table %q: count %d, error %v", table, count, err)
 		}
 	}
 	if err := store.Close(); err != nil {
@@ -88,12 +91,12 @@ func TestMigrationRunnerUpgradesLegacyV2AndPreservesWorkspaceState(t *testing.T)
 		t.Fatal(err)
 	}
 	var migrationCount int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 3 {
+	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != currentSchemaVersion {
 		t.Fatalf("migrations were replayed: count %d, error %v", migrationCount, err)
 	}
 }
 
-func TestMigrationRunnerCreatesFreshV3Database(t *testing.T) {
+func TestMigrationRunnerCreatesFreshDatabase(t *testing.T) {
 	store := NewSQLiteStoreAt(filepath.Join(t.TempDir(), "fresh.db"))
 	t.Cleanup(func() { _ = store.Close() })
 	if err := store.Open(); err != nil {
@@ -115,6 +118,56 @@ func TestMigrationRunnerCreatesFreshV3Database(t *testing.T) {
 		if err := database.QueryRow(`PRAGMA ` + pragma.name).Scan(&value); err != nil || value != pragma.want {
 			t.Fatalf("PRAGMA %s = %d, want %d, error %v", pragma.name, value, pragma.want, err)
 		}
+	}
+}
+
+func TestMigrationRunnerUpgradesV3ToV4WithoutReplayingV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v3.db")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(1)
+	if err := configureDatabase(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMigrations(database, schemaMigrations[:3]); err != nil {
+		t.Fatalf("create v3 fixture: %v", err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO workspace_state(id, payload) VALUES (1, '{"state":{"tasks":[]}}')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSQLiteStoreAt(path)
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Open(); err != nil {
+		t.Fatalf("upgrade v3 database: %v", err)
+	}
+	database, err = store.readyDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSchemaVersion(t, database, 4)
+	for _, table := range []string{"message_attachments", "resource_references", "requirement_proposals"} {
+		var count int
+		if err := database.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
+		).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("missing v4 table %q: count %d, error %v", table, count, err)
+		}
+	}
+	var migrationCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil || migrationCount != 4 {
+		t.Fatalf("unexpected migration count %d, error %v", migrationCount, err)
+	}
+	var payload string
+	if err := database.QueryRow(`SELECT payload FROM workspace_state WHERE id = 1`).Scan(&payload); err != nil || payload != `{"state":{"tasks":[]}}` {
+		t.Fatalf("v3 workspace payload changed: %q, error %v", payload, err)
 	}
 }
 

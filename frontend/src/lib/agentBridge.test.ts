@@ -64,6 +64,7 @@ describe("PI agent bridge", () => {
       taskId: "task_a",
       sessionId: first.id,
       message: "第一行\u2028第二行",
+      resourceIds: [],
     });
     await vi.runAllTimersAsync();
 
@@ -95,6 +96,7 @@ describe("PI agent bridge", () => {
       taskId: "task_abort",
       sessionId: session.id,
       message: "请停止",
+      resourceIds: [],
     });
 
     await expect(
@@ -118,6 +120,78 @@ describe("PI agent bridge", () => {
     expect(messages.at(-1)?.status).toBe("cancelled");
   });
 
+  it("keeps browser attachments and message references task scoped", async () => {
+    vi.useFakeTimers();
+    const sessionA = await agentClient.createSession({
+      taskId: "task_resource_a",
+      title: "A",
+      mode: "ask",
+      model: "",
+      thinkingLevel: "medium",
+    });
+    await agentClient.createSession({
+      taskId: "task_resource_b",
+      title: "B",
+      mode: "ask",
+      model: "",
+      thinkingLevel: "medium",
+    });
+    const importedA = await agentClient.importAttachments?.({
+      taskId: "task_resource_a",
+      files: [{
+        name: "same.md",
+        mimeType: "text/markdown",
+        dataBase64: window.btoa("task A"),
+      }],
+    });
+    const importedB = await agentClient.importAttachments?.({
+      taskId: "task_resource_b",
+      files: [{
+        name: "same.md",
+        mimeType: "text/markdown",
+        dataBase64: window.btoa("task B"),
+      }],
+    });
+    expect(importedA).toHaveLength(1);
+    expect(importedB).toHaveLength(1);
+    expect(importedA?.[0].id).not.toBe(importedB?.[0].id);
+
+    await agentClient.sendPrompt({
+      taskId: "task_resource_a",
+      sessionId: sessionA.id,
+      message: "",
+      resourceIds: [importedA![0].id],
+    });
+    await vi.runAllTimersAsync();
+    let messages = await agentClient.listMessages("task_resource_a", sessionA.id);
+    expect(messages[0].content).toBe("请查看所附的当前任务资源。");
+    expect(messages[0].references).toMatchObject([{
+      resourceId: importedA![0].id,
+      method: "attachment",
+      logicalPath: expect.stringContaining("same.md"),
+    }]);
+    await expect(
+      agentClient.previewResource?.({
+        taskId: "task_resource_b",
+        resourceId: importedA![0].id,
+      }),
+    ).rejects.toThrow("当前任务资源不存在");
+    await agentClient.removeReference?.({
+      taskId: "task_resource_a",
+      sessionId: sessionA.id,
+      messageId: messages[0].id,
+      resourceId: importedA![0].id,
+    });
+    messages = await agentClient.listMessages("task_resource_a", sessionA.id);
+    expect(messages[0].references).toEqual([]);
+    await expect(
+      agentClient.previewResource?.({
+        taskId: "task_resource_a",
+        resourceId: importedA![0].id,
+      }),
+    ).resolves.toMatchObject({ content: "task A", kind: "text" });
+  });
+
   it("delegates to Wails and drops malformed runtime events", async () => {
     const listSessions = vi.fn().mockResolvedValue([]);
     let runtimeListener: ((payload: unknown) => void) | undefined;
@@ -131,6 +205,12 @@ describe("PI agent bridge", () => {
           CreateAgentSession: vi.fn(),
           SendAgentPrompt: vi.fn(),
           AbortAgentRun: vi.fn(),
+          ListAgentResources: vi.fn().mockResolvedValue([]),
+          ListAgentArtifacts: vi.fn().mockResolvedValue([]),
+          ImportAgentAttachments: vi.fn().mockResolvedValue([]),
+          PreviewAgentResource: vi.fn(),
+          RemoveAgentMessageReference: vi.fn(),
+          OpenAgentArtifact: vi.fn(),
         },
       },
     } as unknown as typeof window.go;
