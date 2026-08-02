@@ -1,4 +1,5 @@
 import { memo, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { rxPortalTarget, rxRootElement } from "../lib/embedHost";
 import { createPortal } from "react-dom";
 import { AlertCircle, Code2, Maximize2, Minimize2, Play, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { CopyButton } from "./CopyButton";
@@ -287,7 +288,7 @@ export function sanitizeMermaidSvg(svg: string): string {
 
 export function resolveMermaidTheme(): MermaidThemeName {
   if (typeof document === "undefined") return "dark";
-  const forced = document.documentElement.getAttribute("data-theme");
+  const forced = rxRootElement().getAttribute("data-theme");
   if (forced === "light" || forced === "dark") return forced;
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
@@ -296,7 +297,7 @@ function useMermaidTheme(): MermaidThemeName {
   const [theme, setTheme] = useState<MermaidThemeName>(resolveMermaidTheme);
 
   useEffect(() => {
-    const html = document.documentElement;
+    const html = rxRootElement();
     const updateTheme = () => setTheme(resolveMermaidTheme());
     const observer = new MutationObserver(updateTheme);
     observer.observe(html, { attributeFilter: ["data-theme", "data-theme-mode"] });
@@ -487,7 +488,7 @@ const MermaidDiagram = memo(function MermaidDiagram({ definition }: MermaidDiagr
   const toggleFullscreen = useCallback(() => {
     setFullscreen((current) => {
       const next = !current;
-      setPortalTarget(next ? document.querySelector(".chat-pane") ?? document.body : null);
+      setPortalTarget(next ? rxPortalTarget() : null);
       return next;
     });
   }, []);

@@ -180,24 +180,31 @@ interface NativeApp {
   ): Promise<RequirementAnalysisResult>;
 }
 
-declare global {
-  interface Window {
-    go?: {
-      main?: {
-        App?: NativeApp;
-      };
-    };
-    runtime?: {
-      BrowserOpenURL?(url: string): void;
-      EventsOn?(
-        eventName: string,
-        callback: (payload: unknown) => void,
-      ): (() => void) | void;
-    };
-  }
+// Window.go/runtime 类型由 reasonix 源码（lib/bridge.ts）提供全局声明
+// （WailsRuntime / AppBindings），BTask 不再重复声明以避免声明合并冲突。
+// BTask 侧一律经 nativeApp() / nativeRuntime() 断言访问。
+
+interface BTaskRuntime {
+  BrowserOpenURL?(url: string): void;
+  EventsOn?(eventName: string, callback: (payload: unknown) => void): (() => void) | void;
+  OnFileDrop?(cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean): void;
+  OnFileDropOff?(): void;
+  ClipboardSetText?(text: string): void;
+  ClipboardGetText?(): Promise<string>;
+  WindowSetSystemDefaultTheme?(): void;
+  WindowSetDarkTheme?(): void;
+  WindowSetLightTheme?(): void;
+  WindowSetBackgroundColour?(r: number, g: number, b: number, a?: number): void;
+  WindowGetSize?(): Promise<{ w: number; h: number }>;
+  WindowGetPosition?(): Promise<{ x: number; y: number }>;
+  WindowIsMaximised?(): Promise<boolean>;
 }
 
-const nativeApp = (): NativeApp | undefined => window.go?.main?.App;
+const nativeApp = (): NativeApp | undefined =>
+  (window as unknown as { go?: { main?: { App?: NativeApp } } }).go?.main?.App;
+
+const nativeRuntime = (): BTaskRuntime | undefined =>
+  (window as unknown as { runtime?: BTaskRuntime }).runtime;
 
 let nativeStateWriteQueue: Promise<void> = Promise.resolve();
 
@@ -338,7 +345,7 @@ function isDailyReportGenerationProgress(
 export function subscribeDailyReportGenerationProgress(
   listener: (progress: DailyReportGenerationProgress) => void,
 ): () => void {
-  const runtime = window.runtime;
+  const runtime = nativeRuntime();
   if (typeof runtime?.EventsOn !== "function") return () => undefined;
   const unsubscribe = runtime.EventsOn(
     DAILY_REPORT_GENERATION_PROGRESS_EVENT,
@@ -660,8 +667,9 @@ export async function loadPlaneWorkItemDetails(
 }
 
 export function openExternalURL(url: string): void {
-  if (window.runtime?.BrowserOpenURL) {
-    window.runtime.BrowserOpenURL(url);
+  const runtime = nativeRuntime();
+  if (runtime?.BrowserOpenURL) {
+    runtime.BrowserOpenURL(url);
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");

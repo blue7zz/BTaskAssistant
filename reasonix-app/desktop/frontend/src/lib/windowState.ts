@@ -11,6 +11,7 @@
 // to matter.
 
 import { useEffect, useRef } from "react";
+import { rxRootElement } from "./embedHost";
 import { app } from "./bridge";
 
 export function useWindowStatePersistence() {
@@ -73,7 +74,7 @@ export function useViewportHeightVar() {
     if (typeof window === "undefined" || typeof document === "undefined") return;
 
     let frame = 0;
-    const root = document.documentElement;
+    const root = rxRootElement();
     const setHeight = () => {
       frame = 0;
       const height = Math.round(window.visualViewport?.height ?? window.innerHeight);

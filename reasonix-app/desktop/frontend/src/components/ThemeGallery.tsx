@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { rxActiveElement, rxQuerySelector } from "../lib/embedHost";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Check, CircleHelp, Copy, Download, ImagePlus, MoreHorizontal, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { app } from "../lib/bridge";
@@ -913,7 +914,7 @@ function ThemeEditorInline({
   useEffect(() => () => cancelThemePreview(), []);
 
   useLayoutEffect(() => {
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    restoreFocusRef.current = rxActiveElement() instanceof HTMLElement ? (rxActiveElement() as HTMLElement) : null;
     const initialFocus = initialFocusRef.current && !initialFocusRef.current.disabled
       ? initialFocusRef.current
       : editorRef.current?.querySelector<HTMLElement>('input:not([disabled]), textarea:not([disabled]), button:not([disabled])');
@@ -940,10 +941,10 @@ function ThemeEditorInline({
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && rxActiveElement() === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && rxActiveElement() === last) {
         event.preventDefault();
         first.focus();
       }
@@ -998,7 +999,7 @@ function ThemeEditorInline({
   }, [state.tokens]);
 
   const appLayoutClass = ["app--classic", "app--workbench", "app--creation"]
-    .find((className) => document.querySelector(`.${className}`)) || "";
+    .find((className) => rxQuerySelector(`.${className}`)) || "";
 
   return createPortal(
     <div className="theme-gallery__editor-overlay">

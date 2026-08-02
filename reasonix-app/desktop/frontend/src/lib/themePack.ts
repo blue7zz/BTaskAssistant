@@ -3,6 +3,7 @@
 // resources — only semantic tokens, recipe enums, and local background images.
 
 import { applyTheme, getTheme, getThemeStyle, isThemeStyle, type Theme, type ThemeStyle } from "./theme";
+import { rxRootElement, rxQuerySelector } from "./embedHost";
 
 export type ThemePackTokens = {
   light?: Record<string, string>;
@@ -235,7 +236,7 @@ export function applyThemePack(pack: ThemePackView | null | undefined, options?:
     activePack = next;
   }
 
-  const root = document.documentElement;
+  const root = rxRootElement();
   if (!next) {
     root.removeAttribute("data-theme-pack");
     removePackStyleElement();
@@ -269,7 +270,7 @@ export function clearThemePack(): void {
   previewSnapshot = null;
   activePack = null;
   if (typeof document !== "undefined") {
-    const root = document.documentElement;
+    const root = rxRootElement();
     root.removeAttribute("data-theme-pack");
     removePackStyleElement();
     clearBackgroundCSSVars(root);
@@ -285,10 +286,10 @@ export function clearThemePack(): void {
 export function applyThemeScene(scene: ThemeScene): void {
   activeScene = scene === "task" ? "task" : "home";
   if (typeof document === "undefined") return;
-  const app = document.querySelector(".app") ?? document.documentElement;
+  const app = rxQuerySelector(".app") ?? rxRootElement();
   app.setAttribute("data-theme-scene", activeScene);
   // Also mirror on root for CSS that targets :root.
-  document.documentElement.setAttribute("data-theme-scene", activeScene);
+  rxRootElement().setAttribute("data-theme-scene", activeScene);
 }
 
 export function beginThemePreview(pack: ThemePackView): void {
@@ -315,7 +316,7 @@ export function cancelThemePreview(): void {
     // No active pack under the preview — strip overlay without changing restored style again.
     activePack = null;
     if (typeof document !== "undefined") {
-      const root = document.documentElement;
+      const root = rxRootElement();
       root.removeAttribute("data-theme-pack");
       removePackStyleElement();
       clearBackgroundCSSVars(root);

@@ -289,7 +289,7 @@ describe("PI agent bridge", () => {
         runtimeListener = listener;
         return runtimeUnsubscribe;
       }),
-    };
+    } as unknown as Window["runtime"];
     const listener = vi.fn();
     const unsubscribe = agentClient.subscribe(listener);
 
@@ -300,7 +300,7 @@ describe("PI agent bridge", () => {
 
     expect(agentClient.runtimeMode()).toBe("native");
     expect(listSessions).toHaveBeenCalledWith("task_native");
-    expect(window.runtime.EventsOn).toHaveBeenCalledWith(
+    expect((window.runtime as Window["runtime"])?.EventsOn).toHaveBeenCalledWith(
       "agent:event",
       expect.any(Function),
     );

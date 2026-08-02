@@ -4,6 +4,7 @@
 // "run now" button for each. The panel is opened from the sidebar nav item.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { rxQuerySelector } from "../../../lib/embedHost";
 import {
   Activity,
   ChevronLeft,
@@ -283,7 +284,7 @@ export function HeartbeatPanel({ open, onClose, startNew, onOpenTopic }: Heartbe
   useEffect(() => {
     if (!open) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape" && !dirtyRef.current && !document.querySelector("[data-anchored-popover='active']")) onClose();
+      if (e.key === "Escape" && !dirtyRef.current && !rxQuerySelector("[data-anchored-popover='active']")) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -1,3 +1,5 @@
+import { rxRootElement } from "./embedHost";
+
 export const FONT_FAMILIES = ["system", "yahei", "pingfang", "noto", "custom"] as const;
 export const MONO_FONT_FAMILIES = ["system", "cascadia", "jetbrains", "sfmono", "custom"] as const;
 
@@ -58,7 +60,7 @@ export function setCustomMonoFontName(name: string): void {
 
 export function applyFontFamily(font: FontFamily): void {
   if (typeof document === "undefined") return;
-  const root = document.documentElement;
+  const root = rxRootElement();
   if (font === DEFAULT_FONT_FAMILY) {
     root.removeAttribute("data-font-family");
     root.style.removeProperty("--font-family-custom");
@@ -81,7 +83,7 @@ export function applyFontFamily(font: FontFamily): void {
 
 export function applyMonoFontFamily(font: MonoFontFamily): void {
   if (typeof document === "undefined") return;
-  const root = document.documentElement;
+  const root = rxRootElement();
   if (font === DEFAULT_MONO_FONT_FAMILY) {
     root.removeAttribute("data-mono-font-family");
     root.style.removeProperty("--font-family-mono-custom");

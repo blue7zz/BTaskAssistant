@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { rxPortalTarget } from "../lib/embedHost";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -178,7 +179,7 @@ export function Tooltip({
           >
             {label}
           </div>,
-          document.body,
+          rxPortalTarget(),
         )}
     </>
   );

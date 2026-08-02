@@ -12,6 +12,30 @@ import {report} from '../models';
 
 export function AbortAgentRun(arg1:agent.AbortRequest):Promise<void>;
 
+export function AcceptMemorySuggestion(arg1:any):Promise<Record<string, any>>;
+
+export function AcceptMemorySuggestionForTab(arg1:any):Promise<Record<string, any>>;
+
+export function AcceptSkillSuggestion(arg1:any):Promise<Record<string, any>>;
+
+export function AcceptSkillSuggestionForTab(arg1:any):Promise<Record<string, any>>;
+
+export function ActivateThemePack(arg1:any):Promise<Record<string, any>>;
+
+export function ActivateTopic(arg1:any):Promise<Record<string, any>>;
+
+export function AddOfficialProviderAccess(arg1:any):Promise<Record<string, any>>;
+
+export function AddPermissionRule(arg1:any):Promise<Record<string, any>>;
+
+export function AddProviderPresetAccess(arg1:any):Promise<Record<string, any>>;
+
+export function AddRemoteForward(arg1:any):Promise<Record<string, any>>;
+
+export function AddRemoteHost(arg1:any):Promise<Record<string, any>>;
+
+export function AddSkillPath(arg1:any):Promise<Record<string, any>>;
+
 export function AgentSessionCommand(arg1:agent.CommandRequest):Promise<Record<string, any>>;
 
 export function AnalyzePlaneCandidate(arg1:string,arg2:engine.PISettings):Promise<engine.CandidateAnalysis>;
@@ -22,13 +46,25 @@ export function AnswerQuestionForTab(arg1:string,arg2:string,arg3:Array<any>):Pr
 
 export function ApproveTab(arg1:string,arg2:string,arg3:boolean,arg4:boolean,arg5:boolean):Promise<void>;
 
+export function AttachDropped(arg1:any):Promise<Record<string, any>>;
+
+export function AttachmentDataURL(arg1:any):Promise<string>;
+
+export function AvailableSubagentTools(arg1:any):Promise<Array<any>>;
+
 export function BalanceForTab(arg1:string):Promise<Record<string, any>>;
 
 export function BindGitRepository(arg1:gitrepo.BindRequest):Promise<storage.GitBindingRecord>;
 
+export function BotRuntimeStatus(arg1:any):Promise<Record<string, any>>;
+
 export function CancelTab(arg1:string):Promise<void>;
 
+export function CancelTrySubagentProfile(arg1:any):Promise<Record<string, any>>;
+
 export function Capabilities():Promise<Record<string, any>>;
+
+export function CapabilityDiagnostics(arg1:any):Promise<Record<string, any>>;
 
 export function CheckUpdate(arg1:any):Promise<Record<string, any>>;
 
@@ -36,7 +72,13 @@ export function CheckpointsForTab(arg1:string):Promise<Array<any>>;
 
 export function CleanupTaskGitWorktree(arg1:gitrepo.CleanupRequest):Promise<storage.GitBindingRecord>;
 
+export function ClearBotSecret(arg1:any):Promise<Record<string, any>>;
+
 export function ClearGoalForTab(arg1:string):Promise<void>;
+
+export function ClearMCPServerAuthentication(arg1:any):Promise<Record<string, any>>;
+
+export function ClearProviderKey(arg1:any):Promise<Record<string, any>>;
 
 export function ClearSession():Promise<void>;
 
@@ -46,6 +88,10 @@ export function ClearState():Promise<void>;
 
 export function CloseMainWindow():Promise<void>;
 
+export function CloseTab(arg1:any):Promise<Record<string, any>>;
+
+export function CloseTerminalForTab(arg1:string,arg2:string):Promise<void>;
+
 export function CollectPlaneWorkItems(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<plane.Candidate>>;
 
 export function Commands():Promise<Array<Record<string, any>>>;
@@ -54,11 +100,27 @@ export function CommitTaskGitChanges(arg1:gitrepo.CommitRequest):Promise<gitrepo
 
 export function CompactForTab(arg1:string):Promise<void>;
 
+export function ConfirmRemoteHostKey(arg1:any):Promise<Record<string, any>>;
+
+export function ConfirmRemoteSecret(arg1:any):Promise<Record<string, any>>;
+
+export function ConnectKey(arg1:any):Promise<Record<string, any>>;
+
+export function ConnectRemoteHost(arg1:any):Promise<Record<string, any>>;
+
 export function ContextPanel(arg1:string):Promise<Record<string, any>>;
 
 export function ContextUsageForTab(arg1:string):Promise<Record<string, any>>;
 
+export function CopyThemePack(arg1:any):Promise<Record<string, any>>;
+
 export function CreateAgentSession(arg1:agent.CreateSessionRequest):Promise<storage.AgentSessionRecord>;
+
+export function CreateDeliveryWorktree(arg1:any):Promise<Record<string, any>>;
+
+export function CreateSubagentProfile(arg1:any):Promise<Record<string, any>>;
+
+export function CreateTerminalForTab(arg1:any):Promise<Record<string, any>>;
 
 export function CreateTopic(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
 
@@ -70,7 +132,19 @@ export function DeleteRecoveryCopy(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
+export function DeleteSubagentProfile(arg1:any):Promise<Record<string, any>>;
+
+export function DeleteThemePack(arg1:any):Promise<Record<string, any>>;
+
+export function DeliveryWorktreeAvailability(arg1:string):Promise<Record<string, any>>;
+
 export function DesktopStartupSettings():Promise<Record<string, any>>;
+
+export function DiagnoseBotConnection(arg1:any):Promise<Record<string, any>>;
+
+export function DisconnectRemoteHost(arg1:any):Promise<Record<string, any>>;
+
+export function DownloadUpdateRequest(arg1:any):Promise<Record<string, any>>;
 
 export function Effort():Promise<Record<string, any>>;
 
@@ -84,7 +158,11 @@ export function EnsureBlankTab(arg1:string,arg2:string):Promise<bridge.TabView>;
 
 export function EnsureTaskWorkspace(arg1:string):Promise<storage.TaskWorkspaceRecord>;
 
+export function ExportThemePack(arg1:any):Promise<Record<string, any>>;
+
 export function ExternalOpeners():Promise<Record<string, any>>;
+
+export function FetchProviderModels(arg1:any):Promise<Record<string, any>>;
 
 export function FollowUpAgent(arg1:agent.PromptRequest):Promise<storage.AgentMessageRecord>;
 
@@ -130,7 +208,17 @@ export function HistoryForTab(arg1:string):Promise<Array<bridge.HistoryMessageVi
 
 export function HistoryPageForTab(arg1:string,arg2:number,arg3:number):Promise<bridge.HistoryPageView>;
 
+export function HooksSettings(arg1:any):Promise<Record<string, any>>;
+
 export function ImportAgentAttachments(arg1:agent.ImportAttachmentsRequest):Promise<Array<agent.ResourceDescriptor>>;
+
+export function ImportThemePack(arg1:any):Promise<Record<string, any>>;
+
+export function InstallMCPServer(arg1:any):Promise<Record<string, any>>;
+
+export function InstallPlugin(arg1:any):Promise<Record<string, any>>;
+
+export function InstallUpdateRequest(arg1:any):Promise<Record<string, any>>;
 
 export function IsMainWindowMaximised():Promise<boolean>;
 
@@ -160,11 +248,15 @@ export function ListPlaneProjects(arg1:string,arg2:string):Promise<Array<plane.P
 
 export function ListProjectTree():Promise<Array<any>>;
 
+export function ListRemoteDir(arg1:any):Promise<Array<any>>;
+
 export function ListSessions():Promise<Array<bridge.SessionMetaView>>;
 
 export function ListTabs():Promise<Array<bridge.TabView>>;
 
 export function ListTaskWorkspaceFiles(arg1:string,arg2:string):Promise<Array<taskspace.WorkspaceEntry>>;
+
+export function ListThemePacks(arg1:any):Promise<Array<any>>;
 
 export function ListTrashedSessions():Promise<Array<bridge.SessionMetaView>>;
 
@@ -174,11 +266,29 @@ export function LoadPlaneWorkItemDetails(arg1:string,arg2:string,arg3:string,arg
 
 export function LoadState():Promise<string>;
 
+export function MCPMarketplace(arg1:any):Promise<Record<string, any>>;
+
+export function MCPMarketplaceResolve(arg1:any):Promise<Record<string, any>>;
+
+export function MCPServers(arg1:any):Promise<Array<any>>;
+
+export function Memory(arg1:any):Promise<Array<any>>;
+
 export function MemoryForTab(arg1:string):Promise<Record<string, any>>;
+
+export function MemoryRevisions(arg1:any):Promise<Array<any>>;
+
+export function MemoryRevisionsForTab(arg1:any):Promise<Array<any>>;
+
+export function MemorySuggestions(arg1:any):Promise<Array<any>>;
+
+export function MemorySuggestionsForTab(arg1:any):Promise<Array<any>>;
 
 export function Meta():Promise<bridge.MetaView>;
 
 export function MetaForTab(arg1:string):Promise<bridge.MetaView>;
+
+export function MigrateDesktopPreferences(arg1:any):Promise<Record<string, any>>;
 
 export function MinimiseMainWindow():Promise<void>;
 
@@ -194,21 +304,55 @@ export function NewSessionForTab(arg1:string):Promise<void>;
 
 export function OpenAgentArtifact(arg1:string,arg2:string):Promise<void>;
 
+export function OpenChannelSessionPageForTab(arg1:any):Promise<Record<string, any>>;
+
+export function OpenDownloadPage(arg1:any):Promise<Record<string, any>>;
+
 export function OpenGlobalTab(arg1:string):Promise<bridge.TabView>;
+
+export function OpenProjectTab(arg1:any):Promise<Record<string, any>>;
+
+export function OpenRemoteWorkspace(arg1:any):Promise<Record<string, any>>;
 
 export function OpenTaskContextRoot():Promise<void>;
 
+export function OpenTopicSession(arg1:any):Promise<Record<string, any>>;
+
 export function OpenWorkspacePathForTab(arg1:string,arg2:string):Promise<void>;
 
+export function PickExportFile(arg1:any):Promise<string>;
+
+export function PickPluginFolder(arg1:any):Promise<string>;
+
+export function PickSkillFolder(arg1:any):Promise<string>;
+
+export function PickThemeBackground(arg1:any):Promise<string>;
+
+export function PickWorkspace(arg1:any):Promise<string>;
+
+export function PlanPluginInstall(arg1:any):Promise<Record<string, any>>;
+
 export function Platform():Promise<string>;
+
+export function PluginDoctor(arg1:any):Promise<Record<string, any>>;
+
+export function Plugins(arg1:any):Promise<Array<any>>;
+
+export function PollBotConnectionInstall(arg1:string):Promise<Record<string, any>>;
 
 export function PreviewAgentResource(arg1:agent.ResourcePreviewRequest):Promise<taskspace.FilePreview>;
 
 export function PreviewSession(arg1:string):Promise<Array<bridge.HistoryMessageView>>;
 
+export function PurgeRecoveryCopy(arg1:any):Promise<Record<string, any>>;
+
+export function PurgeTrashedSession(arg1:any):Promise<Record<string, any>>;
+
 export function ReadAgentToolOutput(arg1:agent.ToolOutputRequest):Promise<agent.ToolOutput>;
 
 export function ReadFileForTab(arg1:string,arg2:string):Promise<Record<string, any>>;
+
+export function ReadRemoteFile(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function ReadTaskWorkspaceFile(arg1:string,arg2:string):Promise<taskspace.FilePreview>;
 
@@ -216,7 +360,13 @@ export function ReasonixCloseTab(arg1:string):Promise<void>;
 
 export function ReasonixEnsureTab(arg1:string,arg2:string,arg3:string):Promise<bridge.TabView>;
 
+export function ReconnectMCPServer(arg1:any):Promise<Record<string, any>>;
+
 export function RecoverTaskGitWorktree(arg1:gitrepo.RecoverRequest):Promise<storage.GitBindingRecord>;
+
+export function RefreshSkills():Promise<void>;
+
+export function ReloadSettings():Promise<void>;
 
 export function Remember(arg1:string,arg2:string):Promise<string>;
 
@@ -224,17 +374,69 @@ export function RememberForTab(arg1:string,arg2:string,arg3:string):Promise<stri
 
 export function RemoteConnectionStatuses():Promise<Array<any>>;
 
+export function RemoteForwards(arg1:any):Promise<Array<any>>;
+
 export function RemoteHosts():Promise<Array<any>>;
+
+export function RemoteLastWorkspace(arg1:any):Promise<Array<any>>;
+
+export function RemoteServerLogs(arg1:any):Promise<Array<any>>;
+
+export function RemoteServerStatus(arg1:any):Promise<Record<string, any>>;
 
 export function RemoveAgentMessageReference(arg1:agent.RemoveReferenceRequest):Promise<void>;
 
+export function RemoveMCPServer(arg1:any):Promise<Record<string, any>>;
+
+export function RemovePermissionRule(arg1:any):Promise<Record<string, any>>;
+
+export function RemovePlugin(arg1:any):Promise<Record<string, any>>;
+
+export function RemoveProviderAccess(arg1:any):Promise<Record<string, any>>;
+
+export function RemoveRemoteForward(arg1:any):Promise<Record<string, any>>;
+
+export function RemoveRemoteHost(arg1:any):Promise<Record<string, any>>;
+
+export function RemoveSkillPath(arg1:any):Promise<Record<string, any>>;
+
+export function RemoveWorkspace(arg1:any):Promise<Record<string, any>>;
+
+export function RenameProject(arg1:string,arg2:string):Promise<void>;
+
 export function RenameSession(arg1:string,arg2:string):Promise<void>;
 
+export function RenameTerminalForTab(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function RenameTopic(arg1:string,arg2:string):Promise<void>;
+
+export function ReorderProjects(arg1:Array<string>):Promise<void>;
+
+export function ReorderTabs(arg1:Array<string>):Promise<void>;
+
 export function ReplayPendingPrompts():Promise<void>;
+
+export function ReportCrash(arg1:any):Promise<void>;
+
+export function ResetProviderPresetAccess(arg1:any):Promise<Record<string, any>>;
+
+export function ResetThemePack():Promise<void>;
+
+export function ResizeTerminalForTab(arg1:string,arg2:string,arg3:number,arg4:number):Promise<void>;
 
 export function ResolveAgentPermission(arg1:agent.ResolvePermissionRequest):Promise<agent.PermissionRequest>;
 
 export function ResolveRecoveryTab(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function RestoreArchivedMemory(arg1:any):Promise<Record<string, any>>;
+
+export function RestoreArchivedMemoryForTab(arg1:any):Promise<Record<string, any>>;
+
+export function RestoreMemoryRevision(arg1:any):Promise<Record<string, any>>;
+
+export function RestoreMemoryRevisionForTab(arg1:any):Promise<Record<string, any>>;
+
+export function RestoreSession(arg1:any):Promise<Record<string, any>>;
 
 export function ResumeAgentSession(arg1:agent.SessionRequest):Promise<storage.AgentSessionRecord>;
 
@@ -248,17 +450,51 @@ export function ResumeSessionPage(arg1:string,arg2:number):Promise<bridge.Histor
 
 export function ResumeSessionPageForTab(arg1:string,arg2:string,arg3:number):Promise<bridge.HistoryPageView>;
 
+export function RevealPath(arg1:any):Promise<Record<string, any>>;
+
+export function RevealWorkspacePathForTab(arg1:any):Promise<Record<string, any>>;
+
 export function RevokeAgentPermissionGrant(arg1:agent.RevokePermissionGrantRequest):Promise<storage.PermissionGrantRecord>;
 
 export function RewindForTab(arg1:string,arg2:number,arg3:string):Promise<void>;
 
+export function RunShellForTab(arg1:any):Promise<Record<string, any>>;
+
+export function SaveClipboardImage(arg1:any):Promise<Record<string, any>>;
+
 export function SaveDailyReportToken(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SaveDoc(arg1:any):Promise<Record<string, any>>;
+
+export function SaveDocForTab(arg1:any):Promise<Record<string, any>>;
+
+export function SaveExportFile(arg1:any):Promise<Record<string, any>>;
+
+export function SaveExportImageFiles(arg1:any):Promise<Record<string, any>>;
+
+export function SaveHooksSettingsForRoot(arg1:any):Promise<Record<string, any>>;
+
+export function SavePastedFile(arg1:any):Promise<Record<string, any>>;
+
+export function SavePastedImage(arg1:any):Promise<Record<string, any>>;
 
 export function SavePlaneToken(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function SaveProvider(arg1:any):Promise<Record<string, any>>;
+
+export function SaveProviderKey(arg1:any):Promise<Record<string, any>>;
+
+export function SaveProviderWithKey(arg1:any):Promise<Record<string, any>>;
+
 export function SaveState(arg1:string):Promise<void>;
 
+export function SaveThemePack(arg1:any):Promise<Record<string, any>>;
+
+export function SaveWindowState(arg1:any):Promise<Record<string, any>>;
+
 export function ScanPromptHistory(arg1:string):Promise<Record<string, any>>;
+
+export function ScanSSHConfig(arg1:any):Promise<Record<string, any>>;
 
 export function SearchFileRefsForTab(arg1:string,arg2:string):Promise<Array<Record<string, any>>>;
 
@@ -272,17 +508,93 @@ export function SendAgentPrompt(arg1:agent.PromptRequest):Promise<storage.Execut
 
 export function SetActiveTab(arg1:string):Promise<void>;
 
+export function SetBotConnectionToolApprovalMode(arg1:any):Promise<Record<string, any>>;
+
+export function SetBotSecret(arg1:any):Promise<Record<string, any>>;
+
+export function SetBotSettings(arg1:any):Promise<Record<string, any>>;
+
+export function SetCloseBehavior(arg1:any):Promise<Record<string, any>>;
+
+export function SetColdResumePrune(arg1:any):Promise<Record<string, any>>;
+
 export function SetCollaborationModeForTab(arg1:string,arg2:string):Promise<void>;
 
 export function SetComposerProfileForTab(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<string>>;
+
+export function SetDefaultModel(arg1:any):Promise<Record<string, any>>;
+
+export function SetDefaultToolApprovalMode(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopAppearance(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopCheckUpdates(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopConversationWidth(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopCurrency(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopLanguage(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopLayoutStyle(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopMetrics(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopTelemetry(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopUpdateChannel(arg1:any):Promise<Record<string, any>>;
+
+export function SetDesktopZoomFactor(arg1:any):Promise<Record<string, any>>;
+
+export function SetDisplayMode(arg1:any):Promise<Record<string, any>>;
 
 export function SetEffortForTab(arg1:string,arg2:string):Promise<void>;
 
 export function SetGoalForTab(arg1:string,arg2:string):Promise<void>;
 
+export function SetMCPServerEnabled(arg1:any):Promise<Record<string, any>>;
+
+export function SetMaxParallelWriters(arg1:any):Promise<Record<string, any>>;
+
+export function SetMaxSubagentConcurrency(arg1:any):Promise<Record<string, any>>;
+
+export function SetMaxSubagentDepth(arg1:any):Promise<Record<string, any>>;
+
 export function SetModeForTab(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function SetModelForTab(arg1:string,arg2:string):Promise<void>;
+
+export function SetNetwork(arg1:any):Promise<Record<string, any>>;
+
+export function SetPermissionMode(arg1:any):Promise<Record<string, any>>;
+
+export function SetPlannerModel(arg1:any):Promise<Record<string, any>>;
+
+export function SetPluginEnabled(arg1:any):Promise<Record<string, any>>;
+
+export function SetProjectColor(arg1:any):Promise<Record<string, any>>;
+
+export function SetProjectPinned(arg1:any):Promise<Record<string, any>>;
+
+export function SetProviderKey(arg1:any):Promise<Record<string, any>>;
+
+export function SetReasoningLanguage(arg1:any):Promise<Record<string, any>>;
+
+export function SetSandbox(arg1:any):Promise<Record<string, any>>;
+
+export function SetSkillEnabled(arg1:any):Promise<Record<string, any>>;
+
+export function SetStatusBarItems(arg1:any):Promise<Record<string, any>>;
+
+export function SetStatusBarStyle(arg1:any):Promise<Record<string, any>>;
+
+export function SetSubagentEffort(arg1:any):Promise<Record<string, any>>;
+
+export function SetSubagentModel(arg1:any):Promise<Record<string, any>>;
+
+export function SetSubagentProfileEffort(arg1:any):Promise<Record<string, any>>;
+
+export function SetSubagentProfileModel(arg1:any):Promise<Record<string, any>>;
 
 export function SetTaskContextRoot(arg1:string):Promise<storage.TaskContextRootInfo>;
 
@@ -290,13 +602,19 @@ export function SetTokenModeForTab(arg1:string,arg2:string):Promise<void>;
 
 export function SetToolApprovalModeForTab(arg1:string,arg2:string):Promise<Array<string>>;
 
+export function SetTopicPinned(arg1:any):Promise<Record<string, any>>;
+
 export function SetTrayLocale(arg1:string):Promise<void>;
 
 export function Settings():Promise<Record<string, any>>;
 
 export function SetupPlaneConnection(arg1:string,arg2:string):Promise<plane.ConnectionSetup>;
 
+export function SkillsSettings():Promise<Record<string, any>>;
+
 export function SlashArgs(arg1:string):Promise<Record<string, any>>;
+
+export function StartBotConnectionInstall(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function SteerAgent(arg1:agent.PromptRequest):Promise<storage.AgentMessageRecord>;
 
@@ -304,9 +622,19 @@ export function SteerForTab(arg1:string,arg2:string):Promise<void>;
 
 export function StopAgentToolExecution(arg1:execution.StopRequest):Promise<void>;
 
+export function StopRemoteServer(arg1:string):Promise<void>;
+
 export function SubmitDailyReport(arg1:string,arg2:string,arg3:string,arg4:string):Promise<report.SubmitResult>;
 
+export function SubmitDeliveryRecoveryToTab(arg1:any):Promise<Record<string, any>>;
+
+export function SubmitDisplayToTab(arg1:any):Promise<Record<string, any>>;
+
+export function SubmitEditedDisplayToTab(arg1:any):Promise<Record<string, any>>;
+
 export function SubmitInitialGoalToTab(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<any>,arg6:string,arg7:string,arg8:string,arg9:number,arg10:number):Promise<Array<string>>;
+
+export function SubmitInvocationsToTab(arg1:any):Promise<Record<string, any>>;
 
 export function SubmitToTab(arg1:string,arg2:string):Promise<void>;
 
@@ -314,16 +642,58 @@ export function SummarizeFromForTab(arg1:string,arg2:number):Promise<void>;
 
 export function SummarizeUpToForTab(arg1:string,arg2:number):Promise<void>;
 
+export function SwitchWorkspace(arg1:any):Promise<Record<string, any>>;
+
+export function TerminalOutputForTab(arg1:string,arg2:string,arg3:number):Promise<Record<string, any>>;
+
+export function TerminalWorkspaceForTab(arg1:string,arg2:string):Promise<Record<string, any>>;
+
+export function TestBotConnection(arg1:any):Promise<Record<string, any>>;
+
 export function TestPlaneConnection(arg1:string,arg2:string,arg3:string):Promise<plane.ConnectionStatus>;
 
 export function ToggleMaximiseMainWindow():Promise<void>;
 
 export function ToolResultForTab(arg1:string,arg2:string):Promise<Record<string, any>>;
 
+export function TrashTopic(arg1:string):Promise<void>;
+
+export function TrySubagentProfile(arg1:any):Promise<Record<string, any>>;
+
+export function UpdateMCPServer(arg1:any):Promise<Record<string, any>>;
+
+export function UpdatePlugin(arg1:any):Promise<Record<string, any>>;
+
+export function UpdateRemoteHost(arg1:any):Promise<Record<string, any>>;
+
+export function UpdateSubagentProfile(arg1:any):Promise<Record<string, any>>;
+
 export function ValidateTransition(arg1:string,arg2:string,arg3:boolean,arg4:boolean,arg5:boolean):Promise<string>;
+
+export function Version():Promise<string>;
 
 export function WorkbenchActiveTarget():Promise<Record<string, any>>;
 
+export function WorkbenchConnectRemote(arg1:any):Promise<Record<string, any>>;
+
+export function WorkbenchDisconnectRemote(arg1:any):Promise<Record<string, any>>;
+
+export function WorkbenchLastRemoteHint(arg1:any):Promise<Record<string, any>>;
+
 export function WorkbenchPendingProviderTrust():Promise<any>;
 
+export function WorkbenchRemoteRequest(arg1:any):Promise<Record<string, any>>;
+
+export function WorkbenchResolveProviderTrust(arg1:any):Promise<Record<string, any>>;
+
+export function WorkbenchSwitchLocal(arg1:any):Promise<Record<string, any>>;
+
+export function WorkspaceChangeDetail(arg1:any):Promise<Record<string, any>>;
+
 export function WorkspaceChanges(arg1:string):Promise<Record<string, any>>;
+
+export function WorkspaceGitHistory(arg1:any):Promise<Record<string, any>>;
+
+export function WriteRemoteFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function WriteTerminalForTab(arg1:string,arg2:string,arg3:string):Promise<void>;

@@ -1,3 +1,5 @@
+import { rxRootElement } from "./embedHost";
+
 export const TYPOGRAPHY_REGIONS = ["interface", "conversation", "composer", "code", "metadata"] as const;
 
 export type TypographyRegion = (typeof TYPOGRAPHY_REGIONS)[number];
@@ -112,7 +114,7 @@ export function fontStackForPreference(preference: RegionTypography): string {
 export function applyTypographyPreferences(preferences: TypographyPreferences): void {
   if (typeof document === "undefined") return;
   const normalized = normalizeTypographyPreferences(preferences);
-  const root = document.documentElement;
+  const root = rxRootElement();
 
   for (const region of TYPOGRAPHY_REGIONS) {
     const preference = normalized[region];

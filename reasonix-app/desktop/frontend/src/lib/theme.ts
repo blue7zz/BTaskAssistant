@@ -7,6 +7,8 @@
 // When running inside the Wails shell, applyTheme also syncs the native window
 // theme (title bar, traffic lights, etc.) so the OS chrome matches the webview.
 
+import { rxRootElement } from "./embedHost";
+
 export type Theme = "auto" | "light" | "dark";
 export type ResolvedTheme = Exclude<Theme, "auto">;
 
@@ -101,7 +103,7 @@ export function normalizeThemeStyleForTheme(style: string | undefined, _theme?: 
 
 export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme), options: { persist?: boolean } = {}): void {
   if (typeof document === "undefined") return;
-  const root = document.documentElement;
+  const root = rxRootElement();
   root.removeAttribute("data-theme-mode");
   root.removeAttribute("data-theme-scheme");
   if (theme === "auto") root.removeAttribute("data-theme");

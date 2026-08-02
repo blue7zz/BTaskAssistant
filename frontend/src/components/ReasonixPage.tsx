@@ -1,20 +1,16 @@
 /*
- * Reasonix 任务工作台（RX 标签页）。
+ * Reasonix 任务工作台（RX 标签页）——完全嵌入形态。
  *
- * 融合形态：Reasonix 前端源码与 BTask 同仓同构建，iframe 以 ?host=1 模式加载
- * 同源 /reasonix/ 产物。Reasonix 的每个绑定调用经 postMessage 转发到这里，
- * 由本组件携带任务上下文调用 BTask 的融合绑定（window.go.main.App.*，按
- * taskId 隔离会话），结果回传 iframe；Reasonix 内核事件（"reasonix:event"）
- * 同样经这里转发进 iframe。一个任务 = 一个 Reasonix 会话。
+ * reasonix 前端源码经动态 import 纳入 BTask 同一构建（vite 独立 chunk），
+ * 渲染在宿主 div 的 shadow root 内（36k 行 styles.css 以 :host 改写注入，
+ * 与宿主 DOM/样式完全隔离）。绑定调用同 document 直连 window.go.main.App
+ * （reasonix bridge.ts 的 embed 分支），内核事件直连 window.runtime。
+ * 一个任务 = 一个 Reasonix 会话（按 taskId 隔离，任务切换保留运行时）。
  */
 
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { closeReasonixTab, ensureReasonixTab } from "../lib/bridge";
-
-const REASONIX_URL = `${(import.meta.env.VITE_REASONIX_URL as string | undefined) ?? "/reasonix/"}?host=1`;
-
-const HOST_REPLY_SOURCE = "btask-reasonix";
 
 interface RxBridgeProps {
   taskId: string;
@@ -22,11 +18,14 @@ interface RxBridgeProps {
   taskTitle?: string;
 }
 
+interface EmbedModule {
+  mountReasonixEmbed: (host: HTMLElement, options?: { onMounted?: () => void }) => () => void;
+}
+
 export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridgeProps) {
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const unmountRef = useRef<(() => void) | null>(null);
   const [frameKey, setFrameKey] = useState(0);
-  const [frameError, setFrameError] = useState(false);
-  const [frameStalled, setFrameStalled] = useState(false);
   const [ready, setReady] = useState(false);
   const [readyError, setReadyError] = useState("");
 
@@ -36,10 +35,8 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
     setReady(false);
     setReadyError("");
     ensureReasonixTab(taskId, workspaceRoot, taskTitle)
-      .then((view) => {
-        if (!active) return;
-        setReady(true);
-        void view;
+      .then(() => {
+        if (active) setReady(true);
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -48,10 +45,47 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
     return () => {
       active = false;
     };
-  }, [taskId, workspaceRoot, taskTitle, frameKey]);
+  }, [taskId, workspaceRoot, taskTitle]);
 
-  // 任务切换时重载 iframe：reasonix 前端按后端 tab 状态渲染，iframe 不重载
-  // 会继续显示旧任务的内容（ManualTaskDetail 无 key，切换任务不重挂载）。
+  // 挂载 reasonix App（动态 import：embed 模块在挂载时才加载，且 compat.ts
+  // 只在 ?host=1 / ?browser=1 时删除 window.go——embed 无该参数，直连可用）。
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !ready) return undefined;
+    let disposed = false;
+    let unmount: (() => void) | null = null;
+
+    (async () => {
+      // 设置 embed 标志：embed 模式下 reasonix 直连 window.go（不被 compat 删除）
+      (window as unknown as { __RX_EMBED__?: boolean }).__RX_EMBED__ = true;
+      const mod = (await import("../../../reasonix-app/desktop/frontend/src/embedEntry")) as EmbedModule;
+      if (disposed) return;
+      host.replaceChildren();
+      unmount = mod.mountReasonixEmbed(host, {
+        onMounted: () => {
+          if (!disposed) setReady(true);
+        },
+      });
+      unmountRef.current = unmount;
+    })().catch((error: unknown) => {
+      if (!disposed) return;
+      setReadyError(error instanceof Error ? error.message : String(error));
+    });
+
+    return () => {
+      disposed = true;
+      (window as unknown as { __RX_EMBED__?: boolean }).__RX_EMBED__ = false;
+      try {
+        unmount?.();
+      } catch (error) {
+        console.error("reasonix embed unmount failed", error);
+      }
+      unmountRef.current = null;
+    };
+  }, [ready, frameKey]);
+
+  // 任务切换时重挂载 embed：reasonix 前端按后端 tab 状态渲染，不重挂载
+  // 会继续显示旧任务的内容（ManualTaskDetail 无 key，切换任务不重挂载组件）。
   const prevTaskIdRef = useRef(taskId);
   useEffect(() => {
     if (prevTaskIdRef.current !== taskId) {
@@ -72,91 +106,6 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
     };
   }, []);
 
-  // 主 frame 桥：iframes 的绑定调用 → 融合绑定；内核事件 → iframe。
-  useEffect(() => {
-    const frame = frameRef.current;
-    if (!frame) return undefined;
-    const iframeWindow = frame.contentWindow;
-    if (!iframeWindow) return undefined;
-
-    const handleMessage = (event: MessageEvent) => {
-      // 只接受来自本页面 Reasonix iframe 的调用，杜绝伪造源调用绑定方法
-      if (event.source !== iframeWindow) return;
-      if (event.origin !== window.location.origin) return;
-      const data = event.data as
-        | { source?: string; type?: string; id?: number; method?: string; args?: unknown[]; url?: string }
-        | undefined;
-      if (!data || data.source !== "reasonix") return;
-      // 外部链接：交给 wails 原生浏览器打开（webview 无多窗口）
-      if (data.type === "open-external" && typeof data.url === "string") {
-        window.runtime?.BrowserOpenURL?.(data.url);
-        return;
-      }
-      if (data.type !== "call") return;
-      const { id, method, args } = data;
-      if (!method || typeof id !== "number") return;
-      const bound = window.go?.main?.App as Record<string, unknown> | undefined;
-      const fn = bound?.[method];
-      if (typeof fn !== "function") {
-        iframeWindow.postMessage(
-          { source: HOST_REPLY_SOURCE, type: "result", id, error: `未绑定的方法: ${method}` },
-          "*",
-        );
-        return;
-      }
-      Promise.resolve(fn.apply(bound, args ?? []))
-        .then((value) => {
-          iframeWindow.postMessage({ source: HOST_REPLY_SOURCE, type: "result", id, value }, "*");
-        })
-        .catch((error: unknown) => {
-          // 附加方法名，便于定位任何 wails 绑定错误（如参数解析失败）
-          const detail = error instanceof Error ? error.message : String(error);
-          console.error(`[reasonix-bridge] 调用失败 method=${method}: ${detail}`);
-          iframeWindow.postMessage(
-            {
-              source: HOST_REPLY_SOURCE,
-              type: "result",
-              id,
-              error: `[${method}] ${detail}`,
-            },
-            "*",
-          );
-        });
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [frameKey, ready]);
-
-  // 加载诊断：iframe onLoad 后 15s 内未出现 Reasonix 标题则提示（白屏排查）。
-  useEffect(() => {
-    if (!ready) return undefined;
-    const timer = window.setTimeout(() => {
-      const frame = frameRef.current;
-      const doc = frame?.contentDocument;
-      if (doc && !doc.title && !doc.querySelector("#root > *")) {
-        setFrameStalled(true);
-      }
-    }, 15000);
-    return () => window.clearTimeout(timer);
-  }, [ready, frameKey]);
-
-  // Reasonix 内核事件：BTask 桥监听 reasonix:event 后转发进 iframe。
-  useEffect(() => {
-    const frame = frameRef.current;
-    if (!frame) return undefined;
-    const iframeWindow = frame.contentWindow;
-    if (!iframeWindow) return undefined;
-    const runtime = window.runtime;
-    if (!runtime?.EventsOn) return undefined;
-    const unsubscribe = runtime.EventsOn("reasonix:event", (payload) => {
-      iframeWindow.postMessage(
-        { source: HOST_REPLY_SOURCE, type: "event", payload },
-        "*",
-      );
-    });
-    return typeof unsubscribe === "function" ? unsubscribe : undefined;
-  }, [frameKey, ready]);
-
   return (
     <section className="reasonix-page">
       <div className="reasonix-frame-wrap">
@@ -166,7 +115,7 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
             <p>
               <code>{readyError}</code>
             </p>
-            <p>请确认任务工作区已就绪，或刷新重试。</p>
+            <p>请确认任务工作区已就绪，或重新打开本页重试。</p>
           </div>
         )}
         {!ready && !readyError && (
@@ -175,29 +124,12 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
             <p>正在初始化任务的 Reasonix 会话……</p>
           </div>
         )}
-        {frameError && !readyError && (
-          <div className="reasonix-frame-error">
-            <p>Reasonix 前端未能加载。</p>
-            <p>请确认 reasonix-app/desktop/frontend 已构建。</p>
-          </div>
-        )}
-        {frameStalled && !frameError && !readyError && (
-          <div className="reasonix-frame-error">
-            <p>Reasonix 页面加载超时（15 秒无内容）。</p>
-            <p>请点击“刷新”重试；若持续失败，检查应用日志中的 reasonix 资源诊断。</p>
-          </div>
-        )}
-        {ready && (
-          <iframe
-            key={frameKey}
-            ref={frameRef}
-            className="reasonix-frame"
-            src={REASONIX_URL}
-            title="Reasonix 工作台"
-            onLoad={() => setFrameError(false)}
-            onError={() => setFrameError(true)}
-          />
-        )}
+        <div
+          ref={hostRef}
+          className="reasonix-embed-host"
+          style={{ height: "100%", width: "100%" }}
+          data-testid="reasonix-embed-host"
+        />
       </div>
     </section>
   );

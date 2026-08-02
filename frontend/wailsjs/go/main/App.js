@@ -6,6 +6,54 @@ export function AbortAgentRun(arg1) {
   return window['go']['main']['App']['AbortAgentRun'](arg1);
 }
 
+export function AcceptMemorySuggestion(arg1) {
+  return window['go']['main']['App']['AcceptMemorySuggestion'](arg1);
+}
+
+export function AcceptMemorySuggestionForTab(arg1) {
+  return window['go']['main']['App']['AcceptMemorySuggestionForTab'](arg1);
+}
+
+export function AcceptSkillSuggestion(arg1) {
+  return window['go']['main']['App']['AcceptSkillSuggestion'](arg1);
+}
+
+export function AcceptSkillSuggestionForTab(arg1) {
+  return window['go']['main']['App']['AcceptSkillSuggestionForTab'](arg1);
+}
+
+export function ActivateThemePack(arg1) {
+  return window['go']['main']['App']['ActivateThemePack'](arg1);
+}
+
+export function ActivateTopic(arg1) {
+  return window['go']['main']['App']['ActivateTopic'](arg1);
+}
+
+export function AddOfficialProviderAccess(arg1) {
+  return window['go']['main']['App']['AddOfficialProviderAccess'](arg1);
+}
+
+export function AddPermissionRule(arg1) {
+  return window['go']['main']['App']['AddPermissionRule'](arg1);
+}
+
+export function AddProviderPresetAccess(arg1) {
+  return window['go']['main']['App']['AddProviderPresetAccess'](arg1);
+}
+
+export function AddRemoteForward(arg1) {
+  return window['go']['main']['App']['AddRemoteForward'](arg1);
+}
+
+export function AddRemoteHost(arg1) {
+  return window['go']['main']['App']['AddRemoteHost'](arg1);
+}
+
+export function AddSkillPath(arg1) {
+  return window['go']['main']['App']['AddSkillPath'](arg1);
+}
+
 export function AgentSessionCommand(arg1) {
   return window['go']['main']['App']['AgentSessionCommand'](arg1);
 }
@@ -26,6 +74,18 @@ export function ApproveTab(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ApproveTab'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function AttachDropped(arg1) {
+  return window['go']['main']['App']['AttachDropped'](arg1);
+}
+
+export function AttachmentDataURL(arg1) {
+  return window['go']['main']['App']['AttachmentDataURL'](arg1);
+}
+
+export function AvailableSubagentTools(arg1) {
+  return window['go']['main']['App']['AvailableSubagentTools'](arg1);
+}
+
 export function BalanceForTab(arg1) {
   return window['go']['main']['App']['BalanceForTab'](arg1);
 }
@@ -34,12 +94,24 @@ export function BindGitRepository(arg1) {
   return window['go']['main']['App']['BindGitRepository'](arg1);
 }
 
+export function BotRuntimeStatus(arg1) {
+  return window['go']['main']['App']['BotRuntimeStatus'](arg1);
+}
+
 export function CancelTab(arg1) {
   return window['go']['main']['App']['CancelTab'](arg1);
 }
 
+export function CancelTrySubagentProfile(arg1) {
+  return window['go']['main']['App']['CancelTrySubagentProfile'](arg1);
+}
+
 export function Capabilities() {
   return window['go']['main']['App']['Capabilities']();
+}
+
+export function CapabilityDiagnostics(arg1) {
+  return window['go']['main']['App']['CapabilityDiagnostics'](arg1);
 }
 
 export function CheckUpdate(arg1) {
@@ -54,8 +126,20 @@ export function CleanupTaskGitWorktree(arg1) {
   return window['go']['main']['App']['CleanupTaskGitWorktree'](arg1);
 }
 
+export function ClearBotSecret(arg1) {
+  return window['go']['main']['App']['ClearBotSecret'](arg1);
+}
+
 export function ClearGoalForTab(arg1) {
   return window['go']['main']['App']['ClearGoalForTab'](arg1);
+}
+
+export function ClearMCPServerAuthentication(arg1) {
+  return window['go']['main']['App']['ClearMCPServerAuthentication'](arg1);
+}
+
+export function ClearProviderKey(arg1) {
+  return window['go']['main']['App']['ClearProviderKey'](arg1);
 }
 
 export function ClearSession() {
@@ -74,6 +158,14 @@ export function CloseMainWindow() {
   return window['go']['main']['App']['CloseMainWindow']();
 }
 
+export function CloseTab(arg1) {
+  return window['go']['main']['App']['CloseTab'](arg1);
+}
+
+export function CloseTerminalForTab(arg1, arg2) {
+  return window['go']['main']['App']['CloseTerminalForTab'](arg1, arg2);
+}
+
 export function CollectPlaneWorkItems(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['CollectPlaneWorkItems'](arg1, arg2, arg3, arg4);
 }
@@ -90,6 +182,22 @@ export function CompactForTab(arg1) {
   return window['go']['main']['App']['CompactForTab'](arg1);
 }
 
+export function ConfirmRemoteHostKey(arg1) {
+  return window['go']['main']['App']['ConfirmRemoteHostKey'](arg1);
+}
+
+export function ConfirmRemoteSecret(arg1) {
+  return window['go']['main']['App']['ConfirmRemoteSecret'](arg1);
+}
+
+export function ConnectKey(arg1) {
+  return window['go']['main']['App']['ConnectKey'](arg1);
+}
+
+export function ConnectRemoteHost(arg1) {
+  return window['go']['main']['App']['ConnectRemoteHost'](arg1);
+}
+
 export function ContextPanel(arg1) {
   return window['go']['main']['App']['ContextPanel'](arg1);
 }
@@ -98,8 +206,24 @@ export function ContextUsageForTab(arg1) {
   return window['go']['main']['App']['ContextUsageForTab'](arg1);
 }
 
+export function CopyThemePack(arg1) {
+  return window['go']['main']['App']['CopyThemePack'](arg1);
+}
+
 export function CreateAgentSession(arg1) {
   return window['go']['main']['App']['CreateAgentSession'](arg1);
+}
+
+export function CreateDeliveryWorktree(arg1) {
+  return window['go']['main']['App']['CreateDeliveryWorktree'](arg1);
+}
+
+export function CreateSubagentProfile(arg1) {
+  return window['go']['main']['App']['CreateSubagentProfile'](arg1);
+}
+
+export function CreateTerminalForTab(arg1) {
+  return window['go']['main']['App']['CreateTerminalForTab'](arg1);
 }
 
 export function CreateTopic(arg1, arg2, arg3) {
@@ -122,8 +246,32 @@ export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
+export function DeleteSubagentProfile(arg1) {
+  return window['go']['main']['App']['DeleteSubagentProfile'](arg1);
+}
+
+export function DeleteThemePack(arg1) {
+  return window['go']['main']['App']['DeleteThemePack'](arg1);
+}
+
+export function DeliveryWorktreeAvailability(arg1) {
+  return window['go']['main']['App']['DeliveryWorktreeAvailability'](arg1);
+}
+
 export function DesktopStartupSettings() {
   return window['go']['main']['App']['DesktopStartupSettings']();
+}
+
+export function DiagnoseBotConnection(arg1) {
+  return window['go']['main']['App']['DiagnoseBotConnection'](arg1);
+}
+
+export function DisconnectRemoteHost(arg1) {
+  return window['go']['main']['App']['DisconnectRemoteHost'](arg1);
+}
+
+export function DownloadUpdateRequest(arg1) {
+  return window['go']['main']['App']['DownloadUpdateRequest'](arg1);
 }
 
 export function Effort() {
@@ -150,8 +298,16 @@ export function EnsureTaskWorkspace(arg1) {
   return window['go']['main']['App']['EnsureTaskWorkspace'](arg1);
 }
 
+export function ExportThemePack(arg1) {
+  return window['go']['main']['App']['ExportThemePack'](arg1);
+}
+
 export function ExternalOpeners() {
   return window['go']['main']['App']['ExternalOpeners']();
+}
+
+export function FetchProviderModels(arg1) {
+  return window['go']['main']['App']['FetchProviderModels'](arg1);
 }
 
 export function FollowUpAgent(arg1) {
@@ -242,8 +398,28 @@ export function HistoryPageForTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['HistoryPageForTab'](arg1, arg2, arg3);
 }
 
+export function HooksSettings(arg1) {
+  return window['go']['main']['App']['HooksSettings'](arg1);
+}
+
 export function ImportAgentAttachments(arg1) {
   return window['go']['main']['App']['ImportAgentAttachments'](arg1);
+}
+
+export function ImportThemePack(arg1) {
+  return window['go']['main']['App']['ImportThemePack'](arg1);
+}
+
+export function InstallMCPServer(arg1) {
+  return window['go']['main']['App']['InstallMCPServer'](arg1);
+}
+
+export function InstallPlugin(arg1) {
+  return window['go']['main']['App']['InstallPlugin'](arg1);
+}
+
+export function InstallUpdateRequest(arg1) {
+  return window['go']['main']['App']['InstallUpdateRequest'](arg1);
 }
 
 export function IsMainWindowMaximised() {
@@ -302,6 +478,10 @@ export function ListProjectTree() {
   return window['go']['main']['App']['ListProjectTree']();
 }
 
+export function ListRemoteDir(arg1) {
+  return window['go']['main']['App']['ListRemoteDir'](arg1);
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
@@ -312,6 +492,10 @@ export function ListTabs() {
 
 export function ListTaskWorkspaceFiles(arg1, arg2) {
   return window['go']['main']['App']['ListTaskWorkspaceFiles'](arg1, arg2);
+}
+
+export function ListThemePacks(arg1) {
+  return window['go']['main']['App']['ListThemePacks'](arg1);
 }
 
 export function ListTrashedSessions() {
@@ -330,8 +514,40 @@ export function LoadState() {
   return window['go']['main']['App']['LoadState']();
 }
 
+export function MCPMarketplace(arg1) {
+  return window['go']['main']['App']['MCPMarketplace'](arg1);
+}
+
+export function MCPMarketplaceResolve(arg1) {
+  return window['go']['main']['App']['MCPMarketplaceResolve'](arg1);
+}
+
+export function MCPServers(arg1) {
+  return window['go']['main']['App']['MCPServers'](arg1);
+}
+
+export function Memory(arg1) {
+  return window['go']['main']['App']['Memory'](arg1);
+}
+
 export function MemoryForTab(arg1) {
   return window['go']['main']['App']['MemoryForTab'](arg1);
+}
+
+export function MemoryRevisions(arg1) {
+  return window['go']['main']['App']['MemoryRevisions'](arg1);
+}
+
+export function MemoryRevisionsForTab(arg1) {
+  return window['go']['main']['App']['MemoryRevisionsForTab'](arg1);
+}
+
+export function MemorySuggestions(arg1) {
+  return window['go']['main']['App']['MemorySuggestions'](arg1);
+}
+
+export function MemorySuggestionsForTab(arg1) {
+  return window['go']['main']['App']['MemorySuggestionsForTab'](arg1);
 }
 
 export function Meta() {
@@ -340,6 +556,10 @@ export function Meta() {
 
 export function MetaForTab(arg1) {
   return window['go']['main']['App']['MetaForTab'](arg1);
+}
+
+export function MigrateDesktopPreferences(arg1) {
+  return window['go']['main']['App']['MigrateDesktopPreferences'](arg1);
 }
 
 export function MinimiseMainWindow() {
@@ -370,20 +590,76 @@ export function OpenAgentArtifact(arg1, arg2) {
   return window['go']['main']['App']['OpenAgentArtifact'](arg1, arg2);
 }
 
+export function OpenChannelSessionPageForTab(arg1) {
+  return window['go']['main']['App']['OpenChannelSessionPageForTab'](arg1);
+}
+
+export function OpenDownloadPage(arg1) {
+  return window['go']['main']['App']['OpenDownloadPage'](arg1);
+}
+
 export function OpenGlobalTab(arg1) {
   return window['go']['main']['App']['OpenGlobalTab'](arg1);
+}
+
+export function OpenProjectTab(arg1) {
+  return window['go']['main']['App']['OpenProjectTab'](arg1);
+}
+
+export function OpenRemoteWorkspace(arg1) {
+  return window['go']['main']['App']['OpenRemoteWorkspace'](arg1);
 }
 
 export function OpenTaskContextRoot() {
   return window['go']['main']['App']['OpenTaskContextRoot']();
 }
 
+export function OpenTopicSession(arg1) {
+  return window['go']['main']['App']['OpenTopicSession'](arg1);
+}
+
 export function OpenWorkspacePathForTab(arg1, arg2) {
   return window['go']['main']['App']['OpenWorkspacePathForTab'](arg1, arg2);
 }
 
+export function PickExportFile(arg1) {
+  return window['go']['main']['App']['PickExportFile'](arg1);
+}
+
+export function PickPluginFolder(arg1) {
+  return window['go']['main']['App']['PickPluginFolder'](arg1);
+}
+
+export function PickSkillFolder(arg1) {
+  return window['go']['main']['App']['PickSkillFolder'](arg1);
+}
+
+export function PickThemeBackground(arg1) {
+  return window['go']['main']['App']['PickThemeBackground'](arg1);
+}
+
+export function PickWorkspace(arg1) {
+  return window['go']['main']['App']['PickWorkspace'](arg1);
+}
+
+export function PlanPluginInstall(arg1) {
+  return window['go']['main']['App']['PlanPluginInstall'](arg1);
+}
+
 export function Platform() {
   return window['go']['main']['App']['Platform']();
+}
+
+export function PluginDoctor(arg1) {
+  return window['go']['main']['App']['PluginDoctor'](arg1);
+}
+
+export function Plugins(arg1) {
+  return window['go']['main']['App']['Plugins'](arg1);
+}
+
+export function PollBotConnectionInstall(arg1) {
+  return window['go']['main']['App']['PollBotConnectionInstall'](arg1);
 }
 
 export function PreviewAgentResource(arg1) {
@@ -394,12 +670,24 @@ export function PreviewSession(arg1) {
   return window['go']['main']['App']['PreviewSession'](arg1);
 }
 
+export function PurgeRecoveryCopy(arg1) {
+  return window['go']['main']['App']['PurgeRecoveryCopy'](arg1);
+}
+
+export function PurgeTrashedSession(arg1) {
+  return window['go']['main']['App']['PurgeTrashedSession'](arg1);
+}
+
 export function ReadAgentToolOutput(arg1) {
   return window['go']['main']['App']['ReadAgentToolOutput'](arg1);
 }
 
 export function ReadFileForTab(arg1, arg2) {
   return window['go']['main']['App']['ReadFileForTab'](arg1, arg2);
+}
+
+export function ReadRemoteFile(arg1, arg2) {
+  return window['go']['main']['App']['ReadRemoteFile'](arg1, arg2);
 }
 
 export function ReadTaskWorkspaceFile(arg1, arg2) {
@@ -414,8 +702,20 @@ export function ReasonixEnsureTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReasonixEnsureTab'](arg1, arg2, arg3);
 }
 
+export function ReconnectMCPServer(arg1) {
+  return window['go']['main']['App']['ReconnectMCPServer'](arg1);
+}
+
 export function RecoverTaskGitWorktree(arg1) {
   return window['go']['main']['App']['RecoverTaskGitWorktree'](arg1);
+}
+
+export function RefreshSkills() {
+  return window['go']['main']['App']['RefreshSkills']();
+}
+
+export function ReloadSettings() {
+  return window['go']['main']['App']['ReloadSettings']();
 }
 
 export function Remember(arg1, arg2) {
@@ -430,20 +730,104 @@ export function RemoteConnectionStatuses() {
   return window['go']['main']['App']['RemoteConnectionStatuses']();
 }
 
+export function RemoteForwards(arg1) {
+  return window['go']['main']['App']['RemoteForwards'](arg1);
+}
+
 export function RemoteHosts() {
   return window['go']['main']['App']['RemoteHosts']();
+}
+
+export function RemoteLastWorkspace(arg1) {
+  return window['go']['main']['App']['RemoteLastWorkspace'](arg1);
+}
+
+export function RemoteServerLogs(arg1) {
+  return window['go']['main']['App']['RemoteServerLogs'](arg1);
+}
+
+export function RemoteServerStatus(arg1) {
+  return window['go']['main']['App']['RemoteServerStatus'](arg1);
 }
 
 export function RemoveAgentMessageReference(arg1) {
   return window['go']['main']['App']['RemoveAgentMessageReference'](arg1);
 }
 
+export function RemoveMCPServer(arg1) {
+  return window['go']['main']['App']['RemoveMCPServer'](arg1);
+}
+
+export function RemovePermissionRule(arg1) {
+  return window['go']['main']['App']['RemovePermissionRule'](arg1);
+}
+
+export function RemovePlugin(arg1) {
+  return window['go']['main']['App']['RemovePlugin'](arg1);
+}
+
+export function RemoveProviderAccess(arg1) {
+  return window['go']['main']['App']['RemoveProviderAccess'](arg1);
+}
+
+export function RemoveRemoteForward(arg1) {
+  return window['go']['main']['App']['RemoveRemoteForward'](arg1);
+}
+
+export function RemoveRemoteHost(arg1) {
+  return window['go']['main']['App']['RemoveRemoteHost'](arg1);
+}
+
+export function RemoveSkillPath(arg1) {
+  return window['go']['main']['App']['RemoveSkillPath'](arg1);
+}
+
+export function RemoveWorkspace(arg1) {
+  return window['go']['main']['App']['RemoveWorkspace'](arg1);
+}
+
+export function RenameProject(arg1, arg2) {
+  return window['go']['main']['App']['RenameProject'](arg1, arg2);
+}
+
 export function RenameSession(arg1, arg2) {
   return window['go']['main']['App']['RenameSession'](arg1, arg2);
 }
 
+export function RenameTerminalForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RenameTerminalForTab'](arg1, arg2, arg3);
+}
+
+export function RenameTopic(arg1, arg2) {
+  return window['go']['main']['App']['RenameTopic'](arg1, arg2);
+}
+
+export function ReorderProjects(arg1) {
+  return window['go']['main']['App']['ReorderProjects'](arg1);
+}
+
+export function ReorderTabs(arg1) {
+  return window['go']['main']['App']['ReorderTabs'](arg1);
+}
+
 export function ReplayPendingPrompts() {
   return window['go']['main']['App']['ReplayPendingPrompts']();
+}
+
+export function ReportCrash(arg1) {
+  return window['go']['main']['App']['ReportCrash'](arg1);
+}
+
+export function ResetProviderPresetAccess(arg1) {
+  return window['go']['main']['App']['ResetProviderPresetAccess'](arg1);
+}
+
+export function ResetThemePack() {
+  return window['go']['main']['App']['ResetThemePack']();
+}
+
+export function ResizeTerminalForTab(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ResizeTerminalForTab'](arg1, arg2, arg3, arg4);
 }
 
 export function ResolveAgentPermission(arg1) {
@@ -452,6 +836,26 @@ export function ResolveAgentPermission(arg1) {
 
 export function ResolveRecoveryTab(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ResolveRecoveryTab'](arg1, arg2, arg3, arg4);
+}
+
+export function RestoreArchivedMemory(arg1) {
+  return window['go']['main']['App']['RestoreArchivedMemory'](arg1);
+}
+
+export function RestoreArchivedMemoryForTab(arg1) {
+  return window['go']['main']['App']['RestoreArchivedMemoryForTab'](arg1);
+}
+
+export function RestoreMemoryRevision(arg1) {
+  return window['go']['main']['App']['RestoreMemoryRevision'](arg1);
+}
+
+export function RestoreMemoryRevisionForTab(arg1) {
+  return window['go']['main']['App']['RestoreMemoryRevisionForTab'](arg1);
+}
+
+export function RestoreSession(arg1) {
+  return window['go']['main']['App']['RestoreSession'](arg1);
 }
 
 export function ResumeAgentSession(arg1) {
@@ -478,6 +882,14 @@ export function ResumeSessionPageForTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResumeSessionPageForTab'](arg1, arg2, arg3);
 }
 
+export function RevealPath(arg1) {
+  return window['go']['main']['App']['RevealPath'](arg1);
+}
+
+export function RevealWorkspacePathForTab(arg1) {
+  return window['go']['main']['App']['RevealWorkspacePathForTab'](arg1);
+}
+
 export function RevokeAgentPermissionGrant(arg1) {
   return window['go']['main']['App']['RevokeAgentPermissionGrant'](arg1);
 }
@@ -486,20 +898,80 @@ export function RewindForTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['RewindForTab'](arg1, arg2, arg3);
 }
 
+export function RunShellForTab(arg1) {
+  return window['go']['main']['App']['RunShellForTab'](arg1);
+}
+
+export function SaveClipboardImage(arg1) {
+  return window['go']['main']['App']['SaveClipboardImage'](arg1);
+}
+
 export function SaveDailyReportToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveDailyReportToken'](arg1, arg2, arg3);
+}
+
+export function SaveDoc(arg1) {
+  return window['go']['main']['App']['SaveDoc'](arg1);
+}
+
+export function SaveDocForTab(arg1) {
+  return window['go']['main']['App']['SaveDocForTab'](arg1);
+}
+
+export function SaveExportFile(arg1) {
+  return window['go']['main']['App']['SaveExportFile'](arg1);
+}
+
+export function SaveExportImageFiles(arg1) {
+  return window['go']['main']['App']['SaveExportImageFiles'](arg1);
+}
+
+export function SaveHooksSettingsForRoot(arg1) {
+  return window['go']['main']['App']['SaveHooksSettingsForRoot'](arg1);
+}
+
+export function SavePastedFile(arg1) {
+  return window['go']['main']['App']['SavePastedFile'](arg1);
+}
+
+export function SavePastedImage(arg1) {
+  return window['go']['main']['App']['SavePastedImage'](arg1);
 }
 
 export function SavePlaneToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['SavePlaneToken'](arg1, arg2, arg3);
 }
 
+export function SaveProvider(arg1) {
+  return window['go']['main']['App']['SaveProvider'](arg1);
+}
+
+export function SaveProviderKey(arg1) {
+  return window['go']['main']['App']['SaveProviderKey'](arg1);
+}
+
+export function SaveProviderWithKey(arg1) {
+  return window['go']['main']['App']['SaveProviderWithKey'](arg1);
+}
+
 export function SaveState(arg1) {
   return window['go']['main']['App']['SaveState'](arg1);
 }
 
+export function SaveThemePack(arg1) {
+  return window['go']['main']['App']['SaveThemePack'](arg1);
+}
+
+export function SaveWindowState(arg1) {
+  return window['go']['main']['App']['SaveWindowState'](arg1);
+}
+
 export function ScanPromptHistory(arg1) {
   return window['go']['main']['App']['ScanPromptHistory'](arg1);
+}
+
+export function ScanSSHConfig(arg1) {
+  return window['go']['main']['App']['ScanSSHConfig'](arg1);
 }
 
 export function SearchFileRefsForTab(arg1, arg2) {
@@ -526,12 +998,84 @@ export function SetActiveTab(arg1) {
   return window['go']['main']['App']['SetActiveTab'](arg1);
 }
 
+export function SetBotConnectionToolApprovalMode(arg1) {
+  return window['go']['main']['App']['SetBotConnectionToolApprovalMode'](arg1);
+}
+
+export function SetBotSecret(arg1) {
+  return window['go']['main']['App']['SetBotSecret'](arg1);
+}
+
+export function SetBotSettings(arg1) {
+  return window['go']['main']['App']['SetBotSettings'](arg1);
+}
+
+export function SetCloseBehavior(arg1) {
+  return window['go']['main']['App']['SetCloseBehavior'](arg1);
+}
+
+export function SetColdResumePrune(arg1) {
+  return window['go']['main']['App']['SetColdResumePrune'](arg1);
+}
+
 export function SetCollaborationModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetCollaborationModeForTab'](arg1, arg2);
 }
 
 export function SetComposerProfileForTab(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SetComposerProfileForTab'](arg1, arg2, arg3, arg4);
+}
+
+export function SetDefaultModel(arg1) {
+  return window['go']['main']['App']['SetDefaultModel'](arg1);
+}
+
+export function SetDefaultToolApprovalMode(arg1) {
+  return window['go']['main']['App']['SetDefaultToolApprovalMode'](arg1);
+}
+
+export function SetDesktopAppearance(arg1) {
+  return window['go']['main']['App']['SetDesktopAppearance'](arg1);
+}
+
+export function SetDesktopCheckUpdates(arg1) {
+  return window['go']['main']['App']['SetDesktopCheckUpdates'](arg1);
+}
+
+export function SetDesktopConversationWidth(arg1) {
+  return window['go']['main']['App']['SetDesktopConversationWidth'](arg1);
+}
+
+export function SetDesktopCurrency(arg1) {
+  return window['go']['main']['App']['SetDesktopCurrency'](arg1);
+}
+
+export function SetDesktopLanguage(arg1) {
+  return window['go']['main']['App']['SetDesktopLanguage'](arg1);
+}
+
+export function SetDesktopLayoutStyle(arg1) {
+  return window['go']['main']['App']['SetDesktopLayoutStyle'](arg1);
+}
+
+export function SetDesktopMetrics(arg1) {
+  return window['go']['main']['App']['SetDesktopMetrics'](arg1);
+}
+
+export function SetDesktopTelemetry(arg1) {
+  return window['go']['main']['App']['SetDesktopTelemetry'](arg1);
+}
+
+export function SetDesktopUpdateChannel(arg1) {
+  return window['go']['main']['App']['SetDesktopUpdateChannel'](arg1);
+}
+
+export function SetDesktopZoomFactor(arg1) {
+  return window['go']['main']['App']['SetDesktopZoomFactor'](arg1);
+}
+
+export function SetDisplayMode(arg1) {
+  return window['go']['main']['App']['SetDisplayMode'](arg1);
 }
 
 export function SetEffortForTab(arg1, arg2) {
@@ -542,12 +1086,92 @@ export function SetGoalForTab(arg1, arg2) {
   return window['go']['main']['App']['SetGoalForTab'](arg1, arg2);
 }
 
+export function SetMCPServerEnabled(arg1) {
+  return window['go']['main']['App']['SetMCPServerEnabled'](arg1);
+}
+
+export function SetMaxParallelWriters(arg1) {
+  return window['go']['main']['App']['SetMaxParallelWriters'](arg1);
+}
+
+export function SetMaxSubagentConcurrency(arg1) {
+  return window['go']['main']['App']['SetMaxSubagentConcurrency'](arg1);
+}
+
+export function SetMaxSubagentDepth(arg1) {
+  return window['go']['main']['App']['SetMaxSubagentDepth'](arg1);
+}
+
 export function SetModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetModeForTab'](arg1, arg2);
 }
 
 export function SetModelForTab(arg1, arg2) {
   return window['go']['main']['App']['SetModelForTab'](arg1, arg2);
+}
+
+export function SetNetwork(arg1) {
+  return window['go']['main']['App']['SetNetwork'](arg1);
+}
+
+export function SetPermissionMode(arg1) {
+  return window['go']['main']['App']['SetPermissionMode'](arg1);
+}
+
+export function SetPlannerModel(arg1) {
+  return window['go']['main']['App']['SetPlannerModel'](arg1);
+}
+
+export function SetPluginEnabled(arg1) {
+  return window['go']['main']['App']['SetPluginEnabled'](arg1);
+}
+
+export function SetProjectColor(arg1) {
+  return window['go']['main']['App']['SetProjectColor'](arg1);
+}
+
+export function SetProjectPinned(arg1) {
+  return window['go']['main']['App']['SetProjectPinned'](arg1);
+}
+
+export function SetProviderKey(arg1) {
+  return window['go']['main']['App']['SetProviderKey'](arg1);
+}
+
+export function SetReasoningLanguage(arg1) {
+  return window['go']['main']['App']['SetReasoningLanguage'](arg1);
+}
+
+export function SetSandbox(arg1) {
+  return window['go']['main']['App']['SetSandbox'](arg1);
+}
+
+export function SetSkillEnabled(arg1) {
+  return window['go']['main']['App']['SetSkillEnabled'](arg1);
+}
+
+export function SetStatusBarItems(arg1) {
+  return window['go']['main']['App']['SetStatusBarItems'](arg1);
+}
+
+export function SetStatusBarStyle(arg1) {
+  return window['go']['main']['App']['SetStatusBarStyle'](arg1);
+}
+
+export function SetSubagentEffort(arg1) {
+  return window['go']['main']['App']['SetSubagentEffort'](arg1);
+}
+
+export function SetSubagentModel(arg1) {
+  return window['go']['main']['App']['SetSubagentModel'](arg1);
+}
+
+export function SetSubagentProfileEffort(arg1) {
+  return window['go']['main']['App']['SetSubagentProfileEffort'](arg1);
+}
+
+export function SetSubagentProfileModel(arg1) {
+  return window['go']['main']['App']['SetSubagentProfileModel'](arg1);
 }
 
 export function SetTaskContextRoot(arg1) {
@@ -562,6 +1186,10 @@ export function SetToolApprovalModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetToolApprovalModeForTab'](arg1, arg2);
 }
 
+export function SetTopicPinned(arg1) {
+  return window['go']['main']['App']['SetTopicPinned'](arg1);
+}
+
 export function SetTrayLocale(arg1) {
   return window['go']['main']['App']['SetTrayLocale'](arg1);
 }
@@ -574,8 +1202,16 @@ export function SetupPlaneConnection(arg1, arg2) {
   return window['go']['main']['App']['SetupPlaneConnection'](arg1, arg2);
 }
 
+export function SkillsSettings() {
+  return window['go']['main']['App']['SkillsSettings']();
+}
+
 export function SlashArgs(arg1) {
   return window['go']['main']['App']['SlashArgs'](arg1);
+}
+
+export function StartBotConnectionInstall(arg1, arg2) {
+  return window['go']['main']['App']['StartBotConnectionInstall'](arg1, arg2);
 }
 
 export function SteerAgent(arg1) {
@@ -590,12 +1226,32 @@ export function StopAgentToolExecution(arg1) {
   return window['go']['main']['App']['StopAgentToolExecution'](arg1);
 }
 
+export function StopRemoteServer(arg1) {
+  return window['go']['main']['App']['StopRemoteServer'](arg1);
+}
+
 export function SubmitDailyReport(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SubmitDailyReport'](arg1, arg2, arg3, arg4);
 }
 
+export function SubmitDeliveryRecoveryToTab(arg1) {
+  return window['go']['main']['App']['SubmitDeliveryRecoveryToTab'](arg1);
+}
+
+export function SubmitDisplayToTab(arg1) {
+  return window['go']['main']['App']['SubmitDisplayToTab'](arg1);
+}
+
+export function SubmitEditedDisplayToTab(arg1) {
+  return window['go']['main']['App']['SubmitEditedDisplayToTab'](arg1);
+}
+
 export function SubmitInitialGoalToTab(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
   return window['go']['main']['App']['SubmitInitialGoalToTab'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+}
+
+export function SubmitInvocationsToTab(arg1) {
+  return window['go']['main']['App']['SubmitInvocationsToTab'](arg1);
 }
 
 export function SubmitToTab(arg1, arg2) {
@@ -610,6 +1266,22 @@ export function SummarizeUpToForTab(arg1, arg2) {
   return window['go']['main']['App']['SummarizeUpToForTab'](arg1, arg2);
 }
 
+export function SwitchWorkspace(arg1) {
+  return window['go']['main']['App']['SwitchWorkspace'](arg1);
+}
+
+export function TerminalOutputForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TerminalOutputForTab'](arg1, arg2, arg3);
+}
+
+export function TerminalWorkspaceForTab(arg1, arg2) {
+  return window['go']['main']['App']['TerminalWorkspaceForTab'](arg1, arg2);
+}
+
+export function TestBotConnection(arg1) {
+  return window['go']['main']['App']['TestBotConnection'](arg1);
+}
+
 export function TestPlaneConnection(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestPlaneConnection'](arg1, arg2, arg3);
 }
@@ -622,18 +1294,86 @@ export function ToolResultForTab(arg1, arg2) {
   return window['go']['main']['App']['ToolResultForTab'](arg1, arg2);
 }
 
+export function TrashTopic(arg1) {
+  return window['go']['main']['App']['TrashTopic'](arg1);
+}
+
+export function TrySubagentProfile(arg1) {
+  return window['go']['main']['App']['TrySubagentProfile'](arg1);
+}
+
+export function UpdateMCPServer(arg1) {
+  return window['go']['main']['App']['UpdateMCPServer'](arg1);
+}
+
+export function UpdatePlugin(arg1) {
+  return window['go']['main']['App']['UpdatePlugin'](arg1);
+}
+
+export function UpdateRemoteHost(arg1) {
+  return window['go']['main']['App']['UpdateRemoteHost'](arg1);
+}
+
+export function UpdateSubagentProfile(arg1) {
+  return window['go']['main']['App']['UpdateSubagentProfile'](arg1);
+}
+
 export function ValidateTransition(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ValidateTransition'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function Version() {
+  return window['go']['main']['App']['Version']();
 }
 
 export function WorkbenchActiveTarget() {
   return window['go']['main']['App']['WorkbenchActiveTarget']();
 }
 
+export function WorkbenchConnectRemote(arg1) {
+  return window['go']['main']['App']['WorkbenchConnectRemote'](arg1);
+}
+
+export function WorkbenchDisconnectRemote(arg1) {
+  return window['go']['main']['App']['WorkbenchDisconnectRemote'](arg1);
+}
+
+export function WorkbenchLastRemoteHint(arg1) {
+  return window['go']['main']['App']['WorkbenchLastRemoteHint'](arg1);
+}
+
 export function WorkbenchPendingProviderTrust() {
   return window['go']['main']['App']['WorkbenchPendingProviderTrust']();
 }
 
+export function WorkbenchRemoteRequest(arg1) {
+  return window['go']['main']['App']['WorkbenchRemoteRequest'](arg1);
+}
+
+export function WorkbenchResolveProviderTrust(arg1) {
+  return window['go']['main']['App']['WorkbenchResolveProviderTrust'](arg1);
+}
+
+export function WorkbenchSwitchLocal(arg1) {
+  return window['go']['main']['App']['WorkbenchSwitchLocal'](arg1);
+}
+
+export function WorkspaceChangeDetail(arg1) {
+  return window['go']['main']['App']['WorkspaceChangeDetail'](arg1);
+}
+
 export function WorkspaceChanges(arg1) {
   return window['go']['main']['App']['WorkspaceChanges'](arg1);
+}
+
+export function WorkspaceGitHistory(arg1) {
+  return window['go']['main']['App']['WorkspaceGitHistory'](arg1);
+}
+
+export function WriteRemoteFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WriteRemoteFile'](arg1, arg2, arg3);
+}
+
+export function WriteTerminalForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WriteTerminalForTab'](arg1, arg2, arg3);
 }

@@ -160,18 +160,21 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 - `rx_bindings.go`：BTask 绑定层。tabID ↔ taskId 映射，~90 个 reasonix 前端同名
   绑定方法（会话/消息/模型/历史/检查点/审批/启动路径），工作区路径穿越与
   会话删除边界校验。
-- `frontend/src/components/ReasonixPage.tsx`：主 frame 桥。iframe 同源
-  `/reasonix/?host=1` 加载（36k 行全局深色 CSS 必须 DOM 隔离）；reasonix 前端
-  的每次绑定调用经 postMessage 转发到融合绑定，结果回传；内核事件经
-  `reasonix:event` 通道转发进 iframe。卸载时释放控制器（会话文件保留）。
-- 构建：`frontend/package.json` 的 `prebuild` 自动构建 reasonix dist，
-  `wails build` 单命令产出全量。
+- `frontend/src/components/ReasonixPage.tsx`：完全嵌入容器（无 iframe）。reasonix
+  前端源码经动态 import 纳入 BTask 同一 vite 构建（独立懒加载 chunk），渲染在
+  宿主 div 的 shadow root 内——36k 行全局深色 CSS 经 `:host` 改写后注入 shadow
+  （`html`/`body`/`:root` 元素选择器改写为 `:host`，注释保护），与宿主 DOM/样式
+  双向隔离。绑定调用经 `bridge.ts` embed 分支直连 `window.go.main.App`（同
+  document，无 postMessage）；内核事件直连 `window.runtime` 订阅 `reasonix:event`。
+  任务切换保留控制器（秒开），离开详情页时释放（会话文件保留）。
+- 构建：`wails build` 单命令产出全量（reasonix 源码直接打包，无需独立 dist；
+  独立应用构建脚本 `scripts/build-reasonix-frontend.sh` 保留）。
 
 ### 事件流
 
 内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(
-"reasonix:event", wirePayload)` → ReasonixPage 桥 → iframe postMessage →
-reasonix 前端 `onEvent`（wire 形状与桌面端 `agent:event` 完全一致）。
+"reasonix:event", wirePayload)` → reasonix 前端 `onEvent` 直连订阅（wire 形状
+与桌面端 `agent:event` 完全一致）。
 
 ### 会话模型
 
@@ -198,11 +201,10 @@ reasonix 前端 `onEvent`（wire 形状与桌面端 `agent:event` 完全一致�
 - BTask：`go test ./...`（12 包，含 reasonix 集成/契约/安全测试：会话生命周期、
   任务隔离、多轮+模型切换、历史分页、标题侧车、路径穿越、任意删除、消息源校验、
   fork 激活、删除轮换、无配置降级、effort 切换）。
-- BTask 前端：130 测试 + typecheck（含 ReasonixPage 桥 7 项：来源校验/调用转发/
-  事件订阅/任务切换重载/生命周期）。
+- BTask 前端：127 测试 + typecheck（含 ReasonixPage embed 4 项：shadow 挂载/
+  任务切换重挂载/卸载释放/失败降级）。
 - reasonix 前端：94 套件测试 + typecheck + bundle 预算。
-- 浏览器端到端（同源 iframe 模拟宿主）：调用面零未绑定、事件驱动 UI 更新、
-  设置/记忆/技能面板渲染。
+- 调用面零未绑定（reasonix 前端全部 `app.*` 调用均有绑定或合理默认）。
 - 运行时自检：`BTA_RX_SELFCHECK=1`（真实进程内验证 RX 内核链路，纳入
   `scripts/test-all.sh`）。
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { rxPortalTarget } from "../lib/embedHost";
 import { createPortal } from "react-dom";
 import { MessageSquare } from "lucide-react";
 import { ContextMenu, type ContextMenuPoint } from "./ContextMenu";
@@ -248,7 +249,7 @@ export function TranscriptSelectionMenu({
           <kbd>{addShortcut}</kbd>
         </button>
       </div>,
-      document.body,
+      rxPortalTarget(),
     )}
   </>;
 }

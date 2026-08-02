@@ -135,11 +135,11 @@ export interface AgentClient {
 }
 
 function nativeAppPresent(): boolean {
-  return Boolean(window.go?.main?.App);
+  return Boolean((window as unknown as { go?: { main?: { App?: unknown } } }).go?.main?.App);
 }
 
 function nativeAgentApp(): NativeAgentApp {
-  const app = window.go?.main?.App as unknown as
+  const app = (window as unknown as { go?: { main?: { App?: unknown } } }).go?.main?.App as unknown as
     | Partial<NativeAgentApp>
     | undefined;
   if (
@@ -1024,8 +1024,9 @@ const nativeAgentClient: AgentClient = {
   openArtifact: (taskId, artifactId) => nativeAgentApp().OpenAgentArtifact(taskId, artifactId),
   sessionCommand: (request) => nativeAgentApp().AgentSessionCommand(request),
   subscribe(listener) {
-    if (typeof window.runtime?.EventsOn !== "function") return () => undefined;
-    const unsubscribe = window.runtime.EventsOn(AGENT_EVENT_NAME, (payload) => {
+    const runtime = (window as unknown as { runtime?: { EventsOn?: (name: string, cb: (payload: unknown) => void) => void } }).runtime;
+    if (typeof runtime?.EventsOn !== "function") return () => undefined;
+    const unsubscribe = runtime.EventsOn(AGENT_EVENT_NAME, (payload) => {
       const event = parseAgentEvent(payload);
       if (event) listener(event);
     });

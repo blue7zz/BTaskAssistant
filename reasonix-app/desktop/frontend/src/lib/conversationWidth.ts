@@ -1,3 +1,5 @@
+import { rxRootElement } from "./embedHost";
+
 export type ConversationWidth = "standard" | "full";
 
 export const CONVERSATION_WIDTH_STORAGE_KEY = "reasonix-conv-width";
@@ -21,11 +23,11 @@ export function getCachedConversationWidth(): ConversationWidth {
 export function applyConversationWidth(value: unknown): ConversationWidth {
   const width = normalizeConversationWidth(value);
   if (typeof document !== "undefined") {
-    document.documentElement.style.setProperty(
+    rxRootElement().style.setProperty(
       "--maxw",
       width === "full" ? FULL_CONVERSATION_MAX_WIDTH : STANDARD_CONVERSATION_MAX_WIDTH,
     );
-    document.documentElement.setAttribute("data-conversation-width", width);
+    rxRootElement().setAttribute("data-conversation-width", width);
   }
   try {
     localStorage.setItem(CONVERSATION_WIDTH_STORAGE_KEY, width);

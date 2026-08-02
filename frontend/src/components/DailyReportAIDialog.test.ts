@@ -227,7 +227,7 @@ describe("Daily report AI dialog", () => {
         return unsubscribe;
       },
     );
-    window.runtime = { EventsOn: eventsOn };
+    window.runtime = { EventsOn: eventsOn } as unknown as Window["runtime"];
     window.go = {
       main: {
         App: {

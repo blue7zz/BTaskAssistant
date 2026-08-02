@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { rxQuerySelector } from "../lib/embedHost";
 import { ArrowLeft, ChevronDown, ChevronRight, Minus, Plus, RotateCcw, Sparkles, Undo2, UserRound } from "lucide-react";
 import { useT } from "../lib/i18n";
 import {
@@ -47,7 +48,7 @@ export function TypographySettings({ onBack }: { onBack: () => void }) {
   const meta = TYPOGRAPHY_REGION_META[selected];
 
   useLayoutEffect(() => {
-    document.querySelector<HTMLElement>(".settings-center__content")?.scrollTo({ top: 0 });
+    rxQuerySelector<HTMLElement>(".settings-center__content")?.scrollTo({ top: 0 });
   }, []);
   const presets = useMemo(
     () => Array.from(new Set([meta.baseSize, meta.baseSize + 2, meta.baseSize + 4, meta.baseSize + 6])).filter((n) => n <= meta.max),

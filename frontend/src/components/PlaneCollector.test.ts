@@ -144,7 +144,7 @@ describe("PlaneCollector", () => {
         },
       },
     } as unknown as typeof window.go;
-    window.runtime = { BrowserOpenURL: browserOpenURL };
+    window.runtime = { BrowserOpenURL: browserOpenURL } as unknown as Window["runtime"];
 
     await act(async () => {
       root.render(

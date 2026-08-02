@@ -11,6 +11,7 @@ import type * as GeneratedApp from "../../wailsjs/go/main/App";
 import type { InvocationRequest } from "./invocationDisplay";
 import type { ProviderTrustPrompt, WorkbenchActiveTarget, WorkbenchRemoteHint } from "./workbenchTarget";
 
+import { isEmbedded, rxDirectCall } from "./embedHost";
 import { addBreadcrumb } from "./breadcrumbs";
 import { t } from "./i18n";
 import { providerIsConfigured, providerRequiresKey } from "./providerModels";
@@ -640,6 +641,8 @@ const hostEventListeners = new Set<(payload: unknown) => void>();
 let hostSeq = 0;
 
 function hostCall(method: string, args: unknown[]): Promise<unknown> {
+  // embed 模式（shadow DOM 同 document）：直连宿主绑定，无 postMessage 往返
+  if (isEmbedded()) return rxDirectCall(method, args);
   const { promise, resolve, reject } = Promise.withResolvers<unknown>();
   const id = ++hostSeq;
   const timer = window.setTimeout(() => {
@@ -696,6 +699,9 @@ function installHostBridge(): void {
 installHostBridge();
 
 export function onEvent(cb: (e: WireEvent) => void): () => void {
+  if (isEmbedded() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("reasonix:event", (payload: unknown) => cb(payload as WireEvent));
+  }
   if (isHostMode()) return hostSubscribe((payload) => cb(payload as WireEvent));
   if (!isBrowserMock() && realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn(EVENT_CHANNEL, (payload) => cb(payload as WireEvent));
@@ -876,6 +882,13 @@ export function onFilesDropped(cb: (paths: string[]) => void): () => void {
 // (model/effort/token-mode switch, clear-while-running). The rebuilt
 // controller restarts prompt ids, so per-tab id-keyed state must reset.
 export function onRuntimeRebuilt(cb: (tabId?: string, runtimeEpoch?: string) => void): () => void {
+  if (isEmbedded() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("reasonix:event", (payload: unknown) => {
+      const data = payload as { type?: string; tabId?: string; runtimeEpoch?: string } | null;
+      if (!data || data.type !== "runtime:rebuilt") return;
+      cb(data.tabId, data.runtimeEpoch);
+    });
+  }
   if (isHostMode()) {
     return hostSubscribe((payload) => {
       const data = payload as { type?: string; tabId?: string; runtimeEpoch?: string } | null;
@@ -1009,7 +1022,7 @@ function elapsedMs(startedAt: number): number {
 
 export const app: AppBindings = new Proxy({} as AppBindings, {
   get(_t, prop) {
-    if (isHostMode()) {
+    if (isHostMode() && !isEmbedded()) {
       return (...args: unknown[]) => hostCall(String(prop), args);
     }
     const target = realApp() ?? getMock();
@@ -1049,6 +1062,10 @@ export const app: AppBindings = new Proxy({} as AppBindings, {
 // browser dev mock.
 export function openExternal(url: string): void {
   if (typeof window === "undefined") return;
+  if (isEmbedded()) {
+    window.runtime?.BrowserOpenURL?.(url);
+    return;
+  }
   if (isHostMode()) {
     // wails webview 不支持 window.open（无多窗口）——由宿主主 frame 打开
     window.parent.postMessage({ source: HOST_SOURCE, type: "open-external", url }, "*");

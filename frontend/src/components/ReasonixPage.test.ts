@@ -4,20 +4,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReasonixPage } from "./ReasonixPage";
 import * as bridge from "../lib/bridge";
 
+vi.mock("../../../reasonix-app/desktop/frontend/src/embedEntry", () => ({
+  mountReasonixEmbed: vi.fn(() => () => undefined),
+}));
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-describe("ReasonixPage bridge", () => {
+describe("ReasonixPage embed", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let postMessages: Array<{ source: string; type: string; id?: number; value?: unknown; error?: string }>;
+  let mountReasonixEmbed: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    postMessages = [];
     vi.spyOn(bridge, "ensureReasonixTab").mockResolvedValue({
       id: "task_abc",
       workspaceRoot: "/tmp/demo",
@@ -29,15 +32,11 @@ describe("ReasonixPage bridge", () => {
       mode: "normal",
     } as bridge.ReasonixTabView);
     vi.spyOn(bridge, "closeReasonixTab").mockResolvedValue();
-    // mock wails 桥与事件通道
-    (window as unknown as { go?: unknown }).go = {
-      main: {
-        App: {
-          ListTabs: vi.fn().mockResolvedValue([]),
-          SubmitToTab: vi.fn().mockResolvedValue(undefined),
-        },
-      },
-    };
+    // 动态 import 的 embed 模块：挂载为同步 fn
+    const mod = await import("../../../reasonix-app/desktop/frontend/src/embedEntry");
+    mountReasonixEmbed = mod.mountReasonixEmbed as unknown as ReturnType<typeof vi.fn>;
+    mountReasonixEmbed.mockClear();
+    mountReasonixEmbed.mockImplementation(() => () => undefined);
     (window as unknown as { runtime?: unknown }).runtime = {
       EventsOn: vi.fn().mockReturnValue(() => undefined),
       BrowserOpenURL: vi.fn(),
@@ -60,132 +59,51 @@ describe("ReasonixPage bridge", () => {
     });
   };
 
-  const frameWindow = () => {
-    const frame = container.querySelector("iframe") as HTMLIFrameElement | null;
-    if (!frame?.contentWindow) return null;
-    frame.contentWindow.postMessage = (message: unknown) => {
-      postMessages.push(message as { source: string; type: string });
-    };
-    return frame;
-  };
-
-  it("初始化会话后渲染 iframe", async () => {
+  it("初始化会话后挂载 embed（shadow 容器 + mountReasonixEmbed）", async () => {
     await renderPage();
-    const frame = container.querySelector("iframe");
-    expect(frame).not.toBeNull();
-    expect(frame?.getAttribute("src")).toContain("/reasonix/");
-    expect(frame?.getAttribute("src")).toContain("host=1");
-    expect(bridge.ensureReasonixTab).toHaveBeenCalledWith("task_1", "", "");
+    const host = container.querySelector(
+      "[data-testid='reasonix-embed-host']",
+    ) as HTMLElement | null;
+    expect(host).not.toBeNull();
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
+    expect(mountReasonixEmbed.mock.calls[0][0]).toBe(host);
+    // embed 标志在挂载前设置
+    expect(
+      (window as unknown as { __RX_EMBED__?: boolean }).__RX_EMBED__,
+    ).toBe(true);
   });
 
-  it("忽略伪造来源的消息（不调用绑定）", async () => {
+  it("任务切换时重挂载 embed（避免显示旧任务）", async () => {
     await renderPage();
-    const frame = frameWindow();
-    if (!frame) throw new Error("iframe 未渲染");
-    const appMock = (window as unknown as { go: { main: { App: { ListTabs: ReturnType<typeof vi.fn> } } } })
-      .go.main.App;
-    // 伪造来源：event.source 不是 iframe 的 contentWindow
-    const forged = new MessageEvent("message", {
-      data: { source: "reasonix", type: "call", id: 1, method: "ListTabs", args: [] },
-      source: window,
-    });
-    window.dispatchEvent(forged);
-    expect(appMock.ListTabs).not.toHaveBeenCalled();
-  });
-
-  it("转发 iframe 调用到 wails 绑定并回传结果", async () => {
-    await renderPage();
-    const frame = frameWindow();
-    if (!frame) throw new Error("iframe 未渲染");
-    const appMock = (window as unknown as { go: { main: { App: { ListTabs: ReturnType<typeof vi.fn> } } } })
-      .go.main.App;
-    const real = new MessageEvent("message", {
-      data: { source: "reasonix", type: "call", id: 42, method: "ListTabs", args: [] },
-      source: frame.contentWindow,
-      origin: window.location.origin,
-    });
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
     await act(async () => {
-      window.dispatchEvent(real);
+      root.render(
+        createElement(ReasonixPage, {
+          taskId: "task_2",
+          workspaceRoot: "",
+        }),
+      );
     });
-    expect(appMock.ListTabs).toHaveBeenCalledTimes(1);
-    // 回传应答
-    const reply = postMessages.find((m) => m.type === "result" && m.id === 42);
-    expect(reply).toBeDefined();
+    // 任务切换 → ensureReasonixTab 再次调用 + embed 重新挂载
+    expect(bridge.ensureReasonixTab).toHaveBeenCalledTimes(2);
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(2);
   });
 
-  it("未绑定方法回传错误而非崩溃", async () => {
+  it("卸载时释放会话运行时（closeReasonixTab）", async () => {
     await renderPage();
-    const frame = frameWindow();
-    if (!frame) throw new Error("iframe 未渲染");
-    const real = new MessageEvent("message", {
-      data: { source: "reasonix", type: "call", id: 7, method: "DoesNotExist", args: [] },
-      source: frame.contentWindow,
-      origin: window.location.origin,
-    });
-    await act(async () => {
-      window.dispatchEvent(real);
-    });
-    const reply = postMessages.find((m) => m.type === "result" && m.id === 7);
-    expect(reply?.error).toContain("未绑定的方法");
-  });
-
-  it("订阅 reasonix:event 并转发进 iframe", async () => {
-    await renderPage();
-    const frame = frameWindow();
-    if (!frame) throw new Error("iframe 未渲染");
-    const runtimeMock = (window as unknown as { runtime: { EventsOn: ReturnType<typeof vi.fn> } })
-      .runtime;
-    expect(runtimeMock.EventsOn).toHaveBeenCalledWith("reasonix:event", expect.any(Function));
-    const callback = runtimeMock.EventsOn.mock.calls[0][1] as (payload: unknown) => void;
-    await act(async () => {
-      callback({ kind: "turn_done", tabId: "task_abc" });
-    });
-    const event = postMessages.find((m) => m.type === "event");
-    expect(event).toBeDefined();
-    expect((event as { payload?: unknown }).payload).toEqual({
-      kind: "turn_done",
-      tabId: "task_abc",
-    });
-  });
-
-  it("卸载时释放会话运行时", async () => {
-    await renderPage();
-    await act(async () => {
-      root.unmount();
-    });
+    expect(bridge.closeReasonixTab).not.toHaveBeenCalled();
+    act(() => root.unmount());
     expect(bridge.closeReasonixTab).toHaveBeenCalledWith("task_1");
   });
 
-  it("转发 open-external 消息到 wails 浏览器打开", async () => {
+  it("会话初始化失败时显示错误而非挂载", async () => {
+    vi.mocked(bridge.ensureReasonixTab).mockRejectedValueOnce(
+      new Error("工作区未就绪"),
+    );
     await renderPage();
-    const frame = frameWindow();
-    if (!frame) throw new Error("iframe 未渲染");
-    const runtimeMock = (window as unknown as { runtime: { BrowserOpenURL: ReturnType<typeof vi.fn> } })
-      .runtime;
-    const real = new MessageEvent("message", {
-      data: { source: "reasonix", type: "open-external", url: "https://example.com/docs" },
-      source: frame.contentWindow,
-      origin: window.location.origin,
-    });
-    await act(async () => {
-      window.dispatchEvent(real);
-    });
-    expect(runtimeMock.BrowserOpenURL).toHaveBeenCalledWith("https://example.com/docs");
-  });
-
-  it("任务切换时重载 iframe（避免显示旧任务）", async () => {
-    await renderPage();
-    const frameBefore = container.querySelector("iframe") as HTMLIFrameElement;
-    const keyBefore = frameBefore?.getAttribute("key") ?? "";
-    // 切换任务（模拟 ManualTaskDetail 无 key 时 prop 变化）
-    await act(async () => {
-      root.render(
-        createElement(ReasonixPage, { taskId: "task_2", workspaceRoot: "" }),
-      );
-    });
-    expect(bridge.ensureReasonixTab).toHaveBeenCalledWith("task_2", "", "");
-    const frameAfter = container.querySelector("iframe") as HTMLIFrameElement;
-    expect(frameAfter).not.toBe(frameBefore);
-    expect(frameAfter?.getAttribute("src")).toContain("host=1");
+    expect(
+      container.querySelector(".reasonix-frame-error"),
+    ).not.toBeNull();
+    expect(mountReasonixEmbed).not.toHaveBeenCalled();
   });
 });

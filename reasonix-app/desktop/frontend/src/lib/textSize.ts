@@ -1,3 +1,5 @@
+import { rxRootElement } from "./embedHost";
+
 export const TEXT_SIZES = ["small", "default", "large", "xlarge", "xxlarge"] as const;
 
 export type TextSize = (typeof TEXT_SIZES)[number];
@@ -23,7 +25,7 @@ export function getTextSize(): TextSize {
 
 export function applyTextSize(size: TextSize): void {
   if (typeof document === "undefined") return;
-  const root = document.documentElement;
+  const root = rxRootElement();
   if (size === DEFAULT_TEXT_SIZE) root.removeAttribute("data-text-size");
   else root.setAttribute("data-text-size", size);
   try {

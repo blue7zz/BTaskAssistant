@@ -1593,3 +1593,144 @@ func (a *App) GetThemeExperience() (map[string]any, error) {
 		"conversationWidth": "standard",
 	}, nil
 }
+
+// ── 未绑定调用面补齐（核心真实实现 + 边界合理默认）─────────────────────────
+
+// Version 返回融合版本标识。
+func (a *App) Version() (string, error) {
+	return "btask-reasonix-1.0.0", nil
+}
+
+// RefreshSkills 刷新技能（内核 ReloadCommands）。
+func (a *App) RefreshSkills() error {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return nil
+	}
+	if tab := a.rxManager.Tab(taskID); tab != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		return tab.Ctrl.ReloadCommands(ctx)
+	}
+	return nil
+}
+
+// ReloadSettings 重载设置（内核配置热重载由重建控制器实现——no-op 返回值成功）。
+func (a *App) ReloadSettings() error {
+	return nil
+}
+
+// ReportCrash 崩溃上报（宿主：no-op）。
+func (a *App) ReportCrash(_report any) error {
+	return nil
+}
+
+// SkillsSettings 技能设置视图（内核真实技能）。
+func (a *App) SkillsSettings() (map[string]any, error) {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return map[string]any{"skills": []any{}, "skillRoots": []any{}}, nil
+	}
+	return map[string]any{
+		"skills":     a.rxManager.SkillsView(taskID),
+		"skillRoots": []any{},
+	}, nil
+}
+
+// 项目/主题操作（宿主单任务工作区：虚拟成功，不持久化跨任务结构）。
+
+// RenameProject 重命名工作区（宿主：虚拟成功）。
+func (a *App) RenameProject(_workspaceRoot string, _name string) error {
+	return nil
+}
+
+// RenameTopic 重命名主题分组（宿主：虚拟成功）。
+func (a *App) RenameTopic(_topicID string, _title string) error {
+	return nil
+}
+
+// ReorderProjects 重排工作区（宿主：虚拟成功）。
+func (a *App) ReorderProjects(_roots []string) error {
+	return nil
+}
+
+// ReorderTabs 重排标签页（宿主：单标签，虚拟成功）。
+func (a *App) ReorderTabs(_tabIDs []string) error {
+	return nil
+}
+
+// TrashTopic 删除主题分组（宿主：虚拟成功）。
+func (a *App) TrashTopic(_topicID string) error {
+	return nil
+}
+
+// 主题包（宿主无主题包系统：空默认）。
+
+// ResetThemePack 重置主题包（宿主：no-op）。
+func (a *App) ResetThemePack() error {
+	return nil
+}
+
+// 终端（宿主无 reasonix 终端——返回不可用而非未绑定错误）。
+
+// TerminalOutputForTab 终端输出（宿主：不可用）。
+func (a *App) TerminalOutputForTab(_tabID string, _sessionID string, _offset int64) (map[string]any, error) {
+	return map[string]any{"data": "", "offset": _offset, "ended": true}, nil
+}
+
+// TerminalWorkspaceForTab 终端工作区（宿主：不可用）。
+func (a *App) TerminalWorkspaceForTab(_tabID string, _sessionID string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+// WriteTerminalForTab 写入终端（宿主：不可用）。
+func (a *App) WriteTerminalForTab(_tabID string, _sessionID string, _data string) error {
+	return nil
+}
+
+// RenameTerminalForTab 重命名终端（宿主：不可用）。
+func (a *App) RenameTerminalForTab(_tabID string, _sessionID string, _name string) error {
+	return nil
+}
+
+// ResizeTerminalForTab 调整终端尺寸（宿主：不可用）。
+func (a *App) ResizeTerminalForTab(_tabID string, _sessionID string, _cols int, _rows int) error {
+	return nil
+}
+
+// CloseTerminalForTab 关闭终端（宿主：不可用）。
+func (a *App) CloseTerminalForTab(_tabID string, _sessionID string) error {
+	return nil
+}
+
+// 远程（宿主无远程主机管理：空默认）。
+
+// ReadRemoteFile 读取远程文件（宿主：不可用）。
+func (a *App) ReadRemoteFile(_hostID string, _path string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+// WriteRemoteFile 写入远程文件（宿主：不可用）。
+func (a *App) WriteRemoteFile(_hostID string, _path string, _content string) error {
+	return nil
+}
+
+// StopRemoteServer 停止远程服务（宿主：不可用）。
+func (a *App) StopRemoteServer(_hostID string) error {
+	return nil
+}
+
+// DeliveryWorktreeAvailability 交付工作树可用性（宿主：不可用）。
+func (a *App) DeliveryWorktreeAvailability(_workspaceRoot string) (map[string]any, error) {
+	return map[string]any{"available": false, "reason": "宿主不提供交付工作树"}, nil
+}
+
+// PollBotConnectionInstall 机器人连接安装轮询（宿主：无机器人）。
+func (a *App) PollBotConnectionInstall(_installID string) (map[string]any, error) {
+	return map[string]any{"state": "done", "ready": false}, nil
+}
+
+// StartBotConnectionInstall 启动机器人连接安装（宿主：无机器人）。
+func (a *App) StartBotConnectionInstall(_provider string, _authCode string) (map[string]any, error) {
+	return map[string]any{"installId": "", "state": "done"}, nil
+}

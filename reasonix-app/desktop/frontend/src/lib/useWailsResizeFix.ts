@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { rxRootElement } from "./embedHost";
 
 const RESIZE_CURSORS = new Set([
   "e-resize",
@@ -91,7 +92,7 @@ export function useWailsResizeFix(enabled: boolean, maximised = false): void {
     const bt = flags.borderThickness ?? 6;
     const previousEnableResize = flags.enableResize;
     const previousResizeEdge = flags.resizeEdge;
-    const previousCursor = document.documentElement.style.cursor;
+    const previousCursor = rxRootElement().style.cursor;
 
     // Prefer Wails' remembered cursor. A resize-shaped inline cursor at mount
     // is stale state, not the application's default.
@@ -101,8 +102,8 @@ export function useWailsResizeFix(enabled: boolean, maximised = false): void {
 
     const clearResizeState = () => {
       flags.resizeEdge = undefined;
-      if (document.documentElement.style.cursor !== restoredCursor) {
-        document.documentElement.style.cursor = restoredCursor;
+      if (rxRootElement().style.cursor !== restoredCursor) {
+        rxRootElement().style.cursor = restoredCursor;
       }
     };
 
@@ -142,7 +143,7 @@ export function useWailsResizeFix(enabled: boolean, maximised = false): void {
 
       if (edge !== flags.resizeEdge) {
         flags.resizeEdge = edge;
-        document.documentElement.style.cursor = edge ?? restoredCursor;
+        rxRootElement().style.cursor = edge ?? restoredCursor;
       }
     };
 
@@ -154,7 +155,7 @@ export function useWailsResizeFix(enabled: boolean, maximised = false): void {
       window.removeEventListener("mousemove", onMouseMove);
       flags.enableResize = previousEnableResize;
       flags.resizeEdge = previousResizeEdge;
-      document.documentElement.style.cursor = previousCursor;
+      rxRootElement().style.cursor = previousCursor;
     };
   }, [enabled, maximised]);
 }

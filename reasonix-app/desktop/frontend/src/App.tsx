@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { rxBody, rxGetElementById, rxRootElement } from "./lib/embedHost";
 import type { CSSProperties, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import gsap from "gsap";
@@ -1308,7 +1309,7 @@ export default function App() {
   useWindowStatePersistence();
   useViewportHeightVar();
   useEffect(() => {
-    document.documentElement.setAttribute("data-platform", desktopPlatform);
+    rxRootElement().setAttribute("data-platform", desktopPlatform);
   }, [desktopPlatform]);
 
   const closeTransientOverlays = useCallback(() => {
@@ -1709,7 +1710,7 @@ export default function App() {
     const frame = requestAnimationFrame(() => {
       if (decisionSurfaceRef.current != null) return;
       if (activeTabIdRef.current !== tabAtRelease) return;
-      const input = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+      const input = rxGetElementById<HTMLTextAreaElement>("composer-input");
       input?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
@@ -2581,11 +2582,11 @@ export default function App() {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
         window.removeEventListener("pointercancel", onDone);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
+        rxBody().style.cursor = "";
+        rxBody().style.userSelect = "";
       };
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
+      rxBody().style.cursor = "col-resize";
+      rxBody().style.userSelect = "none";
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
@@ -2672,11 +2673,11 @@ export default function App() {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
         window.removeEventListener("pointercancel", onDone);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
+        rxBody().style.cursor = "";
+        rxBody().style.userSelect = "";
       };
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
+      rxBody().style.cursor = "col-resize";
+      rxBody().style.userSelect = "none";
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
@@ -2739,11 +2740,11 @@ export default function App() {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
         window.removeEventListener("pointercancel", onDone);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
+        rxBody().style.cursor = "";
+        rxBody().style.userSelect = "";
       };
-      document.body.style.cursor = "row-resize";
-      document.body.style.userSelect = "none";
+      rxBody().style.cursor = "row-resize";
+      rxBody().style.userSelect = "none";
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);

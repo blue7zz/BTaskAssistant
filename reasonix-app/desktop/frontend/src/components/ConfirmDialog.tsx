@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { rxActiveElement, rxPortalTarget } from "../lib/embedHost";
 
 export type ConfirmDialogRequest = {
   title: string;
@@ -21,7 +22,7 @@ function ConfirmDialog({ request, onResolve }: { request: ConfirmDialogRequest; 
   const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    restoreFocusRef.current = rxActiveElement() instanceof HTMLElement ? (rxActiveElement() as HTMLElement) : null;
     cancelRef.current?.focus();
     return () => {
       if (restoreFocusRef.current?.isConnected) restoreFocusRef.current.focus();
@@ -40,10 +41,10 @@ function ConfirmDialog({ request, onResolve }: { request: ConfirmDialogRequest; 
       const first = cancelRef.current;
       const last = confirmRef.current;
       if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && rxActiveElement() === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && rxActiveElement() === last) {
         event.preventDefault();
         first.focus();
       }
@@ -84,7 +85,7 @@ function ConfirmDialog({ request, onResolve }: { request: ConfirmDialogRequest; 
         </div>
       </div>
     </div>,
-    document.body,
+    rxPortalTarget(),
   );
 }
 

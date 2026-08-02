@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { rxLockScroll, rxPortalTarget } from "../lib/embedHost";
 import { X } from "lucide-react";
 import { useT } from "../lib/i18n";
 
@@ -31,7 +32,7 @@ export function ImageViewer({ open, imageUrl, imageName, onClose }: ImageViewerP
       setPortalTarget(null);
       return;
     }
-    const target = document.querySelector(".chat-pane") ?? document.body;
+    const target = rxPortalTarget();
     setPortalTarget(target);
     // Trigger enter animation on the next frame.
     const raf = requestAnimationFrame(() => setVisible(true));
@@ -51,10 +52,9 @@ export function ImageViewer({ open, imageUrl, imageName, onClose }: ImageViewerP
   // Prevent body scroll while open.
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    rxLockScroll(true);
     return () => {
-      document.body.style.overflow = prev;
+      rxLockScroll(false);
     };
   }, [open]);
 

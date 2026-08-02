@@ -1,4 +1,5 @@
 import { FONT_FAMILIES, MONO_FONT_FAMILIES, type FontFamily, type MonoFontFamily } from "./fontFamily";
+import { rxRootElement } from "./embedHost";
 
 export type TypographyPlatform = "windows" | "darwin" | "linux";
 type FontProbe = (fontNames: readonly string[]) => boolean;
@@ -35,7 +36,7 @@ const MONO_FONT_CANDIDATES: Record<Exclude<MonoFontFamily, "system" | "custom">,
 
 export function getTypographyPlatform(): TypographyPlatform {
   if (typeof document !== "undefined") {
-    const attr = document.documentElement.getAttribute("data-platform");
+    const attr = rxRootElement().getAttribute("data-platform");
     if (attr === "windows" || attr === "darwin" || attr === "linux") return attr;
   }
   if (typeof navigator === "undefined") return "linux";

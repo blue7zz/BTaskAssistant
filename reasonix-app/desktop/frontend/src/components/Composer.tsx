@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { rxQuerySelectorAll, rxRootElement } from "../lib/embedHost";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowRight, ArrowUp, AtSign, Check, ChevronDown, ChevronUp, ChevronsUpDown, CornerDownRight, Equal, Eye, FilePlus2, FileText, Flag, Folder, Gauge, Hash, List, MessageSquare, Plus, Search, Shield, ShieldAlert, ShieldCheck, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
@@ -2525,7 +2526,7 @@ export function Composer({
   };
 
   const clearWailsDropTarget = () => {
-    document.querySelectorAll(".wails-drop-target-active").forEach((el) => el.classList.remove("wails-drop-target-active"));
+    rxQuerySelectorAll(".wails-drop-target-active").forEach((el) => el.classList.remove("wails-drop-target-active"));
   };
 
   const stopNativeFileDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -2780,7 +2781,7 @@ export function Composer({
     };
     window.addEventListener("resize", update);
     const observer = new MutationObserver(update);
-    observer.observe(document.documentElement, {
+    observer.observe(rxRootElement(), {
       attributes: true,
       attributeFilter: ["data-text-size", "data-font-family", "data-mono-font-family", "style"],
     });

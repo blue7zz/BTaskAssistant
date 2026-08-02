@@ -11,6 +11,7 @@
 // migration from older desktop builds.
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { rxRootElement } from "./embedHost";
 import type { ReactNode } from "react";
 import { en, type DictKey } from "../locales/en";
 
@@ -132,7 +133,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    document.documentElement.lang = locale === "zh" ? "zh-CN" : locale === "zh-TW" ? "zh-TW" : "en";
+    rxRootElement().lang = locale === "zh" ? "zh-CN" : locale === "zh-TW" ? "zh-TW" : "en";
   }, [locale]);
 
   useEffect(() => {

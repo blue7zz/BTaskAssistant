@@ -1,4 +1,5 @@
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { rxPortalTarget } from "../lib/embedHost";
 import { useMemo } from "react";
 import { createPortal } from "react-dom";
 
@@ -54,7 +55,7 @@ export function FloatingMenu({
     >
       {children}
     </div>,
-    document.body,
+    rxPortalTarget(),
   );
 }
 

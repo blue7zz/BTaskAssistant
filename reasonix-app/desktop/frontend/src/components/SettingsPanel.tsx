@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
+import { rxQuerySelector } from "../lib/embedHost";
 import { Bot as BotIcon, Check, CheckCircle2, ChevronDown, ChevronUp, Clipboard, ExternalLink, GripVertical, KeyRound, Loader2, MessageCircle, Play, QrCode, RefreshCw, Send } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useDeferredClose } from "../lib/useMountTransition";
@@ -231,7 +232,7 @@ export function SettingsPanel({
   // Close on Esc
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector("[data-anchored-popover='active']")) requestClose();
+      if (e.key === "Escape" && !rxQuerySelector("[data-anchored-popover='active']")) requestClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -1539,16 +1540,16 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
     ...DEFAULT_STATUS_BAR_ITEMS.filter((id) => !visibleStatusItems.has(id)),
   ];
   const applyStatusBarItems = (items: StatusBarItemId[]) => {
-    const contentScrollTop = document.querySelector<HTMLElement>(".settings-center__content")?.scrollTop ?? 0;
-    const navScrollTop = document.querySelector<HTMLElement>(".settings-center__nav")?.scrollTop ?? 0;
+    const contentScrollTop = rxQuerySelector<HTMLElement>(".settings-center__content")?.scrollTop ?? 0;
+    const navScrollTop = rxQuerySelector<HTMLElement>(".settings-center__nav")?.scrollTop ?? 0;
     const active = document.activeElement;
     if (active instanceof HTMLElement && active.closest(".status-bar-items-editor")) active.blur();
     void apply(() => app.SetStatusBarItems(items)).finally(() => {
       window.scrollTo(0, 0);
       requestAnimationFrame(() => {
         window.scrollTo(0, 0);
-        const content = document.querySelector<HTMLElement>(".settings-center__content");
-        const nav = document.querySelector<HTMLElement>(".settings-center__nav");
+        const content = rxQuerySelector<HTMLElement>(".settings-center__content");
+        const nav = rxQuerySelector<HTMLElement>(".settings-center__nav");
         if (content) content.scrollTop = Math.min(contentScrollTop, Math.max(0, content.scrollHeight - content.clientHeight));
         if (nav) nav.scrollTop = navScrollTop;
       });

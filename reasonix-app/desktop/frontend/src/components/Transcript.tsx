@@ -1,4 +1,5 @@
 import { createContext, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { rxGetElementById } from "../lib/embedHost";
 import type { ControllerLiveStore, Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
@@ -634,7 +635,7 @@ export function Transcript({
   useEffect(() => {
     if (rewindSignal <= 0 || questions.length === 0) return;
     const lastQ = questions[questions.length - 1];
-    const el = document.getElementById(questionAnchorId(lastQ.id));
+    const el = rxGetElementById<HTMLElement>(questionAnchorId(lastQ.id));
     if (!el || !scrollRef.current) return;
     stick.current = false;
     scrollRef.current.scrollTop = el.offsetTop - scrollRef.current.offsetTop - 12;
@@ -688,7 +689,7 @@ export function Transcript({
   useLayoutEffect(() => {
     const question = pendingQuestionJump.current;
     if (!question) return;
-    const node = document.getElementById(questionAnchorId(question.id));
+    const node = rxGetElementById<HTMLElement>(questionAnchorId(question.id));
     if (!node) return;
     pendingQuestionJump.current = null;
     stick.current = false;
@@ -713,7 +714,7 @@ export function Transcript({
 
   // ── JumpBar integration ───────────────────────────────────────────────────
   const jumpToQuestion = (question: QuestionAnchor) => {
-    const node = document.getElementById(questionAnchorId(question.id));
+    const node = rxGetElementById<HTMLElement>(questionAnchorId(question.id));
     if (!node) return;
     pendingQuestionJump.current = null;
     stick.current = false;
