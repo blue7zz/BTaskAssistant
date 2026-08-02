@@ -18,8 +18,11 @@ interface RxBridgeProps {
   taskTitle?: string;
 }
 
+type MountReasonixEmbed = (host: HTMLElement, options?: { onMounted?: () => void }) => () => void;
+
 interface EmbedModule {
-  mountReasonixEmbed: (host: HTMLElement, options?: { onMounted?: () => void }) => () => void;
+  mountReasonixEmbed?: MountReasonixEmbed;
+  default?: MountReasonixEmbed;
 }
 
 export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridgeProps) {
@@ -61,7 +64,15 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
       const mod = (await import("../../../reasonix-app/desktop/frontend/src/embedEntry")) as EmbedModule;
       if (disposed) return;
       host.replaceChildren();
-      unmount = mod.mountReasonixEmbed(host, {
+      // 动态 import chunk 在多入口共享/生产 minify 下导出不可靠，
+      // 优先取 embed 模块挂载时写入的 window 全局挂载函数。
+      const globalMount = (window as unknown as { __RX_MOUNT_EMBED__?: (host: HTMLElement, options?: { onMounted?: () => void }) => () => void })
+        .__RX_MOUNT_EMBED__;
+      const mount = globalMount ?? mod.default ?? mod.mountReasonixEmbed;
+      if (typeof mount !== "function") {
+        throw new Error("Reasonix embed 模块导出缺失");
+      }
+      unmount = mount(host, {
         onMounted: () => {
           if (!disposed) setReady(true);
         },

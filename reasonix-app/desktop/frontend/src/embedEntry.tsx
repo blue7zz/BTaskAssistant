@@ -96,3 +96,11 @@ export function mountReasonixEmbed(host: HTMLElement, options: ReasonixEmbedOpti
     shadow.replaceChildren();
   };
 }
+
+// 生产构建下动态 import chunk 的命名/default 导出在多入口共享时不可靠，
+// 因此额外挂到 window 全局——宿主侧从 window.__RX_MOUNT_EMBED__ 获取。
+if (typeof window !== "undefined") {
+  (window as unknown as { __RX_MOUNT_EMBED__?: typeof mountReasonixEmbed }).__RX_MOUNT_EMBED__ =
+    mountReasonixEmbed;
+}
+export default mountReasonixEmbed;
