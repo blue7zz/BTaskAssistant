@@ -133,7 +133,15 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
             <p>
               <code>{readyError}</code>
             </p>
-            <p>请确认任务工作区已就绪，或重新打开本页重试。</p>
+            {readyError.includes("未绑定 Git 工作树") ? (
+              <p>
+                请打开任务详情的<strong>「变更」</strong>标签页，点击
+                <strong>「选择并绑定」</strong>选择仓库并创建工作树，然后回到
+                本页重试。
+              </p>
+            ) : (
+              <p>请确认任务工作区已就绪，或重新打开本页重试。</p>
+            )}
           </div>
         )}
         {!ready && !readyError && (

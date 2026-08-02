@@ -112,7 +112,7 @@ func (a *App) rxWorkspaceForTask(taskID string) (bridge.WorkspaceIdentity, error
 	binding, err := a.store.GitBinding(taskID)
 	if err != nil || binding.ID == "" {
 		return bridge.WorkspaceIdentity{}, fmt.Errorf(
-			"任务未绑定 Git 工作树：请在任务设置中绑定/创建工作树后再使用 Reasonix")
+			"任务未绑定 Git 工作树：请打开任务详情的『变更』标签页，点击『选择并绑定』绑定仓库工作树后再使用 Reasonix")
 	}
 	if binding.State != "ready" {
 		return bridge.WorkspaceIdentity{}, fmt.Errorf(
