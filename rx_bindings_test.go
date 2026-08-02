@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"reasonix/bridge"
+
+	"github.com/blue7zz/BTaskAssistant/internal/storage"
 )
 
 func TestRxWorkspacePath(t *testing.T) {
@@ -238,3 +240,122 @@ func TestPreviewSessionReads(t *testing.T) {
 	}
 	manager.Close("task_pv")
 }
+
+// TestRxValidateSessionPathSymlinkEscape 验证符号链接逃逸被拒绝：
+// 会话目录内的 .jsonl 指向外部文件时不得通过校验。
+func TestRxValidateSessionPathSymlinkEscape(t *testing.T) {
+	dataRoot := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.jsonl")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		rxManager: bridge.NewManager(dataRoot, nil),
+		rxTabs:    map[string]rxTabEntry{},
+		rxMu:      &sync.Mutex{},
+	}
+	sessionDir := app.rxManager.TaskSessionDir("task_1")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(sessionDir, "20260101-000000.000000000-evil.jsonl")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("环境不支持符号链接: %v", err)
+	}
+	if err := app.rxValidateSessionPath(link); err == nil {
+		t.Fatal("符号链接逃逸应被拒绝")
+	}
+}
+
+// TestRxWorkspaceForTask 验证工作区解析：Git Binding 工作树优先；
+// 无绑定/未 ready 时返回明确错误（禁止可写启动）。
+func TestRxWorkspaceForTask(t *testing.T) {
+	app := &App{
+		store:     storage.NewSQLiteStore(t.TempDir()),
+		rxManager: bridge.NewManager(t.TempDir(), nil),
+		rxTabs:    map[string]rxTabEntry{},
+		rxMu:      &sync.Mutex{},
+	}
+
+	t.Run("no binding rejected", func(t *testing.T) {
+		_, err := app.rxWorkspaceForTask("task_nobind")
+		if err == nil {
+			t.Fatal("无绑定应返回错误")
+		}
+		if !strings.Contains(err.Error(), "未绑定 Git 工作树") {
+			t.Fatalf("错误信息应提示绑定: %v", err)
+		}
+	})
+
+	t.Run("ready binding uses worktree", func(t *testing.T) {
+		source := t.TempDir()
+		worktree := t.TempDir()
+		if err := app.store.UpsertTaskWorkspace(storage.TaskWorkspaceRecord{
+			TaskID: "task_wt", WorkspaceID: "ws-wt", RootPath: "/tasks/task_wt",
+			SchemaVersion: 1, ManifestRevision: 1, State: "ready",
+			CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
+		}); err != nil {
+			t.Fatalf("seed workspace 失败: %v", err)
+		}
+		binding := storage.GitBindingRecord{
+			ID:             "bind_1",
+			TaskID:         "task_wt",
+			SourcePath:     source,
+			SourceRealPath: source,
+			WorktreePath:   &worktree,
+			CommonGitDir:   source,
+			Branch:         ptr("main"),
+			BaselineCommit: "abc123",
+			State:          "ready",
+			CreatedAt:      time.Now().Format(time.RFC3339),
+			UpdatedAt:      time.Now().Format(time.RFC3339),
+		}
+		if err := app.store.UpsertGitBinding(binding); err != nil {
+			t.Fatalf("UpsertGitBinding 失败: %v", err)
+		}
+		identity, err := app.rxWorkspaceForTask("task_wt")
+		if err != nil {
+			t.Fatalf("解析工作区失败: %v", err)
+		}
+		if identity.BindingID != "bind_1" || identity.Generation != "abc123" {
+			t.Fatalf("工作区身份不完整: %+v", identity)
+		}
+		real, _ := filepath.EvalSymlinks(worktree)
+		if identity.RootPath != real {
+			t.Fatalf("工作树路径错误: %s != %s", identity.RootPath, real)
+		}
+	})
+
+	t.Run("non-ready binding rejected", func(t *testing.T) {
+		source := t.TempDir()
+		worktree := t.TempDir()
+		if err := app.store.UpsertTaskWorkspace(storage.TaskWorkspaceRecord{
+			TaskID: "task_pending", WorkspaceID: "ws-pending", RootPath: "/tasks/task_pending",
+			SchemaVersion: 1, ManifestRevision: 1, State: "ready",
+			CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
+		}); err != nil {
+			t.Fatalf("seed workspace 失败: %v", err)
+		}
+		binding := storage.GitBindingRecord{
+			ID:             "bind_2",
+			TaskID:         "task_pending",
+			SourcePath:     source,
+			SourceRealPath: source,
+			WorktreePath:   &worktree,
+			CommonGitDir:   source,
+			BaselineCommit: "def456",
+			State:          "creating",
+			CreatedAt:      time.Now().Format(time.RFC3339),
+			UpdatedAt:      time.Now().Format(time.RFC3339),
+		}
+		if err := app.store.UpsertGitBinding(binding); err != nil {
+			t.Fatal(err)
+		}
+		_, err := app.rxWorkspaceForTask("task_pending")
+		if err == nil || !strings.Contains(err.Error(), "未就绪") {
+			t.Fatalf("未 ready 绑定应拒绝: %v", err)
+		}
+	})
+}
+
+func ptr(s string) *string { return &s }

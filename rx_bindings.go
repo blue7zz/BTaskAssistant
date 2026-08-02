@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -94,7 +95,58 @@ func rxShortHash(value string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// rxTaskContext 解析任务工作区根目录（与 PI 工作台同一 workspace）。
+// rxWorkspaceForTask 解析任务工作区（阶段 2：Git Binding 工作树优先）。
+// 解析顺序：
+//  1. 任务存在 state=ready 的 Git Binding 且 WorktreePath 通过真实路径校验
+//     （EvalSymlinks 解析后存在且为目录）→ 使用该工作树。
+//  2. 无绑定 / 未 ready / 路径失效 → 明确错误（禁止可写启动，提示先绑定）。
+//
+// 不再静默使用任务资料目录或源仓库。
+func (a *App) rxWorkspaceForTask(taskID string) (bridge.WorkspaceIdentity, error) {
+	if a.store == nil {
+		return bridge.WorkspaceIdentity{}, errors.New("存储未就绪")
+	}
+	binding, err := a.store.GitBinding(taskID)
+	if err != nil || binding.ID == "" {
+		return bridge.WorkspaceIdentity{}, fmt.Errorf(
+			"任务未绑定 Git 工作树：请在任务设置中绑定/创建工作树后再使用 Reasonix")
+	}
+	if binding.State != "ready" {
+		return bridge.WorkspaceIdentity{}, fmt.Errorf(
+			"任务 Git 工作树未就绪（state=%s）：请先完成绑定后再使用 Reasonix", binding.State)
+	}
+	if binding.WorktreePath == nil || strings.TrimSpace(*binding.WorktreePath) == "" {
+		return bridge.WorkspaceIdentity{}, fmt.Errorf(
+			"任务 Git 工作树路径为空：请重新绑定工作树")
+	}
+	raw := *binding.WorktreePath
+	real, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		return bridge.WorkspaceIdentity{}, fmt.Errorf(
+			"任务工作树路径不可用（%s）：%v，请重新绑定", raw, err)
+	}
+	info, err := os.Stat(real)
+	if err != nil || !info.IsDir() {
+		return bridge.WorkspaceIdentity{}, fmt.Errorf(
+			"任务工作树路径不是有效目录（%s）：请重新绑定", real)
+	}
+	// 工作树真实路径必须是绑定声明的真实路径（防符号链接指向任务资料目录）
+	if binding.SourceRealPath != "" {
+		srcReal, srcErr := filepath.EvalSymlinks(binding.SourceRealPath)
+		if srcErr == nil && filepath.Clean(srcReal) == filepath.Clean(real) {
+			return bridge.WorkspaceIdentity{}, fmt.Errorf(
+				"任务工作树路径与源仓库相同：请绑定为独立工作树（git worktree）")
+		}
+	}
+	return bridge.WorkspaceIdentity{
+		TaskID:     taskID,
+		BindingID:  binding.ID,
+		RootPath:   real,
+		Generation: binding.BaselineCommit,
+	}, nil
+}
+
+// rxTaskContext 保留旧语义（任务资料目录）——仅用于非 Reasonix 场景。
 func (a *App) rxTaskContext(taskID string) (string, error) {
 	if a.store == nil {
 		return "", errors.New("存储未就绪")
@@ -126,11 +178,11 @@ func (a *App) ActivateReasonixTask(taskID string, workspaceRoot string, taskTitl
 	a.rxMu.Unlock()
 
 	if workspaceRoot == "" {
-		root, err := a.rxTaskContext(taskID)
+		identity, err := a.rxWorkspaceForTask(taskID)
 		if err != nil {
 			return bridge.TabView{}, err
 		}
-		workspaceRoot = root
+		workspaceRoot = identity.RootPath
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -159,11 +211,11 @@ func (a *App) ReasonixEnsureTab(taskID string, workspaceRoot string, taskTitle s
 	}
 	a.rxManager.SetTaskTitle(taskID, taskTitle)
 	if workspaceRoot == "" {
-		root, err := a.rxTaskContext(taskID)
+		identity, err := a.rxWorkspaceForTask(taskID)
 		if err != nil {
 			return bridge.TabView{}, err
 		}
-		workspaceRoot = root
+		workspaceRoot = identity.RootPath
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -246,6 +298,10 @@ func (a *App) SubmitToTab(tabID string, input string) error {
 	if err != nil {
 		return err
 	}
+	// 工作树准入：PI 会话活跃时，Reasonix 不得并发提交修改同一任务工作树
+	if a.agentService != nil && a.agentService.ActiveTask(taskID) {
+		return errors.New("PI 会话正在该任务运行，请等待完成后再提交 Reasonix 消息")
+	}
 	return a.rxManager.Submit(taskID, input)
 }
 
@@ -293,6 +349,9 @@ func (a *App) ListSessions() ([]bridge.SessionMetaView, error) {
 
 // ResumeSessionPageForTab 按页读取会话历史。
 func (a *App) ResumeSessionPageForTab(tabID string, path string, limit int) (bridge.HistoryPageView, error) {
+	if err := a.rxValidateSessionPath(path); err != nil {
+		return bridge.HistoryPageView{}, err
+	}
 	taskID, err := a.rxTaskForTab(tabID)
 	if err != nil {
 		return bridge.HistoryPageView{}, err
@@ -358,20 +417,56 @@ func (a *App) DeleteSession(path string) error {
 	return nil
 }
 
-// rxValidateSessionPath 校验 path 落在某个任务的 reasonix-sessions 目录内。
+// rxValidateSessionPath 校验 path 是某个任务 reasonix-sessions 目录内的
+// 会话文件（阶段 2 加固）：
+//   - 结构校验：path 必须位于 <dataRoot>/tasks/<taskID>/reasonix-sessions/
+//     且 taskID 合法（不依赖 rxTabs——未激活任务的历史会话同样受保护）；
+//   - 符号链接校验：解析后的真实路径仍必须在任务会话目录内。
 func (a *App) rxValidateSessionPath(path string) error {
-	a.rxMu.Lock()
-	defer a.rxMu.Unlock()
 	cleaned := filepath.Clean(path)
-	for _, entry := range a.rxTabs {
-		dir := filepath.Clean(a.rxManager.TaskSessionDir(entry.taskID))
-		rel, err := filepath.Rel(dir, cleaned)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil
+	if !strings.HasSuffix(cleaned, ".jsonl") {
+		return fmt.Errorf("拒绝非会话文件: %s", path)
+	}
+	// 结构：<dataRoot>/tasks/<taskID>/reasonix-sessions/<file>.jsonl
+	sessionsMarker := string(filepath.Separator) + "reasonix-sessions" + string(filepath.Separator)
+	idx := strings.LastIndex(cleaned, sessionsMarker)
+	if idx < 0 {
+		return fmt.Errorf("拒绝会话目录外的文件: %s", path)
+	}
+	// 任务目录 = 去掉 "/reasonix-sessions/..." 后的前缀
+	taskRoot := cleaned[:idx]
+	tasksMarker := string(filepath.Separator) + "tasks" + string(filepath.Separator)
+	tidx := strings.LastIndex(taskRoot, tasksMarker)
+	if tidx < 0 {
+		return fmt.Errorf("拒绝会话目录外的文件（任务结构缺失）: %s", path)
+	}
+	taskID := taskRoot[tidx+len(tasksMarker):]
+	if !rxTaskIDPattern.MatchString(taskID) {
+		return fmt.Errorf("拒绝非法任务路径: %s", path)
+	}
+	dir := a.rxManager.TaskSessionDir(taskID)
+	// 会话目录 = 任务目录 + /reasonix-sessions
+	if filepath.Clean(dir) != filepath.Clean(filepath.Join(taskRoot, "reasonix-sessions")) {
+		return fmt.Errorf("拒绝会话目录外的文件（目录不匹配）: %s", path)
+	}
+	// 符号链接：解析后真实路径必须在任务会话目录内（目录同样解析真实路径，
+	// 否则 /var→/private/var 这类系统符号链接会误报逃逸）。
+	if real, err := filepath.EvalSymlinks(cleaned); err == nil {
+		realDir := filepath.Dir(real)
+		realBase := filepath.Clean(dir)
+		if resolved, resolveErr := filepath.EvalSymlinks(realBase); resolveErr == nil {
+			realBase = resolved
+		}
+		rel, relErr := filepath.Rel(realBase, realDir)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("拒绝符号链接逃逸: %s", path)
 		}
 	}
-	return fmt.Errorf("拒绝删除会话目录外的文件: %s", path)
+	return nil
 }
+
+// rxTaskIDPattern 校验任务 ID（字母数字、下划线、连字符、点，最长 64）。
+var rxTaskIDPattern = regexp.MustCompile(`^[^/\\]{1,128}$`)
 
 // RenameSession 重命名会话（持久化到 .titles.json 侧车，与桌面端同约定）。
 func (a *App) RenameSession(path string, title string) error {
@@ -1101,6 +1196,9 @@ func rxEffortWith(current string) map[string]any {
 
 // ResumeSession 恢复指定会话（激活任务）。
 func (a *App) ResumeSession(path string) ([]bridge.HistoryMessageView, error) {
+	if err := a.rxValidateSessionPath(path); err != nil {
+		return []bridge.HistoryMessageView{}, err
+	}
 	taskID, _, err := a.rxActiveTask()
 	if err != nil {
 		return []bridge.HistoryMessageView{}, nil
@@ -1114,6 +1212,9 @@ func (a *App) ResumeSession(path string) ([]bridge.HistoryMessageView, error) {
 
 // ResumeSessionForTab 恢复指定会话。
 func (a *App) ResumeSessionForTab(tabID string, path string) ([]bridge.HistoryMessageView, error) {
+	if err := a.rxValidateSessionPath(path); err != nil {
+		return []bridge.HistoryMessageView{}, err
+	}
 	taskID, err := a.rxTaskForTab(tabID)
 	if err != nil {
 		return []bridge.HistoryMessageView{}, nil

@@ -52,6 +52,9 @@ type TaskTab struct {
 	Effort    string
 	TokenMode string
 
+	// 工作区身份（阶段 2：绑定任务 Git 工作树）
+	WorkspaceIdentity WorkspaceIdentity
+
 	// 生命周期
 	RequestSeq uint64    // 最近一次 Activate 的序号（并发激活仲裁）
 	LastActive time.Time // 最后激活时间（idle LRU 回收依据，阶段 3）
@@ -59,6 +62,15 @@ type TaskTab struct {
 
 // ErrStaleActivate 表示激活请求序号已过期（更晚的请求已接管该任务）。
 var ErrStaleActivate = errors.New("stale reasonix activate request")
+
+// WorkspaceIdentity 是任务工作区的稳定身份：绑定 ID + 真实路径 + 代次。
+// 重新绑定/工作树失效时身份变化，宿主据此原子重建控制器（阶段 2）。
+type WorkspaceIdentity struct {
+	TaskID     string
+	BindingID  string
+	RootPath   string // 真实路径（符号链接解析后）
+	Generation string // baseline commit / 绑定代次
+}
 
 // MaxSessionsPerTask 每任务保留的会话文件上限（超出时按最后使用时间清理最旧）。
 const MaxSessionsPerTask = 10
@@ -75,7 +87,8 @@ type Manager struct {
 	snapshotWG sync.WaitGroup // 跟踪 in-flight 回合快照（关闭时等待落盘）
 }
 
-// saveLastSession 持久化任务最后活跃会话路径（重建时恢复）。
+// saveLastSession 持久化任务最后活跃会话（阶段 2：相对文件名 + 原子替换）。
+// 会话文件位于任务隔离目录内，文件名即唯一 ID（同目录无重名）。
 func (m *Manager) saveLastSession(taskID string, path string) {
 	if path == "" {
 		return
@@ -84,23 +97,45 @@ func (m *Manager) saveLastSession(taskID string, path string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(dir, lastSessionMarker), []byte(path), 0o644)
+	base := filepath.Base(path)
+	if base == "." || base == "/" || strings.HasSuffix(base, ".tmp") {
+		return
+	}
+	target := filepath.Join(dir, lastSessionMarker)
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, []byte(base), 0o644); err != nil {
+		return
+	}
+	// 原子替换：临时文件写入完成后 rename 覆盖
+	_ = os.Rename(tmp, target)
 }
 
-// loadLastSession 读取任务最后活跃会话路径（不存在/非法时返回空）。
+// loadLastSession 读取任务最后活跃会话的绝对路径（不存在/非法时返回空）。
+// 兼容旧格式（绝对路径）：仅接受仍位于该任务会话目录内的路径。
 func (m *Manager) loadLastSession(taskID string) string {
-	data, err := os.ReadFile(filepath.Join(m.TaskSessionDir(taskID), lastSessionMarker))
+	dir := m.TaskSessionDir(taskID)
+	data, err := os.ReadFile(filepath.Join(dir, lastSessionMarker))
 	if err != nil {
 		return ""
 	}
-	path := strings.TrimSpace(string(data))
-	if path == "" || !strings.HasSuffix(path, ".jsonl") {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || !strings.HasSuffix(raw, ".jsonl") {
 		return ""
 	}
-	if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+	path := raw
+	if filepath.Base(raw) == raw {
+		// 新格式：相对文件名 → 拼回任务目录
+		path = filepath.Join(dir, raw)
+	}
+	cleaned := filepath.Clean(path)
+	rel, relErr := filepath.Rel(filepath.Clean(dir), cleaned)
+	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "" // 逃逸任务目录：拒绝
+	}
+	if info, statErr := os.Stat(cleaned); statErr != nil || info.IsDir() {
 		return ""
 	}
-	return path
+	return cleaned
 }
 
 // NewManager 创建管理器。dataRoot 是任务会话的父目录
@@ -156,6 +191,9 @@ func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot str
 		if title != "" {
 			tab.Title = title
 		}
+		if workspaceRoot != "" {
+			tab.WorkspaceIdentity.RootPath = workspaceRoot
+		}
 		m.mu.Unlock()
 		return tab, nil
 	}
@@ -167,6 +205,10 @@ func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot str
 		Dir:        dir,
 		RequestSeq: requestSeq,
 		LastActive: time.Now(),
+		WorkspaceIdentity: WorkspaceIdentity{
+			TaskID:   taskID,
+			RootPath: workspaceRoot,
+		},
 	}
 	// 占位注册：构建期间并发 Activate 复用它而不是重复构建
 	m.roots[taskID] = tab

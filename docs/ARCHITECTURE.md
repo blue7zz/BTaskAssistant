@@ -190,6 +190,24 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 - **测试隔离**：TestMain 设置临时 REASONIX_HOME——不读取本机真实配置、
   不消耗真实 API 额度；`go test -race` 无竞态。
 
+### 工作树绑定与路径加固（阶段 2）
+
+- **工作区解析**（`rxWorkspaceForTask`）：Git Binding 优先——state=ready 且
+  WorktreePath 通过真实路径校验（EvalSymlinks + 目录 + 非源仓库）→ 使用
+  工作树；无绑定/未就绪/路径失效 → 明确错误（禁止可写启动，提示先绑定）。
+  不再静默使用任务资料目录。工作区身份（BindingID/RootPath/Generation）存入
+  RuntimeEntry。
+- **路径校验统一**：`rxValidateSessionPath` 结构校验（必须位于
+  `<dataRoot>/tasks/<taskID>/reasonix-sessions/`）+ 符号链接逃逸拒绝
+  （目录与文件都解析真实路径，防 /var→/private/var 误报）；Resume/
+  Preview/Restore 等恢复接口全部接入。
+- **last-session.txt**：相对会话文件名 + 临时文件原子替换；加载时校验
+  仍在任务会话目录内（兼容旧绝对路径格式仅当路径不越界）。
+- **PI/RX 工作树互斥**：RX 回合运行中 PI 命令拒绝（AgentSessionCommand）；
+  PI 活跃时 RX 提交拒绝（SubmitToTab）；git worktree 清理/恢复在 RX
+  会话活跃时拒绝。
+- 测试：符号链接逃逸、工作区解析（无绑定/ready/未就绪三态）。
+
 ### 事件流
 
 内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(

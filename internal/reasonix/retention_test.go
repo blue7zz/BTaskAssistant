@@ -50,11 +50,11 @@ func TestSessionRetainedAcrossRebuild(t *testing.T) {
 		t.Fatalf("重建后会话路径未保留: 期望 %s 实际 %s", firstPath, tab2.Ctrl.SessionPath())
 	}
 
-	// 最后会话标记已持久化
+	// 最后会话标记已持久化（相对文件名，原子写入）
 	marker := filepath.Join(manager.TaskSessionDir("task_retain"), "last-session.txt")
 	data, err := os.ReadFile(marker)
-	if err != nil || strings.TrimSpace(string(data)) != firstPath {
-		t.Fatalf("last-session 标记未持久化: %v %q", err, string(data))
+	if err != nil || strings.TrimSpace(string(data)) != filepath.Base(firstPath) {
+		t.Fatalf("last-session 标记未持久化: %v %q（期望 %q）", err, string(data), filepath.Base(firstPath))
 	}
 	manager.Shutdown()
 }

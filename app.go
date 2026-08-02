@@ -233,6 +233,10 @@ func (a *App) AgentSessionCommand(
 	if a.agentService == nil {
 		return nil, errors.New("PI 会话服务未初始化")
 	}
+	// 工作树准入：Reasonix 回合运行中，PI 不得并发修改同一任务工作树
+	if a.rxTaskRunning(request.TaskID) {
+		return nil, errors.New("Reasonix 回合正在运行，请等待完成后再执行 PI 命令")
+	}
 	ctx, cancel := context.WithTimeout(a.appContext(), 60*time.Second)
 	defer cancel()
 	return a.agentService.Command(ctx, request)
@@ -590,6 +594,17 @@ func (a *App) CommitTaskGitChanges(
 	return a.gitService.Commit(a.appContext(), request)
 }
 
+// rxTaskBusy 返回任务的 Reasonix 会话是否活跃占用工作树。
+func (a *App) rxTaskBusy(taskID string) bool {
+	return a.rxManager != nil && a.rxManager.Tab(taskID) != nil && a.rxManager.Tab(taskID).Ctrl != nil
+}
+
+// rxTaskRunning 返回任务的 Reasonix 回合是否正在运行（写工作树的窗口）。
+func (a *App) rxTaskRunning(taskID string) bool {
+	tab := a.rxManager.Tab(taskID)
+	return tab != nil && tab.Ctrl != nil && tab.Ctrl.Running()
+}
+
 func (a *App) CleanupTaskGitWorktree(
 	request gitrepo.CleanupRequest,
 ) (storage.GitBindingRecord, error) {
@@ -602,6 +617,9 @@ func (a *App) CleanupTaskGitWorktree(
 	if (a.agentService != nil && a.agentService.ActiveTask(request.TaskID)) ||
 		(a.executionService != nil && a.executionService.ActiveTask(request.TaskID)) {
 		return storage.GitBindingRecord{}, errors.New("当前任务仍有 PI 或 Shell 在运行，拒绝清理 worktree")
+	}
+	if a.rxTaskBusy(request.TaskID) {
+		return storage.GitBindingRecord{}, errors.New("当前任务仍有 Reasonix 会话占用工作树，拒绝清理 worktree")
 	}
 	return a.gitService.Cleanup(a.appContext(), request)
 }
