@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { KeyRound, LoaderCircle, Server, Trash2 } from "lucide-react";
 import { rxSettingsApp, type ReasonixSettingsView } from "../lib/bridge";
 
@@ -50,6 +50,12 @@ export function ReasonixSettings({ onSuccess, onError }: ReasonixSettingsProps) 
       setLoading(false);
     }
   };
+
+  // 挂载时立即加载配置（此前缺失该调用导致一直显示"正在读取……"）
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const applyHome = async () => {
     try {

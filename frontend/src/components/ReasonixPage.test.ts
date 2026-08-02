@@ -1,6 +1,6 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { ReasonixPage } from "./ReasonixPage";
 import * as bridge from "../lib/bridge";
 
@@ -15,7 +15,7 @@ vi.mock("../../../reasonix-app/desktop/frontend/src/embedEntry", () => {
 describe("ReasonixPage embed", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let mountReasonixEmbed: ReturnType<typeof vi.fn>;
+  let mountReasonixEmbed: Mock;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -35,7 +35,7 @@ describe("ReasonixPage embed", () => {
     vi.spyOn(bridge, "closeReasonixTab").mockResolvedValue();
     // 动态 import 的 embed 模块：挂载为同步 fn
     const mod = await import("../../../reasonix-app/desktop/frontend/src/embedEntry");
-    mountReasonixEmbed = mod.mountReasonixEmbed as unknown as ReturnType<typeof vi.fn>;
+    mountReasonixEmbed = mod.mountReasonixEmbed as unknown as Mock;
     mountReasonixEmbed.mockClear();
     mountReasonixEmbed.mockImplementation(() => () => undefined);
     (window as unknown as { runtime?: unknown }).runtime = {
