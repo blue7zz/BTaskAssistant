@@ -46,7 +46,12 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setReadyError(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        // 过期激活请求（已被更新的请求接管，如快速切换或 effect 重跑）不是
+        // 失败——忽略它，避免覆盖最新请求的成功状态（stale 意味着已有
+        // 更新的请求在途或已完成）。
+        if (message.includes("stale")) return;
+        setReadyError(message);
       });
     return () => {
       active = false;

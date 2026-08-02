@@ -103,6 +103,17 @@ describe("ReasonixPage embed", () => {
     expect(bridge.closeReasonixTab).toHaveBeenCalledWith("task_1");
   });
 
+  it("过期激活请求（stale）不显示错误（已有更新的请求接管）", async () => {
+    vi.mocked(bridge.ensureReasonixTab).mockRejectedValueOnce(
+      new Error("stale reasonix activate request"),
+    );
+    await renderPage();
+    // stale 被忽略：不显示"初始化失败"错误（仍在等待/初始化中即可）
+    expect(container.textContent).not.toContain("初始化失败");
+    expect(container.textContent).toContain("正在初始化");
+    expect(bridge.ensureReasonixTab).toHaveBeenCalledTimes(1);
+  });
+
   it("会话初始化失败时显示错误而非挂载", async () => {
     vi.mocked(bridge.ensureReasonixTab).mockRejectedValueOnce(
       new Error("工作区未就绪"),

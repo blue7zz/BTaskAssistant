@@ -250,8 +250,9 @@ func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot str
 	}
 
 	m.mu.Lock()
-	// 只有本占位仍是当前条目时写回（期间同任务被更新的 Activate 替换则关闭）。
-	if cur, ok := m.roots[taskID]; ok && cur == tab {
+	// 只有本占位仍是当前条目且序号仍最新时写回；期间被更新的 Activate
+	// 接管（占位被替换或 RequestSeq 前进）则关闭本次构建。
+	if cur, ok := m.roots[taskID]; ok && cur == tab && tab.RequestSeq == requestSeq {
 		tab.Ctrl = ctrl
 	} else {
 		ctrl.Close()
