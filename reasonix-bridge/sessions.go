@@ -350,6 +350,59 @@ func (m *Manager) NewSession(taskID string) error {
 	return nil
 }
 
+// MigrateLegacyLastSession 把旧格式（绝对路径）last-session.txt 非破坏性
+// 迁移为相对文件名；路径不合法（越界/不存在）时保留原文件并输出警告，
+// 不自动删除（阶段 7）。
+func (m *Manager) MigrateLegacyLastSession(taskID string) {
+	dir := m.TaskSessionDir(taskID)
+	marker := filepath.Join(dir, lastSessionMarker)
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return
+	}
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || !strings.HasSuffix(raw, ".jsonl") {
+		return
+	}
+	if filepath.Base(raw) == raw {
+		return // 已是相对格式
+	}
+	cleaned := filepath.Clean(raw)
+	rel, relErr := filepath.Rel(filepath.Clean(dir), cleaned)
+	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		fmt.Fprintf(os.Stderr, "reasonix-bridge: 任务 %s 的 last-session 指向目录外，保留原文件并忽略: %s\n", taskID, raw)
+		return
+	}
+	if info, statErr := os.Stat(cleaned); statErr != nil || info.IsDir() {
+		fmt.Fprintf(os.Stderr, "reasonix-bridge: 任务 %s 的 last-session 文件不存在，保留原文件: %s\n", taskID, raw)
+		return
+	}
+	// 原子改写为相对格式
+	tmp := marker + ".tmp"
+	if err := os.WriteFile(tmp, []byte(filepath.Base(raw)), 0o644); err == nil {
+		_ = os.Rename(tmp, marker)
+	}
+}
+
+// MigrateAllLegacyLastSessions 遍历全部任务目录执行迁移。
+func (m *Manager) MigrateAllLegacyLastSessions() {
+	base := m.dataRoot
+	if base == "" {
+		return
+	}
+	tasksDir := filepath.Join(base, "tasks")
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		m.MigrateLegacyLastSession(entry.Name())
+	}
+}
+
 // PruneIdleRuntimes 回收超出上限的 idle 运行时（按最后活跃时间 LRU）。
 // 返回回收数量。running / 等待审批提问 / 有后台任务的会话绝不回收；
 // 回收前先快照并记录最后会话（Close 语义）。

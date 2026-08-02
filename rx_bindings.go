@@ -52,6 +52,8 @@ func (a *App) initReasonix() {
 	})
 	a.rxMu = &sync.Mutex{}
 	a.rxTabs = map[string]rxTabEntry{}
+	// 非破坏性迁移旧格式 last-session（绝对路径 → 相对文件名）
+	a.rxManager.MigrateAllLegacyLastSessions()
 }
 
 func rxDataDirectory() string {

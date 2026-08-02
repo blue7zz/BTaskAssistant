@@ -10,40 +10,52 @@ export function AcceptMemorySuggestion(arg1) {
   return window['go']['main']['App']['AcceptMemorySuggestion'](arg1);
 }
 
-export function AcceptMemorySuggestionForTab(arg1) {
-  return window['go']['main']['App']['AcceptMemorySuggestionForTab'](arg1);
+export function AcceptMemorySuggestionForTab(arg1, arg2) {
+  return window['go']['main']['App']['AcceptMemorySuggestionForTab'](arg1, arg2);
 }
 
 export function AcceptSkillSuggestion(arg1) {
   return window['go']['main']['App']['AcceptSkillSuggestion'](arg1);
 }
 
-export function AcceptSkillSuggestionForTab(arg1) {
-  return window['go']['main']['App']['AcceptSkillSuggestionForTab'](arg1);
+export function AcceptSkillSuggestionForTab(arg1, arg2) {
+  return window['go']['main']['App']['AcceptSkillSuggestionForTab'](arg1, arg2);
+}
+
+export function ActivateBaseStyle(arg1) {
+  return window['go']['main']['App']['ActivateBaseStyle'](arg1);
+}
+
+export function ActivateReasonixTask(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ActivateReasonixTask'](arg1, arg2, arg3, arg4);
 }
 
 export function ActivateThemePack(arg1) {
   return window['go']['main']['App']['ActivateThemePack'](arg1);
 }
 
-export function ActivateTopic(arg1) {
-  return window['go']['main']['App']['ActivateTopic'](arg1);
+export function ActivateTopic(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ActivateTopic'](arg1, arg2, arg3, arg4);
 }
 
-export function AddOfficialProviderAccess(arg1) {
-  return window['go']['main']['App']['AddOfficialProviderAccess'](arg1);
+export function AddMCPServer(arg1) {
+  return window['go']['main']['App']['AddMCPServer'](arg1);
 }
 
-export function AddPermissionRule(arg1) {
-  return window['go']['main']['App']['AddPermissionRule'](arg1);
+export function AddOfficialProviderAccess(arg1, arg2) {
+  return window['go']['main']['App']['AddOfficialProviderAccess'](arg1, arg2);
 }
 
-export function AddProviderPresetAccess(arg1) {
-  return window['go']['main']['App']['AddProviderPresetAccess'](arg1);
+export function AddPermissionRule(arg1, arg2) {
+  return window['go']['main']['App']['AddPermissionRule'](arg1, arg2);
 }
 
-export function AddRemoteForward(arg1) {
-  return window['go']['main']['App']['AddRemoteForward'](arg1);
+export function AddProviderPresetAccess(arg1, arg2) {
+  return window['go']['main']['App']['AddProviderPresetAccess'](arg1, arg2);
+}
+
+export function AddRemoteForward(arg1, arg2) {
+  return window['go']['main']['App']['AddRemoteForward'](arg1, arg2);
 }
 
 export function AddRemoteHost(arg1) {
@@ -66,8 +78,20 @@ export function AnalyzeRequirements(arg1, arg2) {
   return window['go']['main']['App']['AnalyzeRequirements'](arg1, arg2);
 }
 
+export function AnswerQuestion(arg1, arg2) {
+  return window['go']['main']['App']['AnswerQuestion'](arg1, arg2);
+}
+
 export function AnswerQuestionForTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerQuestionForTab'](arg1, arg2, arg3);
+}
+
+export function ApplyUpdate() {
+  return window['go']['main']['App']['ApplyUpdate']();
+}
+
+export function Approve(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['Approve'](arg1, arg2, arg3, arg4);
 }
 
 export function ApproveTab(arg1, arg2, arg3, arg4, arg5) {
@@ -82,8 +106,40 @@ export function AttachmentDataURL(arg1) {
   return window['go']['main']['App']['AttachmentDataURL'](arg1);
 }
 
-export function AvailableSubagentTools(arg1) {
-  return window['go']['main']['App']['AvailableSubagentTools'](arg1);
+export function AuthorizeAndConnectMCPServer(arg1) {
+  return window['go']['main']['App']['AuthorizeAndConnectMCPServer'](arg1);
+}
+
+export function AutoResearchCurrent() {
+  return window['go']['main']['App']['AutoResearchCurrent']();
+}
+
+export function AutoResearchFindings(arg1, arg2) {
+  return window['go']['main']['App']['AutoResearchFindings'](arg1, arg2);
+}
+
+export function AutoResearchList(arg1) {
+  return window['go']['main']['App']['AutoResearchList'](arg1);
+}
+
+export function AutoResearchOpenTask(arg1) {
+  return window['go']['main']['App']['AutoResearchOpenTask'](arg1);
+}
+
+export function AutoResearchRecordEvidence(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AutoResearchRecordEvidence'](arg1, arg2, arg3);
+}
+
+export function AutoResearchStatus(arg1) {
+  return window['go']['main']['App']['AutoResearchStatus'](arg1);
+}
+
+export function AvailableSubagentTools() {
+  return window['go']['main']['App']['AvailableSubagentTools']();
+}
+
+export function Balance() {
+  return window['go']['main']['App']['Balance']();
 }
 
 export function BalanceForTab(arg1) {
@@ -94,16 +150,24 @@ export function BindGitRepository(arg1) {
   return window['go']['main']['App']['BindGitRepository'](arg1);
 }
 
-export function BotRuntimeStatus(arg1) {
-  return window['go']['main']['App']['BotRuntimeStatus'](arg1);
+export function BotRuntimeStatus() {
+  return window['go']['main']['App']['BotRuntimeStatus']();
+}
+
+export function Cancel() {
+  return window['go']['main']['App']['Cancel']();
+}
+
+export function CancelForTab(arg1) {
+  return window['go']['main']['App']['CancelForTab'](arg1);
 }
 
 export function CancelTab(arg1) {
   return window['go']['main']['App']['CancelTab'](arg1);
 }
 
-export function CancelTrySubagentProfile(arg1) {
-  return window['go']['main']['App']['CancelTrySubagentProfile'](arg1);
+export function CancelTrySubagentProfile() {
+  return window['go']['main']['App']['CancelTrySubagentProfile']();
 }
 
 export function Capabilities() {
@@ -118,6 +182,10 @@ export function CheckUpdate(arg1) {
   return window['go']['main']['App']['CheckUpdate'](arg1);
 }
 
+export function Checkpoints() {
+  return window['go']['main']['App']['Checkpoints']();
+}
+
 export function CheckpointsForTab(arg1) {
   return window['go']['main']['App']['CheckpointsForTab'](arg1);
 }
@@ -128,6 +196,10 @@ export function CleanupTaskGitWorktree(arg1) {
 
 export function ClearBotSecret(arg1) {
   return window['go']['main']['App']['ClearBotSecret'](arg1);
+}
+
+export function ClearGoal() {
+  return window['go']['main']['App']['ClearGoal']();
 }
 
 export function ClearGoalForTab(arg1) {
@@ -178,16 +250,24 @@ export function CommitTaskGitChanges(arg1) {
   return window['go']['main']['App']['CommitTaskGitChanges'](arg1);
 }
 
+export function Compact() {
+  return window['go']['main']['App']['Compact']();
+}
+
 export function CompactForTab(arg1) {
   return window['go']['main']['App']['CompactForTab'](arg1);
 }
 
-export function ConfirmRemoteHostKey(arg1) {
-  return window['go']['main']['App']['ConfirmRemoteHostKey'](arg1);
+export function ConfirmAction(arg1) {
+  return window['go']['main']['App']['ConfirmAction'](arg1);
 }
 
-export function ConfirmRemoteSecret(arg1) {
-  return window['go']['main']['App']['ConfirmRemoteSecret'](arg1);
+export function ConfirmRemoteHostKey(arg1, arg2) {
+  return window['go']['main']['App']['ConfirmRemoteHostKey'](arg1, arg2);
+}
+
+export function ConfirmRemoteSecret(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ConfirmRemoteSecret'](arg1, arg2, arg3, arg4);
 }
 
 export function ConnectKey(arg1) {
@@ -202,12 +282,16 @@ export function ContextPanel(arg1) {
   return window['go']['main']['App']['ContextPanel'](arg1);
 }
 
+export function ContextUsage() {
+  return window['go']['main']['App']['ContextUsage']();
+}
+
 export function ContextUsageForTab(arg1) {
   return window['go']['main']['App']['ContextUsageForTab'](arg1);
 }
 
-export function CopyThemePack(arg1) {
-  return window['go']['main']['App']['CopyThemePack'](arg1);
+export function CopyThemePack(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CopyThemePack'](arg1, arg2, arg3);
 }
 
 export function CreateAgentSession(arg1) {
@@ -222,8 +306,8 @@ export function CreateSubagentProfile(arg1) {
   return window['go']['main']['App']['CreateSubagentProfile'](arg1);
 }
 
-export function CreateTerminalForTab(arg1) {
-  return window['go']['main']['App']['CreateTerminalForTab'](arg1);
+export function CreateTerminalForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateTerminalForTab'](arg1, arg2, arg3);
 }
 
 export function CreateTopic(arg1, arg2, arg3) {
@@ -238,20 +322,32 @@ export function DeletePlaneToken(arg1, arg2) {
   return window['go']['main']['App']['DeletePlaneToken'](arg1, arg2);
 }
 
+export function DeleteProvider(arg1) {
+  return window['go']['main']['App']['DeleteProvider'](arg1);
+}
+
 export function DeleteRecoveryCopy(arg1) {
   return window['go']['main']['App']['DeleteRecoveryCopy'](arg1);
+}
+
+export function DeleteRemotePath(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeleteRemotePath'](arg1, arg2, arg3);
 }
 
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
-export function DeleteSubagentProfile(arg1) {
-  return window['go']['main']['App']['DeleteSubagentProfile'](arg1);
+export function DeleteSubagentProfile(arg1, arg2) {
+  return window['go']['main']['App']['DeleteSubagentProfile'](arg1, arg2);
 }
 
 export function DeleteThemePack(arg1) {
   return window['go']['main']['App']['DeleteThemePack'](arg1);
+}
+
+export function DeleteTopic(arg1) {
+  return window['go']['main']['App']['DeleteTopic'](arg1);
 }
 
 export function DeliveryWorktreeAvailability(arg1) {
@@ -266,12 +362,20 @@ export function DiagnoseBotConnection(arg1) {
   return window['go']['main']['App']['DiagnoseBotConnection'](arg1);
 }
 
+export function DisableThemePack() {
+  return window['go']['main']['App']['DisableThemePack']();
+}
+
 export function DisconnectRemoteHost(arg1) {
   return window['go']['main']['App']['DisconnectRemoteHost'](arg1);
 }
 
-export function DownloadUpdateRequest(arg1) {
-  return window['go']['main']['App']['DownloadUpdateRequest'](arg1);
+export function DownloadUpdate(arg1) {
+  return window['go']['main']['App']['DownloadUpdate'](arg1);
+}
+
+export function DownloadUpdateRequest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DownloadUpdateRequest'](arg1, arg2, arg3);
 }
 
 export function Effort() {
@@ -286,20 +390,24 @@ export function EngineStatuses() {
   return window['go']['main']['App']['EngineStatuses']();
 }
 
-export function EnsureBlankSurface(arg1) {
-  return window['go']['main']['App']['EnsureBlankSurface'](arg1);
+export function EnsureBlankSurface(arg1, arg2) {
+  return window['go']['main']['App']['EnsureBlankSurface'](arg1, arg2);
 }
 
 export function EnsureBlankTab(arg1, arg2) {
   return window['go']['main']['App']['EnsureBlankTab'](arg1, arg2);
 }
 
+export function EnsureRemoteServer(arg1, arg2) {
+  return window['go']['main']['App']['EnsureRemoteServer'](arg1, arg2);
+}
+
 export function EnsureTaskWorkspace(arg1) {
   return window['go']['main']['App']['EnsureTaskWorkspace'](arg1);
 }
 
-export function ExportThemePack(arg1) {
-  return window['go']['main']['App']['ExportThemePack'](arg1);
+export function ExportThemePack(arg1, arg2) {
+  return window['go']['main']['App']['ExportThemePack'](arg1, arg2);
 }
 
 export function ExternalOpeners() {
@@ -320,6 +428,10 @@ export function Forget(arg1) {
 
 export function ForgetForTab(arg1, arg2) {
   return window['go']['main']['App']['ForgetForTab'](arg1, arg2);
+}
+
+export function Fork(arg1) {
+  return window['go']['main']['App']['Fork'](arg1);
 }
 
 export function ForkForTab(arg1, arg2) {
@@ -358,6 +470,14 @@ export function GetThemeExperience() {
   return window['go']['main']['App']['GetThemeExperience']();
 }
 
+export function GitBranches() {
+  return window['go']['main']['App']['GitBranches']();
+}
+
+export function GitCheckout(arg1) {
+  return window['go']['main']['App']['GitCheckout'](arg1);
+}
+
 export function HasDailyReportToken(arg1, arg2) {
   return window['go']['main']['App']['HasDailyReportToken'](arg1, arg2);
 }
@@ -386,12 +506,20 @@ export function HeartbeatTriggerNow(arg1) {
   return window['go']['main']['App']['HeartbeatTriggerNow'](arg1);
 }
 
+export function History() {
+  return window['go']['main']['App']['History']();
+}
+
 export function HistoryCheckpointTurnsForTab(arg1) {
   return window['go']['main']['App']['HistoryCheckpointTurnsForTab'](arg1);
 }
 
 export function HistoryForTab(arg1) {
   return window['go']['main']['App']['HistoryForTab'](arg1);
+}
+
+export function HistoryPage(arg1, arg2) {
+  return window['go']['main']['App']['HistoryPage'](arg1, arg2);
 }
 
 export function HistoryPageForTab(arg1, arg2, arg3) {
@@ -406,24 +534,32 @@ export function ImportAgentAttachments(arg1) {
   return window['go']['main']['App']['ImportAgentAttachments'](arg1);
 }
 
-export function ImportThemePack(arg1) {
-  return window['go']['main']['App']['ImportThemePack'](arg1);
+export function ImportThemePack(arg1, arg2) {
+  return window['go']['main']['App']['ImportThemePack'](arg1, arg2);
 }
 
 export function InstallMCPServer(arg1) {
   return window['go']['main']['App']['InstallMCPServer'](arg1);
 }
 
-export function InstallPlugin(arg1) {
-  return window['go']['main']['App']['InstallPlugin'](arg1);
+export function InstallPlugin(arg1, arg2) {
+  return window['go']['main']['App']['InstallPlugin'](arg1, arg2);
 }
 
-export function InstallUpdateRequest(arg1) {
-  return window['go']['main']['App']['InstallUpdateRequest'](arg1);
+export function InstallUpdate(arg1) {
+  return window['go']['main']['App']['InstallUpdate'](arg1);
+}
+
+export function InstallUpdateRequest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['InstallUpdateRequest'](arg1, arg2, arg3);
 }
 
 export function IsMainWindowMaximised() {
   return window['go']['main']['App']['IsMainWindowMaximised']();
+}
+
+export function Jobs() {
+  return window['go']['main']['App']['Jobs']();
 }
 
 export function JobsForTab(arg1) {
@@ -462,6 +598,10 @@ export function ListAgentToolCalls(arg1, arg2) {
   return window['go']['main']['App']['ListAgentToolCalls'](arg1, arg2);
 }
 
+export function ListDir(arg1) {
+  return window['go']['main']['App']['ListDir'](arg1);
+}
+
 export function ListDirForTab(arg1, arg2) {
   return window['go']['main']['App']['ListDirForTab'](arg1, arg2);
 }
@@ -478,8 +618,8 @@ export function ListProjectTree() {
   return window['go']['main']['App']['ListProjectTree']();
 }
 
-export function ListRemoteDir(arg1) {
-  return window['go']['main']['App']['ListRemoteDir'](arg1);
+export function ListRemoteDir(arg1, arg2) {
+  return window['go']['main']['App']['ListRemoteDir'](arg1, arg2);
 }
 
 export function ListSessions() {
@@ -494,8 +634,8 @@ export function ListTaskWorkspaceFiles(arg1, arg2) {
   return window['go']['main']['App']['ListTaskWorkspaceFiles'](arg1, arg2);
 }
 
-export function ListThemePacks(arg1) {
-  return window['go']['main']['App']['ListThemePacks'](arg1);
+export function ListThemePacks() {
+  return window['go']['main']['App']['ListThemePacks']();
 }
 
 export function ListTrashedSessions() {
@@ -522,12 +662,12 @@ export function MCPMarketplaceResolve(arg1) {
   return window['go']['main']['App']['MCPMarketplaceResolve'](arg1);
 }
 
-export function MCPServers(arg1) {
-  return window['go']['main']['App']['MCPServers'](arg1);
+export function MCPServers() {
+  return window['go']['main']['App']['MCPServers']();
 }
 
-export function Memory(arg1) {
-  return window['go']['main']['App']['Memory'](arg1);
+export function Memory() {
+  return window['go']['main']['App']['Memory']();
 }
 
 export function MemoryForTab(arg1) {
@@ -538,12 +678,12 @@ export function MemoryRevisions(arg1) {
   return window['go']['main']['App']['MemoryRevisions'](arg1);
 }
 
-export function MemoryRevisionsForTab(arg1) {
-  return window['go']['main']['App']['MemoryRevisionsForTab'](arg1);
+export function MemoryRevisionsForTab(arg1, arg2) {
+  return window['go']['main']['App']['MemoryRevisionsForTab'](arg1, arg2);
 }
 
-export function MemorySuggestions(arg1) {
-  return window['go']['main']['App']['MemorySuggestions'](arg1);
+export function MemorySuggestions() {
+  return window['go']['main']['App']['MemorySuggestions']();
 }
 
 export function MemorySuggestionsForTab(arg1) {
@@ -558,12 +698,16 @@ export function MetaForTab(arg1) {
   return window['go']['main']['App']['MetaForTab'](arg1);
 }
 
-export function MigrateDesktopPreferences(arg1) {
-  return window['go']['main']['App']['MigrateDesktopPreferences'](arg1);
+export function MigrateDesktopPreferences(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MigrateDesktopPreferences'](arg1, arg2, arg3);
 }
 
 export function MinimiseMainWindow() {
   return window['go']['main']['App']['MinimiseMainWindow']();
+}
+
+export function MkdirRemote(arg1, arg2) {
+  return window['go']['main']['App']['MkdirRemote'](arg1, arg2);
 }
 
 export function Models() {
@@ -590,60 +734,76 @@ export function OpenAgentArtifact(arg1, arg2) {
   return window['go']['main']['App']['OpenAgentArtifact'](arg1, arg2);
 }
 
-export function OpenChannelSessionPageForTab(arg1) {
-  return window['go']['main']['App']['OpenChannelSessionPageForTab'](arg1);
+export function OpenChannelSessionForTab(arg1, arg2) {
+  return window['go']['main']['App']['OpenChannelSessionForTab'](arg1, arg2);
 }
 
-export function OpenDownloadPage(arg1) {
-  return window['go']['main']['App']['OpenDownloadPage'](arg1);
+export function OpenChannelSessionPageForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['OpenChannelSessionPageForTab'](arg1, arg2, arg3);
+}
+
+export function OpenDownloadPage() {
+  return window['go']['main']['App']['OpenDownloadPage']();
 }
 
 export function OpenGlobalTab(arg1) {
   return window['go']['main']['App']['OpenGlobalTab'](arg1);
 }
 
-export function OpenProjectTab(arg1) {
-  return window['go']['main']['App']['OpenProjectTab'](arg1);
+export function OpenProjectTab(arg1, arg2) {
+  return window['go']['main']['App']['OpenProjectTab'](arg1, arg2);
 }
 
-export function OpenRemoteWorkspace(arg1) {
-  return window['go']['main']['App']['OpenRemoteWorkspace'](arg1);
+export function OpenRemoteWorkspace(arg1, arg2) {
+  return window['go']['main']['App']['OpenRemoteWorkspace'](arg1, arg2);
 }
 
 export function OpenTaskContextRoot() {
   return window['go']['main']['App']['OpenTaskContextRoot']();
 }
 
-export function OpenTopicSession(arg1) {
-  return window['go']['main']['App']['OpenTopicSession'](arg1);
+export function OpenTopicSession(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['OpenTopicSession'](arg1, arg2, arg3, arg4);
+}
+
+export function OpenWorkspaceInExternalOpener(arg1) {
+  return window['go']['main']['App']['OpenWorkspaceInExternalOpener'](arg1);
+}
+
+export function OpenWorkspaceInExternalOpenerForTab(arg1, arg2) {
+  return window['go']['main']['App']['OpenWorkspaceInExternalOpenerForTab'](arg1, arg2);
+}
+
+export function OpenWorkspacePath(arg1) {
+  return window['go']['main']['App']['OpenWorkspacePath'](arg1);
 }
 
 export function OpenWorkspacePathForTab(arg1, arg2) {
   return window['go']['main']['App']['OpenWorkspacePathForTab'](arg1, arg2);
 }
 
-export function PickExportFile(arg1) {
-  return window['go']['main']['App']['PickExportFile'](arg1);
+export function PickExportFile(arg1, arg2) {
+  return window['go']['main']['App']['PickExportFile'](arg1, arg2);
 }
 
-export function PickPluginFolder(arg1) {
-  return window['go']['main']['App']['PickPluginFolder'](arg1);
+export function PickPluginFolder() {
+  return window['go']['main']['App']['PickPluginFolder']();
 }
 
-export function PickSkillFolder(arg1) {
-  return window['go']['main']['App']['PickSkillFolder'](arg1);
+export function PickSkillFolder() {
+  return window['go']['main']['App']['PickSkillFolder']();
 }
 
-export function PickThemeBackground(arg1) {
-  return window['go']['main']['App']['PickThemeBackground'](arg1);
+export function PickThemeBackground() {
+  return window['go']['main']['App']['PickThemeBackground']();
 }
 
-export function PickWorkspace(arg1) {
-  return window['go']['main']['App']['PickWorkspace'](arg1);
+export function PickWorkspace() {
+  return window['go']['main']['App']['PickWorkspace']();
 }
 
-export function PlanPluginInstall(arg1) {
-  return window['go']['main']['App']['PlanPluginInstall'](arg1);
+export function PlanPluginInstall(arg1, arg2) {
+  return window['go']['main']['App']['PlanPluginInstall'](arg1, arg2);
 }
 
 export function Platform() {
@@ -654,8 +814,8 @@ export function PluginDoctor(arg1) {
   return window['go']['main']['App']['PluginDoctor'](arg1);
 }
 
-export function Plugins(arg1) {
-  return window['go']['main']['App']['Plugins'](arg1);
+export function Plugins() {
+  return window['go']['main']['App']['Plugins']();
 }
 
 export function PollBotConnectionInstall(arg1) {
@@ -682,6 +842,10 @@ export function ReadAgentToolOutput(arg1) {
   return window['go']['main']['App']['ReadAgentToolOutput'](arg1);
 }
 
+export function ReadFile(arg1) {
+  return window['go']['main']['App']['ReadFile'](arg1);
+}
+
 export function ReadFileForTab(arg1, arg2) {
   return window['go']['main']['App']['ReadFileForTab'](arg1, arg2);
 }
@@ -702,6 +866,46 @@ export function ReasonixEnsureTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReasonixEnsureTab'](arg1, arg2, arg3);
 }
 
+export function ReasonixHomeInfo() {
+  return window['go']['main']['App']['ReasonixHomeInfo']();
+}
+
+export function ReasonixProviders() {
+  return window['go']['main']['App']['ReasonixProviders']();
+}
+
+export function ReasonixRemoveProvider(arg1) {
+  return window['go']['main']['App']['ReasonixRemoveProvider'](arg1);
+}
+
+export function ReasonixSaveProvider(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ReasonixSaveProvider'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function ReasonixSetApprovalMode(arg1) {
+  return window['go']['main']['App']['ReasonixSetApprovalMode'](arg1);
+}
+
+export function ReasonixSetDefaultModel(arg1) {
+  return window['go']['main']['App']['ReasonixSetDefaultModel'](arg1);
+}
+
+export function ReasonixSetHomeIsolated(arg1) {
+  return window['go']['main']['App']['ReasonixSetHomeIsolated'](arg1);
+}
+
+export function ReasonixSetPlannerModel(arg1) {
+  return window['go']['main']['App']['ReasonixSetPlannerModel'](arg1);
+}
+
+export function ReasonixSettings() {
+  return window['go']['main']['App']['ReasonixSettings']();
+}
+
+export function ReasonixTestProvider(arg1) {
+  return window['go']['main']['App']['ReasonixTestProvider'](arg1);
+}
+
 export function ReconnectMCPServer(arg1) {
   return window['go']['main']['App']['ReconnectMCPServer'](arg1);
 }
@@ -710,8 +914,20 @@ export function RecoverTaskGitWorktree(arg1) {
   return window['go']['main']['App']['RecoverTaskGitWorktree'](arg1);
 }
 
+export function RecoveryCheckpointEnabled() {
+  return window['go']['main']['App']['RecoveryCheckpointEnabled']();
+}
+
+export function RecoveryCheckpointEnabledTab(arg1) {
+  return window['go']['main']['App']['RecoveryCheckpointEnabledTab'](arg1);
+}
+
 export function RefreshSkills() {
   return window['go']['main']['App']['RefreshSkills']();
+}
+
+export function ReloadCommands() {
+  return window['go']['main']['App']['ReloadCommands']();
 }
 
 export function ReloadSettings() {
@@ -742,8 +958,8 @@ export function RemoteLastWorkspace(arg1) {
   return window['go']['main']['App']['RemoteLastWorkspace'](arg1);
 }
 
-export function RemoteServerLogs(arg1) {
-  return window['go']['main']['App']['RemoteServerLogs'](arg1);
+export function RemoteServerLogs(arg1, arg2) {
+  return window['go']['main']['App']['RemoteServerLogs'](arg1, arg2);
 }
 
 export function RemoteServerStatus(arg1) {
@@ -758,8 +974,8 @@ export function RemoveMCPServer(arg1) {
   return window['go']['main']['App']['RemoveMCPServer'](arg1);
 }
 
-export function RemovePermissionRule(arg1) {
-  return window['go']['main']['App']['RemovePermissionRule'](arg1);
+export function RemovePermissionRule(arg1, arg2) {
+  return window['go']['main']['App']['RemovePermissionRule'](arg1, arg2);
 }
 
 export function RemovePlugin(arg1) {
@@ -770,8 +986,8 @@ export function RemoveProviderAccess(arg1) {
   return window['go']['main']['App']['RemoveProviderAccess'](arg1);
 }
 
-export function RemoveRemoteForward(arg1) {
-  return window['go']['main']['App']['RemoveRemoteForward'](arg1);
+export function RemoveRemoteForward(arg1, arg2) {
+  return window['go']['main']['App']['RemoveRemoteForward'](arg1, arg2);
 }
 
 export function RemoveRemoteHost(arg1) {
@@ -788,6 +1004,10 @@ export function RemoveWorkspace(arg1) {
 
 export function RenameProject(arg1, arg2) {
   return window['go']['main']['App']['RenameProject'](arg1, arg2);
+}
+
+export function RenameRemotePath(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RenameRemotePath'](arg1, arg2, arg3);
 }
 
 export function RenameSession(arg1, arg2) {
@@ -814,8 +1034,8 @@ export function ReplayPendingPrompts() {
   return window['go']['main']['App']['ReplayPendingPrompts']();
 }
 
-export function ReportCrash(arg1) {
-  return window['go']['main']['App']['ReportCrash'](arg1);
+export function ReportCrash(arg1, arg2) {
+  return window['go']['main']['App']['ReportCrash'](arg1, arg2);
 }
 
 export function ResetProviderPresetAccess(arg1) {
@@ -834,24 +1054,36 @@ export function ResolveAgentPermission(arg1) {
   return window['go']['main']['App']['ResolveAgentPermission'](arg1);
 }
 
+export function ResolveRecovery(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResolveRecovery'](arg1, arg2, arg3);
+}
+
 export function ResolveRecoveryTab(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ResolveRecoveryTab'](arg1, arg2, arg3, arg4);
+}
+
+export function RestartApplication() {
+  return window['go']['main']['App']['RestartApplication']();
 }
 
 export function RestoreArchivedMemory(arg1) {
   return window['go']['main']['App']['RestoreArchivedMemory'](arg1);
 }
 
-export function RestoreArchivedMemoryForTab(arg1) {
-  return window['go']['main']['App']['RestoreArchivedMemoryForTab'](arg1);
+export function RestoreArchivedMemoryForTab(arg1, arg2) {
+  return window['go']['main']['App']['RestoreArchivedMemoryForTab'](arg1, arg2);
 }
 
-export function RestoreMemoryRevision(arg1) {
-  return window['go']['main']['App']['RestoreMemoryRevision'](arg1);
+export function RestoreGraphiteAppearance() {
+  return window['go']['main']['App']['RestoreGraphiteAppearance']();
 }
 
-export function RestoreMemoryRevisionForTab(arg1) {
-  return window['go']['main']['App']['RestoreMemoryRevisionForTab'](arg1);
+export function RestoreMemoryRevision(arg1, arg2) {
+  return window['go']['main']['App']['RestoreMemoryRevision'](arg1, arg2);
+}
+
+export function RestoreMemoryRevisionForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RestoreMemoryRevisionForTab'](arg1, arg2, arg3);
 }
 
 export function RestoreSession(arg1) {
@@ -886,52 +1118,68 @@ export function RevealPath(arg1) {
   return window['go']['main']['App']['RevealPath'](arg1);
 }
 
-export function RevealWorkspacePathForTab(arg1) {
-  return window['go']['main']['App']['RevealWorkspacePathForTab'](arg1);
+export function RevealWorkspacePath(arg1) {
+  return window['go']['main']['App']['RevealWorkspacePath'](arg1);
+}
+
+export function RevealWorkspacePathForTab(arg1, arg2) {
+  return window['go']['main']['App']['RevealWorkspacePathForTab'](arg1, arg2);
 }
 
 export function RevokeAgentPermissionGrant(arg1) {
   return window['go']['main']['App']['RevokeAgentPermissionGrant'](arg1);
 }
 
+export function Rewind(arg1, arg2) {
+  return window['go']['main']['App']['Rewind'](arg1, arg2);
+}
+
 export function RewindForTab(arg1, arg2, arg3) {
   return window['go']['main']['App']['RewindForTab'](arg1, arg2, arg3);
 }
 
-export function RunShellForTab(arg1) {
-  return window['go']['main']['App']['RunShellForTab'](arg1);
+export function RunShell(arg1) {
+  return window['go']['main']['App']['RunShell'](arg1);
 }
 
-export function SaveClipboardImage(arg1) {
-  return window['go']['main']['App']['SaveClipboardImage'](arg1);
+export function RunShellForTab(arg1, arg2) {
+  return window['go']['main']['App']['RunShellForTab'](arg1, arg2);
+}
+
+export function SaveClipboardImage() {
+  return window['go']['main']['App']['SaveClipboardImage']();
 }
 
 export function SaveDailyReportToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveDailyReportToken'](arg1, arg2, arg3);
 }
 
-export function SaveDoc(arg1) {
-  return window['go']['main']['App']['SaveDoc'](arg1);
+export function SaveDoc(arg1, arg2) {
+  return window['go']['main']['App']['SaveDoc'](arg1, arg2);
 }
 
-export function SaveDocForTab(arg1) {
-  return window['go']['main']['App']['SaveDocForTab'](arg1);
+export function SaveDocForTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveDocForTab'](arg1, arg2, arg3);
 }
 
-export function SaveExportFile(arg1) {
-  return window['go']['main']['App']['SaveExportFile'](arg1);
+export function SaveExportFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveExportFile'](arg1, arg2, arg3);
 }
 
-export function SaveExportImageFiles(arg1) {
-  return window['go']['main']['App']['SaveExportImageFiles'](arg1);
+export function SaveExportImageFiles(arg1, arg2) {
+  return window['go']['main']['App']['SaveExportImageFiles'](arg1, arg2);
 }
 
-export function SaveHooksSettingsForRoot(arg1) {
-  return window['go']['main']['App']['SaveHooksSettingsForRoot'](arg1);
+export function SaveHooksSettings(arg1, arg2) {
+  return window['go']['main']['App']['SaveHooksSettings'](arg1, arg2);
 }
 
-export function SavePastedFile(arg1) {
-  return window['go']['main']['App']['SavePastedFile'](arg1);
+export function SaveHooksSettingsForRoot(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveHooksSettingsForRoot'](arg1, arg2, arg3);
+}
+
+export function SavePastedFile(arg1, arg2) {
+  return window['go']['main']['App']['SavePastedFile'](arg1, arg2);
 }
 
 export function SavePastedImage(arg1) {
@@ -946,12 +1194,12 @@ export function SaveProvider(arg1) {
   return window['go']['main']['App']['SaveProvider'](arg1);
 }
 
-export function SaveProviderKey(arg1) {
-  return window['go']['main']['App']['SaveProviderKey'](arg1);
+export function SaveProviderKey(arg1, arg2) {
+  return window['go']['main']['App']['SaveProviderKey'](arg1, arg2);
 }
 
-export function SaveProviderWithKey(arg1) {
-  return window['go']['main']['App']['SaveProviderWithKey'](arg1);
+export function SaveProviderWithKey(arg1, arg2) {
+  return window['go']['main']['App']['SaveProviderWithKey'](arg1, arg2);
 }
 
 export function SaveState(arg1) {
@@ -970,8 +1218,12 @@ export function ScanPromptHistory(arg1) {
   return window['go']['main']['App']['ScanPromptHistory'](arg1);
 }
 
-export function ScanSSHConfig(arg1) {
-  return window['go']['main']['App']['ScanSSHConfig'](arg1);
+export function ScanSSHConfig() {
+  return window['go']['main']['App']['ScanSSHConfig']();
+}
+
+export function SearchFileRefs(arg1) {
+  return window['go']['main']['App']['SearchFileRefs'](arg1);
 }
 
 export function SearchFileRefsForTab(arg1, arg2) {
@@ -998,16 +1250,32 @@ export function SetActiveTab(arg1) {
   return window['go']['main']['App']['SetActiveTab'](arg1);
 }
 
-export function SetBotConnectionToolApprovalMode(arg1) {
-  return window['go']['main']['App']['SetBotConnectionToolApprovalMode'](arg1);
+export function SetAgentParams(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetAgentParams'](arg1, arg2, arg3, arg4);
 }
 
-export function SetBotSecret(arg1) {
-  return window['go']['main']['App']['SetBotSecret'](arg1);
+export function SetAutoApproveTools(arg1) {
+  return window['go']['main']['App']['SetAutoApproveTools'](arg1);
+}
+
+export function SetAutoPlan(arg1) {
+  return window['go']['main']['App']['SetAutoPlan'](arg1);
+}
+
+export function SetBotConnectionToolApprovalMode(arg1, arg2) {
+  return window['go']['main']['App']['SetBotConnectionToolApprovalMode'](arg1, arg2);
+}
+
+export function SetBotSecret(arg1, arg2) {
+  return window['go']['main']['App']['SetBotSecret'](arg1, arg2);
 }
 
 export function SetBotSettings(arg1) {
   return window['go']['main']['App']['SetBotSettings'](arg1);
+}
+
+export function SetBypass(arg1) {
+  return window['go']['main']['App']['SetBypass'](arg1);
 }
 
 export function SetCloseBehavior(arg1) {
@@ -1018,12 +1286,20 @@ export function SetColdResumePrune(arg1) {
   return window['go']['main']['App']['SetColdResumePrune'](arg1);
 }
 
+export function SetCollaborationMode(arg1) {
+  return window['go']['main']['App']['SetCollaborationMode'](arg1);
+}
+
 export function SetCollaborationModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetCollaborationModeForTab'](arg1, arg2);
 }
 
 export function SetComposerProfileForTab(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SetComposerProfileForTab'](arg1, arg2, arg3, arg4);
+}
+
+export function SetDefaultAutoRecoveryCheckpoint(arg1) {
+  return window['go']['main']['App']['SetDefaultAutoRecoveryCheckpoint'](arg1);
 }
 
 export function SetDefaultModel(arg1) {
@@ -1034,8 +1310,8 @@ export function SetDefaultToolApprovalMode(arg1) {
   return window['go']['main']['App']['SetDefaultToolApprovalMode'](arg1);
 }
 
-export function SetDesktopAppearance(arg1) {
-  return window['go']['main']['App']['SetDesktopAppearance'](arg1);
+export function SetDesktopAppearance(arg1, arg2) {
+  return window['go']['main']['App']['SetDesktopAppearance'](arg1, arg2);
 }
 
 export function SetDesktopCheckUpdates(arg1) {
@@ -1078,16 +1354,32 @@ export function SetDisplayMode(arg1) {
   return window['go']['main']['App']['SetDisplayMode'](arg1);
 }
 
+export function SetEffort(arg1) {
+  return window['go']['main']['App']['SetEffort'](arg1);
+}
+
 export function SetEffortForTab(arg1, arg2) {
   return window['go']['main']['App']['SetEffortForTab'](arg1, arg2);
+}
+
+export function SetExpandThinking(arg1) {
+  return window['go']['main']['App']['SetExpandThinking'](arg1);
+}
+
+export function SetGoal(arg1) {
+  return window['go']['main']['App']['SetGoal'](arg1);
 }
 
 export function SetGoalForTab(arg1, arg2) {
   return window['go']['main']['App']['SetGoalForTab'](arg1, arg2);
 }
 
-export function SetMCPServerEnabled(arg1) {
-  return window['go']['main']['App']['SetMCPServerEnabled'](arg1);
+export function SetMCPServerEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetMCPServerEnabled'](arg1, arg2);
+}
+
+export function SetMCPServerTier(arg1, arg2) {
+  return window['go']['main']['App']['SetMCPServerTier'](arg1, arg2);
 }
 
 export function SetMaxParallelWriters(arg1) {
@@ -1102,8 +1394,16 @@ export function SetMaxSubagentDepth(arg1) {
   return window['go']['main']['App']['SetMaxSubagentDepth'](arg1);
 }
 
+export function SetMode(arg1) {
+  return window['go']['main']['App']['SetMode'](arg1);
+}
+
 export function SetModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetModeForTab'](arg1, arg2);
+}
+
+export function SetModel(arg1) {
+  return window['go']['main']['App']['SetModel'](arg1);
 }
 
 export function SetModelForTab(arg1, arg2) {
@@ -1118,36 +1418,52 @@ export function SetPermissionMode(arg1) {
   return window['go']['main']['App']['SetPermissionMode'](arg1);
 }
 
+export function SetPlanMode(arg1) {
+  return window['go']['main']['App']['SetPlanMode'](arg1);
+}
+
 export function SetPlannerModel(arg1) {
   return window['go']['main']['App']['SetPlannerModel'](arg1);
 }
 
-export function SetPluginEnabled(arg1) {
-  return window['go']['main']['App']['SetPluginEnabled'](arg1);
+export function SetPluginEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetPluginEnabled'](arg1, arg2);
 }
 
-export function SetProjectColor(arg1) {
-  return window['go']['main']['App']['SetProjectColor'](arg1);
+export function SetPreferredExternalOpener(arg1) {
+  return window['go']['main']['App']['SetPreferredExternalOpener'](arg1);
 }
 
-export function SetProjectPinned(arg1) {
-  return window['go']['main']['App']['SetProjectPinned'](arg1);
+export function SetProjectColor(arg1, arg2) {
+  return window['go']['main']['App']['SetProjectColor'](arg1, arg2);
 }
 
-export function SetProviderKey(arg1) {
-  return window['go']['main']['App']['SetProviderKey'](arg1);
+export function SetProjectPinned(arg1, arg2) {
+  return window['go']['main']['App']['SetProjectPinned'](arg1, arg2);
+}
+
+export function SetProviderKey(arg1, arg2) {
+  return window['go']['main']['App']['SetProviderKey'](arg1, arg2);
 }
 
 export function SetReasoningLanguage(arg1) {
   return window['go']['main']['App']['SetReasoningLanguage'](arg1);
 }
 
-export function SetSandbox(arg1) {
-  return window['go']['main']['App']['SetSandbox'](arg1);
+export function SetRecoveryCheckpointEnabled(arg1) {
+  return window['go']['main']['App']['SetRecoveryCheckpointEnabled'](arg1);
 }
 
-export function SetSkillEnabled(arg1) {
-  return window['go']['main']['App']['SetSkillEnabled'](arg1);
+export function SetRecoveryCheckpointEnabledTab(arg1, arg2) {
+  return window['go']['main']['App']['SetRecoveryCheckpointEnabledTab'](arg1, arg2);
+}
+
+export function SetSandbox(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetSandbox'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SetSkillEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetSkillEnabled'](arg1, arg2);
 }
 
 export function SetStatusBarItems(arg1) {
@@ -1166,28 +1482,36 @@ export function SetSubagentModel(arg1) {
   return window['go']['main']['App']['SetSubagentModel'](arg1);
 }
 
-export function SetSubagentProfileEffort(arg1) {
-  return window['go']['main']['App']['SetSubagentProfileEffort'](arg1);
+export function SetSubagentProfileEffort(arg1, arg2) {
+  return window['go']['main']['App']['SetSubagentProfileEffort'](arg1, arg2);
 }
 
-export function SetSubagentProfileModel(arg1) {
-  return window['go']['main']['App']['SetSubagentProfileModel'](arg1);
+export function SetSubagentProfileModel(arg1, arg2) {
+  return window['go']['main']['App']['SetSubagentProfileModel'](arg1, arg2);
 }
 
 export function SetTaskContextRoot(arg1) {
   return window['go']['main']['App']['SetTaskContextRoot'](arg1);
 }
 
+export function SetTokenMode(arg1) {
+  return window['go']['main']['App']['SetTokenMode'](arg1);
+}
+
 export function SetTokenModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetTokenModeForTab'](arg1, arg2);
+}
+
+export function SetToolApprovalMode(arg1) {
+  return window['go']['main']['App']['SetToolApprovalMode'](arg1);
 }
 
 export function SetToolApprovalModeForTab(arg1, arg2) {
   return window['go']['main']['App']['SetToolApprovalModeForTab'](arg1, arg2);
 }
 
-export function SetTopicPinned(arg1) {
-  return window['go']['main']['App']['SetTopicPinned'](arg1);
+export function SetTopicPinned(arg1, arg2) {
+  return window['go']['main']['App']['SetTopicPinned'](arg1, arg2);
 }
 
 export function SetTrayLocale(arg1) {
@@ -1214,6 +1538,10 @@ export function StartBotConnectionInstall(arg1, arg2) {
   return window['go']['main']['App']['StartBotConnectionInstall'](arg1, arg2);
 }
 
+export function Steer(arg1) {
+  return window['go']['main']['App']['Steer'](arg1);
+}
+
 export function SteerAgent(arg1) {
   return window['go']['main']['App']['SteerAgent'](arg1);
 }
@@ -1230,36 +1558,52 @@ export function StopRemoteServer(arg1) {
   return window['go']['main']['App']['StopRemoteServer'](arg1);
 }
 
+export function Submit(arg1) {
+  return window['go']['main']['App']['Submit'](arg1);
+}
+
 export function SubmitDailyReport(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SubmitDailyReport'](arg1, arg2, arg3, arg4);
 }
 
-export function SubmitDeliveryRecoveryToTab(arg1) {
-  return window['go']['main']['App']['SubmitDeliveryRecoveryToTab'](arg1);
+export function SubmitDeliveryRecoveryToTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SubmitDeliveryRecoveryToTab'](arg1, arg2, arg3);
 }
 
-export function SubmitDisplayToTab(arg1) {
-  return window['go']['main']['App']['SubmitDisplayToTab'](arg1);
+export function SubmitDisplay(arg1, arg2) {
+  return window['go']['main']['App']['SubmitDisplay'](arg1, arg2);
 }
 
-export function SubmitEditedDisplayToTab(arg1) {
-  return window['go']['main']['App']['SubmitEditedDisplayToTab'](arg1);
+export function SubmitDisplayToTab(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SubmitDisplayToTab'](arg1, arg2, arg3);
+}
+
+export function SubmitEditedDisplayToTab(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SubmitEditedDisplayToTab'](arg1, arg2, arg3, arg4);
 }
 
 export function SubmitInitialGoalToTab(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
   return window['go']['main']['App']['SubmitInitialGoalToTab'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
-export function SubmitInvocationsToTab(arg1) {
-  return window['go']['main']['App']['SubmitInvocationsToTab'](arg1);
+export function SubmitInvocationsToTab(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SubmitInvocationsToTab'](arg1, arg2, arg3, arg4);
 }
 
 export function SubmitToTab(arg1, arg2) {
   return window['go']['main']['App']['SubmitToTab'](arg1, arg2);
 }
 
+export function SummarizeFrom(arg1) {
+  return window['go']['main']['App']['SummarizeFrom'](arg1);
+}
+
 export function SummarizeFromForTab(arg1, arg2) {
   return window['go']['main']['App']['SummarizeFromForTab'](arg1, arg2);
+}
+
+export function SummarizeUpTo(arg1) {
+  return window['go']['main']['App']['SummarizeUpTo'](arg1);
 }
 
 export function SummarizeUpToForTab(arg1, arg2) {
@@ -1270,16 +1614,16 @@ export function SwitchWorkspace(arg1) {
   return window['go']['main']['App']['SwitchWorkspace'](arg1);
 }
 
-export function TerminalOutputForTab(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TerminalOutputForTab'](arg1, arg2, arg3);
+export function TerminalOutputForTab(arg1, arg2) {
+  return window['go']['main']['App']['TerminalOutputForTab'](arg1, arg2);
 }
 
-export function TerminalWorkspaceForTab(arg1, arg2) {
-  return window['go']['main']['App']['TerminalWorkspaceForTab'](arg1, arg2);
+export function TerminalWorkspaceForTab(arg1) {
+  return window['go']['main']['App']['TerminalWorkspaceForTab'](arg1);
 }
 
-export function TestBotConnection(arg1) {
-  return window['go']['main']['App']['TestBotConnection'](arg1);
+export function TestBotConnection(arg1, arg2) {
+  return window['go']['main']['App']['TestBotConnection'](arg1, arg2);
 }
 
 export function TestPlaneConnection(arg1, arg2, arg3) {
@@ -1298,24 +1642,32 @@ export function TrashTopic(arg1) {
   return window['go']['main']['App']['TrashTopic'](arg1);
 }
 
-export function TrySubagentProfile(arg1) {
-  return window['go']['main']['App']['TrySubagentProfile'](arg1);
+export function TrustProjectHooks() {
+  return window['go']['main']['App']['TrustProjectHooks']();
 }
 
-export function UpdateMCPServer(arg1) {
-  return window['go']['main']['App']['UpdateMCPServer'](arg1);
+export function TrustProjectHooksForRoot(arg1) {
+  return window['go']['main']['App']['TrustProjectHooksForRoot'](arg1);
+}
+
+export function TrySubagentProfile(arg1, arg2) {
+  return window['go']['main']['App']['TrySubagentProfile'](arg1, arg2);
+}
+
+export function UpdateMCPServer(arg1, arg2) {
+  return window['go']['main']['App']['UpdateMCPServer'](arg1, arg2);
 }
 
 export function UpdatePlugin(arg1) {
   return window['go']['main']['App']['UpdatePlugin'](arg1);
 }
 
-export function UpdateRemoteHost(arg1) {
-  return window['go']['main']['App']['UpdateRemoteHost'](arg1);
+export function UpdateRemoteHost(arg1, arg2) {
+  return window['go']['main']['App']['UpdateRemoteHost'](arg1, arg2);
 }
 
-export function UpdateSubagentProfile(arg1) {
-  return window['go']['main']['App']['UpdateSubagentProfile'](arg1);
+export function UpdateSubagentProfile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateSubagentProfile'](arg1, arg2, arg3);
 }
 
 export function ValidateTransition(arg1, arg2, arg3, arg4, arg5) {
@@ -1330,48 +1682,52 @@ export function WorkbenchActiveTarget() {
   return window['go']['main']['App']['WorkbenchActiveTarget']();
 }
 
-export function WorkbenchConnectRemote(arg1) {
-  return window['go']['main']['App']['WorkbenchConnectRemote'](arg1);
+export function WorkbenchConnectRemote(arg1, arg2) {
+  return window['go']['main']['App']['WorkbenchConnectRemote'](arg1, arg2);
 }
 
-export function WorkbenchDisconnectRemote(arg1) {
-  return window['go']['main']['App']['WorkbenchDisconnectRemote'](arg1);
+export function WorkbenchDisconnectRemote() {
+  return window['go']['main']['App']['WorkbenchDisconnectRemote']();
 }
 
-export function WorkbenchLastRemoteHint(arg1) {
-  return window['go']['main']['App']['WorkbenchLastRemoteHint'](arg1);
+export function WorkbenchLastRemoteHint() {
+  return window['go']['main']['App']['WorkbenchLastRemoteHint']();
 }
 
 export function WorkbenchPendingProviderTrust() {
   return window['go']['main']['App']['WorkbenchPendingProviderTrust']();
 }
 
-export function WorkbenchRemoteRequest(arg1) {
-  return window['go']['main']['App']['WorkbenchRemoteRequest'](arg1);
+export function WorkbenchRemoteRequest(arg1, arg2) {
+  return window['go']['main']['App']['WorkbenchRemoteRequest'](arg1, arg2);
 }
 
 export function WorkbenchResolveProviderTrust(arg1) {
   return window['go']['main']['App']['WorkbenchResolveProviderTrust'](arg1);
 }
 
-export function WorkbenchSwitchLocal(arg1) {
-  return window['go']['main']['App']['WorkbenchSwitchLocal'](arg1);
+export function WorkbenchSwitchLocal() {
+  return window['go']['main']['App']['WorkbenchSwitchLocal']();
 }
 
-export function WorkspaceChangeDetail(arg1) {
-  return window['go']['main']['App']['WorkspaceChangeDetail'](arg1);
+export function WorkspaceChangeDetail(arg1, arg2) {
+  return window['go']['main']['App']['WorkspaceChangeDetail'](arg1, arg2);
 }
 
 export function WorkspaceChanges(arg1) {
   return window['go']['main']['App']['WorkspaceChanges'](arg1);
 }
 
-export function WorkspaceGitHistory(arg1) {
-  return window['go']['main']['App']['WorkspaceGitHistory'](arg1);
+export function WorkspaceGitCommitDetail(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WorkspaceGitCommitDetail'](arg1, arg2, arg3);
 }
 
-export function WriteRemoteFile(arg1, arg2, arg3) {
-  return window['go']['main']['App']['WriteRemoteFile'](arg1, arg2, arg3);
+export function WorkspaceGitHistory(arg1, arg2) {
+  return window['go']['main']['App']['WorkspaceGitHistory'](arg1, arg2);
+}
+
+export function WriteRemoteFile(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['WriteRemoteFile'](arg1, arg2, arg3, arg4);
 }
 
 export function WriteTerminalForTab(arg1, arg2, arg3) {

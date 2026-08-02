@@ -201,3 +201,57 @@ func TestPruneIdleRuntimesKeepsActive(t *testing.T) {
 	}
 	manager.Shutdown()
 }
+
+// TestMigrateLegacyLastSession 验证旧格式 last-session（绝对路径）非破坏性
+// 迁移为相对文件名；越界/不存在路径保留原文件不删除。
+func TestMigrateLegacyLastSession(t *testing.T) {
+	dataRoot := t.TempDir()
+	manager := bridge.NewManager(dataRoot, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	if _, err := manager.Ensure(ctx, "task_mig", t.TempDir()); err != nil {
+		t.Fatalf("Ensure 失败: %v", err)
+	}
+	if err := manager.NewSession("task_mig"); err != nil {
+		t.Fatalf("NewSession 失败: %v", err)
+	}
+	dir := manager.TaskSessionDir("task_mig")
+	path := manager.CurrentSessionPath("task_mig")
+	marker := filepath.Join(dir, "last-session.txt")
+
+	// 1. 写旧格式（绝对路径）——文件需已存在（会话文件落盘后）
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte(path), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager.MigrateLegacyLastSession("task_mig")
+	data, _ := os.ReadFile(marker)
+	if strings.TrimSpace(string(data)) != filepath.Base(path) {
+		t.Fatalf("迁移后应为相对文件名: %q", string(data))
+	}
+
+	// 2. 越界路径：保留原文件
+	evil := filepath.Join(dataRoot, "..", "..", "etc", "passwd")
+	if err := os.WriteFile(marker, []byte(evil), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager.MigrateLegacyLastSession("task_mig")
+	data, _ = os.ReadFile(marker)
+	if strings.TrimSpace(string(data)) != evil {
+		t.Fatalf("越界路径应保留原文件: %q", string(data))
+	}
+
+	// 3. 不存在的文件：保留原文件
+	missing := filepath.Join(dir, "20200101-000000.000000000-gone.jsonl")
+	if err := os.WriteFile(marker, []byte(missing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager.MigrateLegacyLastSession("task_mig")
+	data, _ = os.ReadFile(marker)
+	if strings.TrimSpace(string(data)) != missing {
+		t.Fatalf("不存在路径应保留原文件: %q", string(data))
+	}
+	manager.Shutdown()
+}

@@ -515,6 +515,24 @@ export namespace bridge {
 	        this.current = source["current"];
 	    }
 	}
+	export class ProviderSettingView {
+	    name: string;
+	    kind: string;
+	    baseUrl: string;
+	    keySet: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderSettingView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.baseUrl = source["baseUrl"];
+	        this.keySet = source["keySet"];
+	    }
+	}
 	export class SessionMetaView {
 	    path: string;
 	    preview: string;
@@ -550,6 +568,58 @@ export namespace bridge {
 	        this.topicId = source["topicId"];
 	        this.topicTitle = source["topicTitle"];
 	    }
+	}
+	export class SettingsView {
+	    configPath: string;
+	    homePath: string;
+	    isolated: boolean;
+	    defaultModel: string;
+	    plannerModel: string;
+	    defaultToolApproval: string;
+	    effort: string;
+	    models: string[];
+	    providers: ProviderSettingView[];
+	    reasoningLanguage: string;
+	    maxSessionsPerTask: number;
+	    maxIdleRuntimes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SettingsView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configPath = source["configPath"];
+	        this.homePath = source["homePath"];
+	        this.isolated = source["isolated"];
+	        this.defaultModel = source["defaultModel"];
+	        this.plannerModel = source["plannerModel"];
+	        this.defaultToolApproval = source["defaultToolApproval"];
+	        this.effort = source["effort"];
+	        this.models = source["models"];
+	        this.providers = this.convertValues(source["providers"], ProviderSettingView);
+	        this.reasoningLanguage = source["reasoningLanguage"];
+	        this.maxSessionsPerTask = source["maxSessionsPerTask"];
+	        this.maxIdleRuntimes = source["maxIdleRuntimes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TabView {
 	    id: string;
