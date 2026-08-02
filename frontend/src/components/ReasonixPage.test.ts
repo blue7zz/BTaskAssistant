@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReasonixPage } from "./ReasonixPage";
 import * as bridge from "../lib/bridge";
 
-vi.mock("../../../reasonix-app/desktop/frontend/src/embedEntry", () => ({
-  mountReasonixEmbed: vi.fn(() => () => undefined),
-}));
+vi.mock("../../../reasonix-app/desktop/frontend/src/embedEntry", () => {
+  const mount = vi.fn(() => () => undefined);
+  return { default: mount, mountReasonixEmbed: mount };
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;

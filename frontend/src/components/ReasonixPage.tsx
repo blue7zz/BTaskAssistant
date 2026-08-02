@@ -68,7 +68,10 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
       // 优先取 embed 模块挂载时写入的 window 全局挂载函数。
       const globalMount = (window as unknown as { __RX_MOUNT_EMBED__?: (host: HTMLElement, options?: { onMounted?: () => void }) => () => void })
         .__RX_MOUNT_EMBED__;
-      const mount = globalMount ?? mod.default ?? mod.mountReasonixEmbed;
+      // 安全读取 default/命名导出（vitest mock 无 default 时直接访问会抛错）
+      const modRecord = mod as unknown as Record<string, unknown>;
+      const modMount = typeof modRecord.default === "function" ? (modRecord.default as MountReasonixEmbed) : (modRecord.mountReasonixEmbed as MountReasonixEmbed | undefined);
+      const mount = globalMount ?? modMount;
       if (typeof mount !== "function") {
         throw new Error("Reasonix embed 模块导出缺失");
       }

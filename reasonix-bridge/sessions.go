@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"reasonix/internal/agent"
+
 	rxboot "reasonix/internal/boot"
 	rxconfig "reasonix/internal/config"
 	rxcontrol "reasonix/internal/control"
@@ -43,6 +45,12 @@ type TaskTab struct {
 	Dir    string // 会话目录（任务隔离）
 }
 
+// MaxSessionsPerTask 每任务保留的会话文件上限（超出时按最后使用时间清理最旧）。
+const MaxSessionsPerTask = 10
+
+// lastSessionMarker 记录任务最后活跃会话路径（关闭/重建后恢复续写）。
+const lastSessionMarker = "last-session.txt"
+
 // Manager 管理全部任务的 Reasonix 会话。
 type Manager struct {
 	mu         sync.Mutex
@@ -50,6 +58,34 @@ type Manager struct {
 	dataRoot   string              // 会话根目录（BTask 数据目录）
 	emit       EventSink
 	snapshotWG sync.WaitGroup // 跟踪 in-flight 回合快照（关闭时等待落盘）
+}
+
+// saveLastSession 持久化任务最后活跃会话路径（重建时恢复）。
+func (m *Manager) saveLastSession(taskID string, path string) {
+	if path == "" {
+		return
+	}
+	dir := m.TaskSessionDir(taskID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, lastSessionMarker), []byte(path), 0o644)
+}
+
+// loadLastSession 读取任务最后活跃会话路径（不存在/非法时返回空）。
+func (m *Manager) loadLastSession(taskID string) string {
+	data, err := os.ReadFile(filepath.Join(m.TaskSessionDir(taskID), lastSessionMarker))
+	if err != nil {
+		return ""
+	}
+	path := strings.TrimSpace(string(data))
+	if path == "" || !strings.HasSuffix(path, ".jsonl") {
+		return ""
+	}
+	if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+		return ""
+	}
+	return path
 }
 
 // NewManager 创建管理器。dataRoot 是任务会话的父目录
@@ -103,6 +139,14 @@ func (m *Manager) Ensure(ctx context.Context, taskID string, workspaceRoot strin
 		return nil, err
 	}
 	tab.Ctrl = ctrl
+	// 重建后恢复任务最后活跃会话（任务切换/离开后返回时续写原会话内容）。
+	if lastPath := m.loadLastSession(taskID); lastPath != "" {
+		if loaded, loadErr := agent.LoadSession(lastPath); loadErr == nil {
+			ctrl.Resume(loaded, lastPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "reasonix-bridge: 恢复会话失败 task=%s path=%s: %v\n", taskID, lastPath, loadErr)
+		}
+	}
 
 	m.mu.Lock()
 	if existing, ok := m.roots[taskID]; ok {
@@ -184,13 +228,78 @@ func (m *Manager) Tab(taskID string) *TaskTab {
 	return m.roots[taskID]
 }
 
-// NewSession 为任务开一个新会话文件并激活。
+// NewSession 为任务开一个新会话文件并激活，然后按上限清理最旧会话。
 func (m *Manager) NewSession(taskID string) error {
 	tab := m.Tab(taskID)
 	if tab == nil {
 		return fmt.Errorf("任务 %s 的 Reasonix 会话尚未初始化", taskID)
 	}
-	return tab.Ctrl.NewSession()
+	if err := tab.Ctrl.NewSession(); err != nil {
+		return err
+	}
+	m.saveLastSession(taskID, tab.Ctrl.SessionPath())
+	m.PruneOldSessions(taskID, MaxSessionsPerTask)
+	return nil
+}
+
+// sessionSidecars 返回会话路径对应的全部侧车文件（与桌面端 deleteSessionFile
+// 及 rx_bindings.DeleteSession 的清单一致）。
+func sessionSidecars(path string) []string {
+	stem := strings.TrimSuffix(path, ".jsonl")
+	return []string{
+		stem + ".events.jsonl",
+		stem + ".events.jsonl.damaged",
+		stem + ".event-index.json",
+		stem + ".goal-state.json",
+		stem + ".recovery.json",
+		stem + ".conflicts.jsonl",
+		path + ".meta",
+		path + ".telemetry.json",
+		path + ".lock",
+		stem + ".ckpt",
+		stem + ".jobs",
+	}
+}
+
+// removeSessionFiles 删除会话主文件与全部侧车（不存在时忽略）。
+func removeSessionFiles(path string) {
+	_ = os.Remove(path)
+	for _, sidecar := range sessionSidecars(path) {
+		_ = os.Remove(sidecar)
+	}
+}
+
+// PruneOldSessions 清理任务会话目录：按最后使用时间（mtime）保留最新 keep 个
+// 会话（当前激活会话始终保留），删除更旧的会话文件与侧车。
+func (m *Manager) PruneOldSessions(taskID string, keep int) {
+	if keep < 1 {
+		keep = 1
+	}
+	files, err := m.ListSessionFiles(taskID)
+	if err != nil {
+		return
+	}
+	current := ""
+	if tab := m.Tab(taskID); tab != nil && tab.Ctrl != nil {
+		current = filepath.Clean(tab.Ctrl.SessionPath())
+	}
+	// ListSessionFiles 按 mtime 倒序（最新在前）——保留前 keep 个（当前会话
+	// 即使在最旧也必须保留，因此先收集删除集合再检查）。
+	if len(files) <= keep {
+		return
+	}
+	excess := files[keep:]
+	removed := 0
+	for _, file := range excess {
+		if filepath.Clean(file.Path) == current {
+			continue
+		}
+		removeSessionFiles(file.Path)
+		removed++
+	}
+	if removed > 0 {
+		fmt.Fprintf(os.Stderr, "reasonix-bridge: 清理旧会话 task=%s 删除 %d 个（上限 %d）\n", taskID, removed, keep)
+	}
 }
 
 // Submit 提交一轮对话（非阻塞：事件流经回调发出）。
@@ -220,6 +329,8 @@ func (m *Manager) Close(taskID string) {
 	delete(m.roots, taskID)
 	m.mu.Unlock()
 	if tab != nil && tab.Ctrl != nil {
+		// 记录最后活跃会话（离开详情页后重建时恢复续写）。
+		m.saveLastSession(taskID, tab.Ctrl.SessionPath())
 		// 等待 in-flight 回合快照落盘，避免与删除/关闭竞态（对应桌面端
 		// quiesceTabAutosave 的 #4384 类问题）。
 		m.snapshotWG.Wait()
@@ -236,6 +347,11 @@ func (m *Manager) Shutdown() {
 	}
 	m.roots = map[string]*TaskTab{}
 	m.mu.Unlock()
+	for _, tab := range tabs {
+		if tab.Ctrl != nil {
+			m.saveLastSession(tab.TaskID, tab.Ctrl.SessionPath())
+		}
+	}
 	m.snapshotWG.Wait()
 	for _, tab := range tabs {
 		if tab.Ctrl != nil {

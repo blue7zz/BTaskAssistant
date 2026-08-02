@@ -191,6 +191,11 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
   事件日志（主 .jsonl 是滞后快照，直接读会丢最新回合），失败回退 JSON 解析。
 - **删除**：主文件 + 11 类侧车（.events.jsonl/.ckpt/.goal-state.json/
   .recovery.json/.meta/.jobs 等）全清，标题侧车条目同步移除。
+- **会话保留**：关闭/离开任务时把最后活跃会话路径持久化到
+  `last-session.txt`；控制器重建（切回任务）时自动恢复该会话续写。
+- **上限清理**：每任务最多保留 `MaxSessionsPerTask`（10）个会话；新建
+  会话后按最后使用时间（mtime）清理最旧会话（含全部侧车），当前激活
+  会话始终保留。
 - **历史**：分页契约完整（startTurn/endTurn/totalTurns/hasOlder + beforeTurn
   向前翻页），Rewind/Fork/SummarizeFrom/SummarizeUpTo 直通内核。
 - **数据面板**：记忆（docs/facts/storeDir）、技能（enabled 状态）、模型
