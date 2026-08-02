@@ -81,3 +81,13 @@ export function rxDirectCall(method: string, args: unknown[]): Promise<unknown> 
   }
   return Promise.resolve(fn(...args));
 }
+
+// rxKeyActive 判断键盘事件是否来自 Reasonix 界面（embed 模式）：
+// shadow 内事件 retarget 到 host——主 document 按键 target 是宿主元素。
+// 全局快捷键/输入处理在 embed 模式下用它守卫，避免污染宿主页面。
+export function rxKeyActive(event: KeyboardEvent): boolean {
+  if (!isEmbedded()) return true;
+  if (shadowRoot === null) return true;
+  const target = event.target as Node | null;
+  return target === shadowRoot.host || (target?.nodeType === Node.ELEMENT_NODE && (shadowRoot.host as HTMLElement).contains(target));
+}

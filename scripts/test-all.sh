@@ -19,8 +19,8 @@ pnpm typecheck
 pnpm test
 
 echo "== 4/5 构建产物 =="
-test -f "$ROOT/reasonix-app/desktop/frontend/dist/index.html" \
-  && echo "reasonix dist: OK" \
+test -f "$ROOT/reasonix-app/desktop/frontend/src/generated/scoped-styles.css" \
+  && echo "reasonix scoped styles: OK" \
   || { echo "reasonix dist 缺失，请运行 wails build（prebuild 自动构建）"; exit 1; }
 
 echo "== 5/5 RX 运行时自检 =="

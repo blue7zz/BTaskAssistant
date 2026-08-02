@@ -78,7 +78,6 @@ import { ShortcutsCheatsheet } from "./components/ShortcutsCheatsheet";
 import { ProjectTree } from "./components/ProjectTree";
 import { WorktreeBadge } from "./components/WorktreeBadge";
 import { HeartbeatPanel } from "./custom/features/heartbeat/HeartbeatPanel";
-import "./custom/features/heartbeat/heartbeat.css";
 import { CopyButton } from "./components/CopyButton";
 import { ExternalOpener } from "./components/ExternalOpener";
 import { startTerminalEventBridge } from "./lib/terminalEvents";
@@ -1105,6 +1104,9 @@ export default function App() {
     ensureBlankTab,
     ensureBlankSurface,
   } = useController();
+  // 嵌入模式宿主 tab 切换同步（阶段 3）：订阅只建立一次，取最新引用
+  const syncActiveTabRef = useRef(syncActiveTab);
+  syncActiveTabRef.current = syncActiveTab;
   const { locale, setPref: setLocalePref } = useI18n();
   const t = useT();
   const [composerProfilesByTab, setComposerProfilesByTab] = useState<Record<string, ComposerProfile>>({});
@@ -1244,9 +1246,6 @@ export default function App() {
     });
     // 嵌入模式：宿主切换任务（ActivateReasonixTask）→ 重新同步激活 tab。
     // 单实例保活：reasonix App 不重建，仅切换后端激活的会话。
-    // syncActiveTab 经 ref 取最新引用，订阅只建立一次。
-    const syncActiveTabRef = useRef(syncActiveTab);
-    syncActiveTabRef.current = syncActiveTab;
     const unsubHostActivated = onHostTabActivated(() => {
       void syncActiveTabRef.current();
     });

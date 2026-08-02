@@ -239,6 +239,26 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
   （`<BTask 数据>/reasonix-home`），进程内 REASONIX_HOME + 持久化模式文件。
 - **会话保留展示**：每任务会话上限与后台 idle 运行时上限只读展示。
 
+### 嵌入层隔离（阶段 5）
+
+- **样式构建链**：`scripts/scope-rx-css.mjs`（PostCSS AST）预生成
+  `generated/scoped-styles.css`（html/body/:root → :host + seti.woff 字体
+  base64 内联）——embedEntry 以 ?raw 注入 shadow，替代运行时正则改写；
+  frontend `prebuild` 触发。
+- **heartbeat.css** 移入 shadow（App.tsx 移除 import，main.tsx 保留给独立
+  应用；embedEntry ?raw 注入）——不再产生打进主 document 的 CSS chunk
+  （`embedEntry-*.css` 已消失）。
+- **DOM adapter 补齐**：剩余 6 处 `document.activeElement` 迁移到
+  `rxActiveElement`（焦点恢复在 shadow 内生效）；Composer body classList
+  走 rxBody。
+- **快捷键隔离**：`rxKeyActive` 守卫（shadow 内事件 retarget 到 host）——
+  CommandPalette / keyboardShortcuts 全局快捷键在 embed 模式只在
+  Reasonix 界面焦点内响应。
+- **iframe/dist 清理**：main.go 移除 /reasonix/ 路由与 reasonixDistDir；
+  test-all.sh 改为 scoped-styles 生成检查。
+- 验证（生产产物实测）：样式 2 个 style 全在 shadow、seti 字体内联、
+  heartbeat 零泄漏主 document、App 1950 元素完整渲染。
+
 ### 事件流
 
 内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(

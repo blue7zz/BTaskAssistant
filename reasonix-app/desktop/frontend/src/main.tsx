@@ -14,6 +14,7 @@ import { initTextSize } from "./lib/textSize";
 import { initTypographyPreferences } from "./lib/typographyPreferences";
 import { initTheme } from "./lib/theme";
 import { initConversationWidth } from "./lib/conversationWidth";
+import "./custom/features/heartbeat/heartbeat.css";
 import "./styles.css";
 
 // Install first so startup/runtime failures paint a useful error instead of a

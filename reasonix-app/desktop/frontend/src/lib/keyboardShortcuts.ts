@@ -1,4 +1,5 @@
 import { useEffect, useState, type DependencyList } from "react";
+import { rxKeyActive } from "./embedHost";
 import type { DictKey } from "./i18n";
 
 export type ShortcutPlatform = "darwin" | "windows" | "linux";
@@ -511,6 +512,8 @@ export function useGlobalShortcut(
     if (!enabled) return;
     const platform = detectShortcutPlatform();
     const onKey = (event: globalThis.KeyboardEvent) => {
+      // embed 模式：只在 Reasonix 界面焦点内响应（不污染宿主快捷键）
+      if (!rxKeyActive(event as KeyboardEvent)) return;
       if (isShortcutRecorderTarget(event.target)) return;
       const editableTarget = isEditableTarget(event.target);
       if (!definition.allowInEditable && editableTarget) return;

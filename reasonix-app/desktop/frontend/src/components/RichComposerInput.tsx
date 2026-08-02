@@ -17,6 +17,7 @@ import {
   type ComposerInvocation,
 } from "../lib/invocationDisplay";
 import { activeRefTokenRe } from "../lib/refToken";
+import { rxActiveElement } from "../lib/embedHost";
 import type { CommandInfo } from "../lib/types";
 import { InvocationBadge } from "./InvocationBadge";
 
@@ -641,7 +642,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     // Only restore an explicit pending caret when this editor owns focus, or
     // when nothing else is focused. External draft replacements must not steal
     // focus from other controls.
-    const active = document.activeElement;
+    const active = rxActiveElement();
     const ownsFocus = !active || active === document.body || root === active || root.contains(active);
     if (ownsFocus) {
       root.focus();

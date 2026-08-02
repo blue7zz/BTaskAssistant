@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
-import { rxQuerySelector } from "../lib/embedHost";
+import { rxActiveElement, rxQuerySelector } from "../lib/embedHost";
 import { Bot as BotIcon, Check, CheckCircle2, ChevronDown, ChevronUp, Clipboard, ExternalLink, GripVertical, KeyRound, Loader2, MessageCircle, Play, QrCode, RefreshCw, Send } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useDeferredClose } from "../lib/useMountTransition";
@@ -641,7 +641,7 @@ export function ShortcutsSection() {
         queueMicrotask(() => {
           // Native Tab normally moves focus first. If this WebView does not,
           // release focus so the recorder cannot become a keyboard trap.
-          if (document.activeElement === recorder) recorder.blur();
+          if (rxActiveElement() === recorder) recorder.blur();
         });
         return;
       }
@@ -1549,7 +1549,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const applyStatusBarItems = (items: StatusBarItemId[]) => {
     const contentScrollTop = rxQuerySelector<HTMLElement>(".settings-center__content")?.scrollTop ?? 0;
     const navScrollTop = rxQuerySelector<HTMLElement>(".settings-center__nav")?.scrollTop ?? 0;
-    const active = document.activeElement;
+    const active = rxActiveElement();
     if (active instanceof HTMLElement && active.closest(".status-bar-items-editor")) active.blur();
     void apply(() => app.SetStatusBarItems(items)).finally(() => {
       window.scrollTo(0, 0);

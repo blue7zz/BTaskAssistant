@@ -1,3 +1,4 @@
+import { rxKeyActive } from "../lib/embedHost";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Command, Search } from "lucide-react";
@@ -163,6 +164,8 @@ export function CommandPalette({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // embed 模式：只在 Reasonix 界面焦点内响应（不污染宿主快捷键）
+      if (!rxKeyActive(e)) return;
       const closeButtonHasFocus = e.target instanceof HTMLElement && Boolean(e.target.closest("[data-palette-close]"));
       if (closeButtonHasFocus && (e.key === "Enter" || e.key === " ")) return;
       if (e.key === "Escape") {

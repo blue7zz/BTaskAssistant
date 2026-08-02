@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { rxActiveElement } from "../lib/embedHost";
 import { Check, Copy } from "lucide-react";
 import { useT } from "../lib/i18n";
 
 function fallbackCopyText(value: string): boolean {
-  const activeElement = document.activeElement;
+  const activeElement = rxActiveElement();
   const selection = document.getSelection();
   const ranges: Range[] = [];
   if (selection) {

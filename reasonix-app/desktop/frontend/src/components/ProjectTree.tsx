@@ -3,6 +3,7 @@
 // section. Clicking a topic opens its tab; "+" next to a project creates a
 // new topic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { rxActiveElement } from "../lib/embedHost";
 import { createPortal } from "react-dom";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { Archive, ArrowDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2, GitBranch } from "lucide-react";
@@ -843,7 +844,7 @@ export function ProjectTree({
     e.preventDefault();
     const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
     if (items.length === 0) return;
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const current = items.indexOf(rxActiveElement() as HTMLButtonElement);
     const next = e.key === "Home" ? 0
       : e.key === "End" ? items.length - 1
       : e.key === "ArrowDown" ? (current + 1 + items.length) % items.length

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { rxActiveElement } from "../lib/embedHost";
 import {
   resolvedShortcutCombo,
   shortcutDefinitions,
@@ -40,7 +41,8 @@ export function ShortcutsCheatsheet({
 
   useEffect(() => {
     if (open) {
-      restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const focused = rxActiveElement();
+      restoreFocusRef.current = focused instanceof HTMLElement ? focused : null;
       requestAnimationFrame(() => closeRef.current?.focus());
       return;
     }

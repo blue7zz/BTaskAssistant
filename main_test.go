@@ -107,13 +107,17 @@ func TestReasonixAssetRoutes(t *testing.T) {
 	})
 }
 
-func TestReasonixDistDir(t *testing.T) {
-	// 当前测试工作目录即项目根，reasonix dist 已构建。
-	dir := reasonixDistDir()
-	if dir == "" {
-		t.Fatal("reasonixDistDir() 返回空，原因：reasonix-app/desktop/frontend/dist 未构建")
+func TestReasonixScopedStylesGenerated(t *testing.T) {
+	// 嵌入样式由 PostCSS 预构建脚本生成（prebuild 触发）。
+	path := filepath.Join("reasonix-app/desktop/frontend/src/generated", "scoped-styles.css")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("scoped-styles.css 缺失（请运行 node ../scripts/scope-rx-css.mjs）: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "index.html")); err != nil {
-		t.Fatalf("dist 缺少 index.html: %v", err)
+	if !strings.Contains(string(data), ":host") {
+		t.Fatal("scoped-styles.css 缺少 :host 选择器")
+	}
+	if !strings.Contains(string(data), "data:font/woff;base64") {
+		t.Fatal("scoped-styles.css 未内联 seti 字体")
 	}
 }

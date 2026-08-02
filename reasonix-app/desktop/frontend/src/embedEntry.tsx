@@ -14,34 +14,11 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LocaleProvider } from "./lib/i18n";
 import { ToastProvider } from "./lib/toast";
 import { setEmbedShadowRoot } from "./lib/embedHost";
-import stylesRaw from "./styles.css?raw";
-
-/**
- * 把 styles.css 改写为 :host 作用域版本（shadow DOM 注入用）。
- * - html / body / :root → :host（含 `html.xxx` / `body.xxx` 形式）
- * - `html body` / `html > body` 等组合 → :host
- * - 其余选择器保持（shadow 内天然隔离）
- */
-function scopeStyles(css: string): string {
-  // 注释先行保护（选择器段可能跨行吞掉注释），替换完成后恢复。
-  const comments: string[] = [];
-  const protectedCss = css.replace(/\/\*[\s\S]*?\*\//g, (comment) => {
-    comments.push(comment);
-    return `/*__RX_C${comments.length - 1}__*/`;
-  });
-  const scopedCss = protectedCss.replace(/(^|\n)([^{}]+)\{/g, (_whole, lead: string, sel: string) => {
-    // 选择器段内替换（注释已保护，无副作用）：
-    //   :root / html / body（元素选择器，前导为选择器边界）→ :host
-    const scoped = sel
-      .replace(/:root(?=[\s,:[]|$)/g, ":host")
-      .replace(/(^|[\s,>+~])(html|body)(?=[\s.,:>[]|$)/g, "$1:host")
-      .replace(/(^|[\s,>+~])(html|body)(?=\s)/g, "$1:host");
-    return `${lead}${scoped}{`;
-  });
-  return scopedCss.replace(/\/\*__RX_C(\d+)__\*\//g, (_whole, index: string) => comments[Number(index)] ?? "");
-}
-
-const scopedStyles = scopeStyles(stylesRaw);
+// 预构建的 :host 作用域样式（scripts/scope-rx-css.mjs 用 PostCSS AST 生成，
+// 含 seti.woff 字体内联；prebuild 时重新生成）。
+import scopedStyles from "./generated/scoped-styles.css?raw";
+// heartbeat 样式同入 shadow（不再经 vite 打进主 document 的 CSS chunk）
+import heartbeatRaw from "./custom/features/heartbeat/heartbeat.css?raw";
 
 export interface ReasonixEmbedOptions {
   /** 挂载完成回调（首帧渲染后）。 */
@@ -60,6 +37,9 @@ export function mountReasonixEmbed(host: HTMLElement, options: ReasonixEmbedOpti
   const style = document.createElement("style");
   style.textContent = scopedStyles;
   shadow.appendChild(style);
+  const heartbeatStyle = document.createElement("style");
+  heartbeatStyle.textContent = heartbeatRaw;
+  shadow.appendChild(heartbeatStyle);
 
   const rootEl = document.createElement("div");
   rootEl.className = "rx-app-root";

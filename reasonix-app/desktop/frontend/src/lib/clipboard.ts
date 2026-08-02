@@ -1,3 +1,5 @@
+import { rxActiveElement } from "./embedHost";
+
 // Clipboard writes for the desktop shell: the async Clipboard API when the
 // webview grants it, the Wails runtime bridge when it does not, and a hidden
 // textarea + execCommand as the last resort.
@@ -24,7 +26,7 @@ export async function writeClipboardText(value: string): Promise<boolean> {
 // execCommand("copy") needs a selected editable element, so this selects a
 // hidden textarea and must hand the user's selection and focus back afterwards.
 export function fallbackCopyText(value: string): boolean {
-  const activeElement = document.activeElement;
+  const activeElement = rxActiveElement();
   const selection = document.getSelection();
   const ranges: Range[] = [];
   if (selection) {
