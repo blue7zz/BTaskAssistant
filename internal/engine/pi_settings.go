@@ -14,6 +14,7 @@ type PISettings struct {
 	Model          string `json:"model"`
 	ThinkingEffort string `json:"thinkingEffort"`
 	TimeoutMinutes int    `json:"timeoutMinutes"`
+	ResourcePolicy string `json:"resourcePolicy"`
 }
 
 func NormalizePISettings(settings PISettings) (PISettings, error) {
@@ -41,6 +42,13 @@ func NormalizePISettings(settings PISettings) (PISettings, error) {
 	}
 	if settings.TimeoutMinutes < 1 || settings.TimeoutMinutes > 10 {
 		return PISettings{}, errors.New("PI 单次执行时限必须在 1 到 10 分钟之间")
+	}
+	settings.ResourcePolicy = strings.ToLower(strings.TrimSpace(settings.ResourcePolicy))
+	if settings.ResourcePolicy == "" {
+		settings.ResourcePolicy = "isolated"
+	}
+	if settings.ResourcePolicy != "isolated" && settings.ResourcePolicy != "explicit-inherit" {
+		return PISettings{}, errors.New("PI 资源策略不受支持")
 	}
 	return settings, nil
 }

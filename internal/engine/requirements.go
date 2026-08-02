@@ -415,6 +415,7 @@ func runRequirementCLI(
 			Prompt: prompt, WorkDir: workDir, Model: settings.Model,
 			ThinkingLevel: settings.ThinkingEffort, Images: images,
 			MaxOutputBytes: maxRequirementOutputBytes,
+			ResourcePolicy: settings.ResourcePolicy,
 		})
 		if err != nil {
 			return "", fmt.Errorf("PI 需求分析失败: %w", err)

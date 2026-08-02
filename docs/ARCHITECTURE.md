@@ -133,8 +133,9 @@ Token 等凭据也不进入任务目录。移入回收站、恢复、永久删�
 - 未绑定本地目录时，两者只分析用户选择的资料。
 - 原生调用统一限制输入、输出和三分钟超时；失败只会把访谈标记为受阻。
 
-任务级 Agent 只启动原生 `pi --mode rpc`。Supervisor 关闭 PI 的全局资源与内建工具，
-显式加载由应用内嵌并校验的 BTask gate Extension；稳定事件先落 SQLite，再进入有界
+任务级 Agent 只启动原生 `pi --mode rpc`。Supervisor 关闭 PI 的全局扩展、技能与内建工具，
+显式加载由应用内嵌并校验的 BTask gate Extension；默认使用任务级配置目录，只有用户选择
+`explicit-inherit` 后才读取本机 PI 的模型与 provider 登录。稳定事件先落 SQLite，再进入有界
 Wails 队列。Ask、Plan、Agent 的工具集合、任务状态、路径与授权由 Go 判断，React 只展示。
 
 每个详情页以 `taskId` 作为最外层上下文边界：Session、消息、引用、权限、工具、运行、
@@ -143,3 +144,73 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 
 这是应用级软边界：PI、Extension、Git 和 Shell 仍使用当前操作系统用户权限。第一版不开放
 自动提交、push、PR、合并、发布、多 Agent 并行或跨任务全局记忆。
+
+## Reasonix 工作台（RX 标签页）
+
+任务详情 `记录 / PI / RX` 的 RX 标签是 DeepSeek-Reasonix 的完整融合：
+一个任务 = 一个 Reasonix 会话。
+
+### 结构
+
+- `reasonix-app/`：Reasonix 完整源码（前端 React 1:1 + Go 内核，module `reasonix`，
+  BTask `go.mod` 以 `replace reasonix => ./reasonix-app` 引用内核）。
+- `reasonix-bridge/`：wrapper module（module 名 `reasonix/bridge`，满足 Go internal
+  规则），提供 `Manager`：taskId → 独立控制器（`boot.Build`）+ 任务隔离会话目录
+  （`<BTask 数据目录>/tasks/<taskId>/reasonix-sessions/`）+ 事件转发回调。
+- `rx_bindings.go`：BTask 绑定层。tabID ↔ taskId 映射，~90 个 reasonix 前端同名
+  绑定方法（会话/消息/模型/历史/检查点/审批/启动路径），工作区路径穿越与
+  会话删除边界校验。
+- `frontend/src/components/ReasonixPage.tsx`：主 frame 桥。iframe 同源
+  `/reasonix/?host=1` 加载（36k 行全局深色 CSS 必须 DOM 隔离）；reasonix 前端
+  的每次绑定调用经 postMessage 转发到融合绑定，结果回传；内核事件经
+  `reasonix:event` 通道转发进 iframe。卸载时释放控制器（会话文件保留）。
+- 构建：`frontend/package.json` 的 `prebuild` 自动构建 reasonix dist，
+  `wails build` 单命令产出全量。
+
+### 事件流
+
+内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(
+"reasonix:event", wirePayload)` → ReasonixPage 桥 → iframe postMessage →
+reasonix 前端 `onEvent`（wire 形状与桌面端 `agent:event` 完全一致）。
+
+### 会话模型
+
+会话为 JSONL 文件（内核 `agent.NewSessionPath` 命名），侧车含检查点/事件流/
+恢复文件。历史列表、恢复、提示历史（↑/↓）等按前端 `types.ts` 契约输出
+（preview/turns/unix ms 时间戳/current 标记）。模型切换经内核
+`AdoptHistory` 重建控制器续写同一会话文件。
+
+### 持久化与数据面（23 轮审查后的最终形态）
+
+- **读写两侧对齐内核存储**：回合结束（turn_done）时宿主触发 `ctrl.Snapshot()`（
+  与桌面端 tabEventSink 同约定），关闭/退出时等待 in-flight 快照落盘（对应
+  桌面端 quiesceTabAutosave）；历史读取经 `agent.LoadSession` 重放 native
+  事件日志（主 .jsonl 是滞后快照，直接读会丢最新回合），失败回退 JSON 解析。
+- **删除**：主文件 + 11 类侧车（.events.jsonl/.ckpt/.goal-state.json/
+  .recovery.json/.meta/.jobs 等）全清，标题侧车条目同步移除。
+- **历史**：分页契约完整（startTurn/endTurn/totalTurns/hasOlder + beforeTurn
+  向前翻页），Rewind/Fork/SummarizeFrom/SummarizeUpTo 直通内核。
+- **数据面板**：记忆（docs/facts/storeDir）、技能（enabled 状态）、模型
+  （Current 标记）、设置（SettingsView 最小完整结构）均来自内核真实数据。
+
+### 测试矩阵
+
+- BTask：`go test ./...`（12 包，含 reasonix 集成/契约/安全测试：会话生命周期、
+  任务隔离、多轮+模型切换、历史分页、标题侧车、路径穿越、任意删除、消息源校验、
+  fork 激活、删除轮换、无配置降级、effort 切换）。
+- BTask 前端：130 测试 + typecheck（含 ReasonixPage 桥 7 项：来源校验/调用转发/
+  事件订阅/任务切换重载/生命周期）。
+- reasonix 前端：94 套件测试 + typecheck + bundle 预算。
+- 浏览器端到端（同源 iframe 模拟宿主）：调用面零未绑定、事件驱动 UI 更新、
+  设置/记忆/技能面板渲染。
+- 运行时自检：`BTA_RX_SELFCHECK=1`（真实进程内验证 RX 内核链路，纳入
+  `scripts/test-all.sh`）。
+
+### 设计边界（PI 与 RX 的工作区共享）
+
+任务详情内 PI 工作台与 RX 标签使用**同一任务工作区**（`store.EnsureTaskWorkspace`
+的 RootPath）：PI 是 BTask 受控工具，RX 是 reasonix 内核（自带工具链，可读写
+工作区文件）。两者并发使用同一工作区时，reasonix 的编辑工具与 PI 的编辑
+可能产生文件级冲突——reasonix 会话文件有内核文件租约保护，但工作区文件本身
+无跨运行时锁。建议同一任务避免同时运行 PI 回合与 RX 回合；会话数据（JSONL/
+检查点/记忆）始终隔离在任务专属目录，不受影响。

@@ -55,8 +55,10 @@ pi --mode rpc \
 SHA-256、常规文件类型和 `0600` 权限；`get_state` 与 gate 心跳都成功后才认为 Session
 可用。固定 utility 分析不加载 gate，使用 `--no-tools`。
 
-环境变量使用最小 allowlist。不会复制 `~/.pi/agent`、全局扩展、skills、prompts、
-packages、context 或 provider 凭据。真实模型访问仍由用户在受支持的本机环境中配置。
+环境变量使用最小 allowlist。默认 `isolated` 不读取本机 PI 配置；用户在 PI 设置中选择
+`explicit-inherit` 后，新 Session 会读取 `PI_CODING_AGENT_DIR`（默认 `~/.pi/agent`）中的
+模型与 provider 登录，但不会复制或持久化凭据。两种策略都不会自动加载全局 extensions、
+skills、prompts、packages 或 context，任务 Session 目录保持隔离。
 
 ## 4. Task Workspace
 

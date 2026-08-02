@@ -232,6 +232,7 @@ describe("Daily report settings", () => {
       model: "gpt-report",
       thinkingEffort: "high",
       timeoutMinutes: 5,
+      resourcePolicy: "isolated",
     });
     expect(onSuccess).toHaveBeenCalledWith("日报设置已保存");
 

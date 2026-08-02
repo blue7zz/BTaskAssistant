@@ -3,6 +3,7 @@ import {
   CalendarClock,
   FileText,
   Pencil,
+  SquareTerminal,
   Tag,
 } from "lucide-react";
 import { useState } from "react";
@@ -13,6 +14,7 @@ import {
 } from "../domain/task";
 import { useWorkspaceStore } from "../store/workspace";
 import { LazyRichMarkdownEditor } from "./LazyRichMarkdownEditor";
+import { ReasonixPage } from "./ReasonixPage";
 import { TaskAgentWorkbench } from "./TaskAgentWorkbench";
 
 interface ManualTaskDetailProps {
@@ -45,7 +47,8 @@ export function ManualTaskDetail({
   onError,
 }: ManualTaskDetailProps) {
   const updateTaskRecord = useWorkspaceStore((state) => state.updateTaskRecord);
-  const [activeView, setActiveView] = useState<"record" | "pi">("pi");
+  const [activeView, setActiveView] = useState<"record" | "pi" | "rx">("pi");
+  const [rxOpened, setRXOpened] = useState(false);
   const [piOpened, setPIOpened] = useState(true);
 
   const run = (action: () => void, message: string) => {
@@ -123,7 +126,28 @@ export function ManualTaskDetail({
           <Bot size={14} />
           PI
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "rx"}
+          className={activeView === "rx" ? "active" : ""}
+          onClick={() => {
+            setRXOpened(true);
+            setActiveView("rx");
+          }}
+        >
+          <SquareTerminal size={14} />
+          RX
+        </button>
       </nav>
+
+      <div
+        className="manual-rx-pane"
+        role="tabpanel"
+        hidden={activeView !== "rx"}
+      >
+        {rxOpened && <ReasonixPage taskId={task.id} workspaceRoot="" taskTitle={task.title} />}
+      </div>
 
       <div
         className="manual-task-scroll"

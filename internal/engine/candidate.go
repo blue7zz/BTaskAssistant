@@ -44,6 +44,7 @@ func AnalyzePlaneCandidateWithPI(
 	output, err := runNativePIUtility(ctx, agent.UtilityRequest{
 		Prompt: prompt, Model: settings.Model,
 		ThinkingLevel: settings.ThinkingEffort, MaxOutputBytes: 1024 * 1024,
+		ResourcePolicy: settings.ResourcePolicy,
 	})
 	if err != nil {
 		return CandidateAnalysis{}, fmt.Errorf("PI 候选提炼失败: %w", err)

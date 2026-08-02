@@ -19,3 +19,11 @@ state.json
 .DS_Store
 .idea/
 .vscode/
+
+# Reasonix 子应用构建产物与依赖
+reasonix-app/node_modules/
+reasonix-app/**/node_modules/
+reasonix-app/desktop/build/
+reasonix-app/**/dist/
+reasonix-app/site/dist/
+frontend/package.json.md5

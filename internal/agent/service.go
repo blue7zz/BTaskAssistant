@@ -254,6 +254,10 @@ func (service *Service) CreateSession(
 	if len(strings.TrimSpace(request.Model)) > 200 {
 		return storage.AgentSessionRecord{}, errors.New("PI 模型标识过长")
 	}
+	resourcePolicy, err := normalizePIResourcePolicy(request.ResourcePolicy)
+	if err != nil {
+		return storage.AgentSessionRecord{}, err
+	}
 
 	now := service.timestamp()
 	record := storage.AgentSessionRecord{
@@ -262,7 +266,7 @@ func (service *Service) CreateSession(
 		Engine:         "pi",
 		Title:          request.Title,
 		Mode:           request.Mode,
-		ResourcePolicy: "isolated",
+		ResourcePolicy: resourcePolicy,
 		State:          "created",
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -436,21 +440,30 @@ func (service *Service) SendPrompt(
 	})
 
 	requestCtx, cancel := context.WithTimeout(ctx, service.requestTimeout)
-	defer cancel()
 	promptFields := map[string]any{"message": promptReferences.prompt}
 	if len(promptReferences.images) > 0 {
 		promptFields["images"] = promptReferences.images
 	}
-	if err := managed.runtime.Call(
+	runtime := managed.runtime
+	// PI runs before_agent_start hooks before acknowledging a prompt. The BTask
+	// gate answers those hooks from the event consumer, which needs this mutex.
+	managed.mutex.Unlock()
+	err = runtime.Call(
 		requestCtx,
 		"prompt",
 		promptFields,
 		nil,
-	); err != nil {
-		service.finishRunLocked(managed, "failed", sanitizeError(err.Error(), workspace.RootPath))
+	)
+	cancel()
+	managed.mutex.Lock()
+	if err != nil {
+		err = contextualizePICredentialError(err, managed.record.ResourcePolicy)
+		if managed.runtime == runtime && managed.run != nil && managed.run.record.ID == runID {
+			service.finishRunLocked(managed, "failed", sanitizeError(err.Error(), workspace.RootPath))
+		}
 		return storage.ExecutionRunRecord{}, err
 	}
-	return managed.run.record, nil
+	return run, nil
 }
 
 func normalizePromptRequest(request PromptRequest) (PromptRequest, error) {
@@ -650,6 +663,37 @@ func (service *Service) StopToolExecution(request execution.StopRequest) error {
 	return service.execution.Stop(request)
 }
 
+// Command 把会话窗口的扩展 RPC 命令透传给 PI 进程：get_commands、bash、
+// set_model、set_thinking_level、compact、fork 等。
+func (service *Service) Command(
+	ctx context.Context,
+	request CommandRequest,
+) (map[string]any, error) {
+	if strings.TrimSpace(request.Type) == "" {
+		return nil, errors.New("PI 会话命令不能为空")
+	}
+	managed, err := service.loadManagedSession(request.TaskID, request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	workspace, err := service.store.EnsureTaskWorkspace(request.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	managed.mutex.Lock()
+	defer managed.mutex.Unlock()
+	if managed.runtime == nil {
+		if err := service.startRuntimeLocked(ctx, managed, workspace); err != nil {
+			return nil, err
+		}
+	}
+	var result map[string]any
+	if err := managed.runtime.Call(ctx, request.Type, request.Payload, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (service *Service) ActiveTask(taskID string) bool {
 	service.mutex.Lock()
 	sessions := make([]*managedSession, 0, len(service.sessions))
@@ -729,10 +773,18 @@ func (service *Service) startRuntimeLocked(
 		"state": "starting",
 	})
 
+	configDir, err := resolvePIConfigDirectory(
+		managed.record.ResourcePolicy,
+		filepath.Join(workspace.RootPath, ".btask", "pi-agent"),
+	)
+	if err != nil {
+		service.failSessionLocked(managed, sanitizeError(err.Error(), workspace.RootPath))
+		return err
+	}
 	options := ProcessOptions{
 		Executable:     service.executable,
 		WorkDir:        workspace.RootPath,
-		ConfigDir:      filepath.Join(workspace.RootPath, ".btask", "pi-agent"),
+		ConfigDir:      configDir,
 		SessionDir:     filepath.Join(workspace.RootPath, ".btask", "pi-sessions"),
 		StartupTimeout: service.startupTimeout,
 		RequestTimeout: service.requestTimeout,
@@ -809,6 +861,7 @@ func (service *Service) startRuntimeLocked(
 		}
 	}
 	if err := applySessionSettings(ctx, runtime, managed.record, service.requestTimeout); err != nil {
+		err = contextualizePICredentialError(err, managed.record.ResourcePolicy)
 		_ = runtime.Close(context.Background())
 		service.failSessionLocked(managed, sanitizeError(err.Error(), workspace.RootPath))
 		return err
@@ -1033,4 +1086,14 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func contextualizePICredentialError(err error, resourcePolicy string) error {
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "no api key") {
+		return err
+	}
+	if resourcePolicy == resourcePolicyExplicitInherit {
+		return errors.New("本机 PI 登录配置中没有当前模型凭据；请在终端运行 pi 并使用 /login，完成后恢复或新建会话")
+	}
+	return errors.New("当前 PI 会话使用隔离配置，未继承本机模型凭据；请在设置 > PI 中选择“使用本机 PI 登录配置”，再新建会话")
 }

@@ -149,6 +149,7 @@ describe("TaskAgentWorkbench", () => {
       mode: "ask",
       model: "",
       thinkingLevel: "xhigh",
+      resourcePolicy: "isolated",
     });
     expect(container.textContent).toContain("已保存的历史回答");
     expect(container.textContent).toContain("浏览器模拟，不启动本机 PI");

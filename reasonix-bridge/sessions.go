@@ -1,0 +1,316 @@
+// Package bridge 是 BTaskAssistant 与 Reasonix 内核之间的适配层。
+// module 名以 reasonix/ 开头以满足 Go internal 规则（reasonix/internal/* 仅允许
+// reasonix/ 前缀的包导入）。一个任务 = 一个 Reasonix 会话：每个 taskId 持有
+// 一个独立控制器的 tab，会话 JSONL 文件落在任务隔离目录，事件经注册的回调
+// 转发给宿主（BTask 通过 wails EventsEmit 发出）。
+package bridge
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	rxboot "reasonix/internal/boot"
+	rxconfig "reasonix/internal/config"
+	rxcontrol "reasonix/internal/control"
+	rxevent "reasonix/internal/event"
+	rxeventwire "reasonix/internal/eventwire"
+	// provider 子包靠 init 副作用注册 kind（与 reasonix 桌面端/CLI main.go 一致）：
+	// 缺失会导致模型切换时 "provider: unknown kind"。
+	_ "reasonix/internal/provider/anthropic"
+	_ "reasonix/internal/provider/openai"
+)
+
+// EventSink 是宿主注册的事件转发回调：内核控制器的事件（会话流/回合状态/
+// 工具调用等）按 wire 形状（与 reasonix 桌面端 agent:event 完全一致）回调。
+type EventSink func(tabID string, payload map[string]any)
+
+// TaskTab 是「一个任务一个会话」的运行时条目。
+type TaskTab struct {
+	TaskID string
+	ID     string // tab 标识：task_<taskID 摘要>
+	Title  string // 任务显示标题（会话-任务绑定）
+	Ctrl   *rxcontrol.Controller
+	Dir    string // 会话目录（任务隔离）
+}
+
+// Manager 管理全部任务的 Reasonix 会话。
+type Manager struct {
+	mu         sync.Mutex
+	roots      map[string]*TaskTab // taskID → tab
+	dataRoot   string              // 会话根目录（BTask 数据目录）
+	emit       EventSink
+	snapshotWG sync.WaitGroup // 跟踪 in-flight 回合快照（关闭时等待落盘）
+}
+
+// NewManager 创建管理器。dataRoot 是任务会话的父目录
+// （每个任务的会话落在 <dataRoot>/tasks/<taskID>/reasonix-sessions）。
+func NewManager(dataRoot string, emit EventSink) *Manager {
+	if emit == nil {
+		emit = func(string, map[string]any) {}
+	}
+	return &Manager{roots: map[string]*TaskTab{}, dataRoot: dataRoot, emit: emit}
+}
+
+// TaskSessionDir 返回任务的隔离会话目录。
+func (m *Manager) TaskSessionDir(taskID string) string {
+	base := m.dataRoot
+	if base == "" {
+		base = rxconfig.ReasonixHomeDir()
+	}
+	return filepath.Join(base, "tasks", taskID, "reasonix-sessions")
+}
+
+func (m *Manager) tabID(taskID string) string {
+	return "task_" + shortHash(taskID)
+}
+
+func shortHash(value string) string {
+	if value == "" {
+		return "default"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// Ensure 返回任务的 tab；不存在则构建控制器（首次会加载任务工作区的
+// reasonix 配置与模型解析，RequireKey=false 保证无凭据时界面仍可达）。
+func (m *Manager) Ensure(ctx context.Context, taskID string, workspaceRoot string) (*TaskTab, error) {
+	m.mu.Lock()
+	if tab, ok := m.roots[taskID]; ok {
+		m.mu.Unlock()
+		return tab, nil
+	}
+	m.mu.Unlock()
+
+	dir := m.TaskSessionDir(taskID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建 Reasonix 会话目录: %w", err)
+	}
+
+	tab := &TaskTab{TaskID: taskID, ID: m.tabID(taskID), Dir: dir}
+	ctrl, err := m.build(ctx, taskID, workspaceRoot, dir, "", "", "")
+	if err != nil {
+		return nil, err
+	}
+	tab.Ctrl = ctrl
+
+	m.mu.Lock()
+	if existing, ok := m.roots[taskID]; ok {
+		m.mu.Unlock()
+		ctrl.Close()
+		return existing, nil
+	}
+	m.roots[taskID] = tab
+	m.mu.Unlock()
+	return tab, nil
+}
+
+// build 构建任务的控制器（boot.Build），事件经 sink 回调转发给宿主。
+func (m *Manager) build(
+	ctx context.Context,
+	taskID string,
+	workspaceRoot string,
+	sessionDir string,
+	model string,
+	effort string,
+	tokenMode string,
+) (*rxcontrol.Controller, error) {
+	tabID := m.tabID(taskID)
+	// 回合结束时的持久化由宿主触发（与桌面端 tabEventSink 在 TurnDone 时
+	// scheduleTabSnapshot 一致）：内核不自动落盘，漏触发会导致会话文件
+	// 停留在上一轮。
+	var ctrlRef atomic.Pointer[rxcontrol.Controller]
+	sink := rxevent.FuncSink(func(e rxevent.Event) {
+		if e.Kind == rxevent.TurnDone {
+			if ctrl := ctrlRef.Load(); ctrl != nil {
+				m.snapshotWG.Add(1)
+				go func() {
+					defer m.snapshotWG.Done()
+					if err := ctrl.Snapshot(); err != nil {
+						fmt.Fprintf(os.Stderr, "reasonix-bridge: 回合快照失败 task=%s: %v\n", taskID, err)
+					}
+				}()
+			}
+		}
+		m.emit(tabID, toWire(e, tabID))
+	})
+	var effortOverride *string
+	if effort != "" {
+		effortOverride = &effort
+	}
+	ctrl, err := rxboot.Build(ctx, rxboot.Options{
+		Model:          model,
+		RequireKey:     false,
+		Sink:           rxevent.Sync(sink),
+		WorkspaceRoot:  workspaceRoot,
+		SessionDir:     sessionDir,
+		EffortOverride: effortOverride,
+		TokenMode:      tokenMode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ctrlRef.Store(ctrl)
+	return ctrl, nil
+}
+
+// SetTaskTitle 记录任务显示标题（ReasonixEnsureTab 时由宿主传入）——
+// 绑定到任务运行时条目，TabView 的 TopicTitle 展示任务标题。
+func (m *Manager) SetTaskTitle(taskID string, title string) {
+	if title == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tab, ok := m.roots[taskID]; ok {
+		tab.Title = title
+	}
+}
+
+// Tab 返回任务的 tab（未构建时返回 nil）。
+func (m *Manager) Tab(taskID string) *TaskTab {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.roots[taskID]
+}
+
+// NewSession 为任务开一个新会话文件并激活。
+func (m *Manager) NewSession(taskID string) error {
+	tab := m.Tab(taskID)
+	if tab == nil {
+		return fmt.Errorf("任务 %s 的 Reasonix 会话尚未初始化", taskID)
+	}
+	return tab.Ctrl.NewSession()
+}
+
+// Submit 提交一轮对话（非阻塞：事件流经回调发出）。
+func (m *Manager) Submit(taskID string, input string) error {
+	tab := m.Tab(taskID)
+	if tab == nil {
+		return fmt.Errorf("任务 %s 的 Reasonix 会话尚未初始化", taskID)
+	}
+	if strings.TrimSpace(input) == "" {
+		return fmt.Errorf("消息不能为空")
+	}
+	tab.Ctrl.Submit(input)
+	return nil
+}
+
+// Cancel 取消进行中的回合。
+func (m *Manager) Cancel(taskID string) {
+	if tab := m.Tab(taskID); tab != nil {
+		tab.Ctrl.Cancel()
+	}
+}
+
+// Close 关闭任务的控制器并移除运行时（会话文件保留）。
+func (m *Manager) Close(taskID string) {
+	m.mu.Lock()
+	tab := m.roots[taskID]
+	delete(m.roots, taskID)
+	m.mu.Unlock()
+	if tab != nil && tab.Ctrl != nil {
+		// 等待 in-flight 回合快照落盘，避免与删除/关闭竞态（对应桌面端
+		// quiesceTabAutosave 的 #4384 类问题）。
+		m.snapshotWG.Wait()
+		tab.Ctrl.Close()
+	}
+}
+
+// Shutdown 关闭全部任务的控制器。
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	tabs := make([]*TaskTab, 0, len(m.roots))
+	for _, tab := range m.roots {
+		tabs = append(tabs, tab)
+	}
+	m.roots = map[string]*TaskTab{}
+	m.mu.Unlock()
+	m.snapshotWG.Wait()
+	for _, tab := range tabs {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+	}
+}
+
+// ListSessionFiles 列出任务会话目录下的 .jsonl 会话文件（按修改时间倒序）。
+func (m *Manager) ListSessionFiles(taskID string) ([]SessionFile, error) {
+	dir := m.TaskSessionDir(taskID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	files := make([]SessionFile, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		// 排除侧车文件：.events.jsonl 是事件流，不构成独立会话
+		if entry.IsDir() || !strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".events.jsonl") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, SessionFile{
+			Path:      filepath.Join(dir, entry.Name()),
+			Name:      entry.Name(),
+			Modified:  info.ModTime().UTC().Format(time.RFC3339),
+			SizeBytes: info.Size(),
+		})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Modified > files[j].Modified })
+	return files, nil
+}
+
+// SessionFile 描述一个会话文件。
+type SessionFile struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Modified  string `json:"modified"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// CurrentSessionPath 返回任务当前会话路径。
+func (m *Manager) CurrentSessionPath(taskID string) string {
+	if tab := m.Tab(taskID); tab != nil {
+		return tab.Ctrl.SessionPath()
+	}
+	return ""
+}
+
+// --- wire 转换 ---------------------------------------------------------------
+
+// toWire 把内核事件转换为与 reasonix 桌面端 agent:event 一致的 payload
+// （wireEventTab：eventwire.Event + tabId 路由字段）。
+func toWire(e rxevent.Event, tabID string) map[string]any {
+	payload := map[string]any{
+		"tabId": tabID,
+	}
+	w := rxeventwire.ToWire(e)
+	raw, err := json.Marshal(w)
+	if err == nil {
+		var fields map[string]any
+		if json.Unmarshal(raw, &fields) == nil {
+			for key, value := range fields {
+				payload[key] = value
+			}
+		}
+	}
+	payload["sessionHitTokens"] = e.SessionHit
+	payload["sessionMissTokens"] = e.SessionMiss
+	return payload
+}

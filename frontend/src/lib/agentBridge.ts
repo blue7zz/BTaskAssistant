@@ -1,5 +1,6 @@
 import type {
   AbortAgentRunRequest,
+  AgentCommandRequest,
   AgentEvent,
   AgentHistoryPage,
   AgentHistoryPageRequest,
@@ -82,6 +83,7 @@ interface NativeAgentApp {
   PreviewAgentResource(request: AgentResourcePreviewRequest): Promise<AgentResourcePreview>;
   RemoveAgentMessageReference(request: RemoveAgentReferenceRequest): Promise<void>;
   OpenAgentArtifact(taskId: string, artifactId: string): Promise<void>;
+  AgentSessionCommand(request: AgentCommandRequest): Promise<Record<string, unknown>>;
 }
 
 export interface AgentClient {
@@ -128,6 +130,7 @@ export interface AgentClient {
   previewResource?(request: AgentResourcePreviewRequest): Promise<AgentResourcePreview>;
   removeReference?(request: RemoveAgentReferenceRequest): Promise<void>;
   openArtifact?(taskId: string, artifactId: string): Promise<void>;
+  sessionCommand?(request: AgentCommandRequest): Promise<Record<string, unknown>>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
 }
 
@@ -723,7 +726,10 @@ const browserAgentClient: AgentClient = {
       mode: request.mode,
       model: request.model.trim() || undefined,
       thinkingLevel: request.thinkingLevel.trim() || undefined,
-      resourcePolicy: "isolated",
+      resourcePolicy:
+        request.resourcePolicy === "explicit-inherit"
+          ? "explicit-inherit"
+          : "isolated",
       state: "idle",
       lastSequence: 0,
       createdAt,
@@ -1016,6 +1022,7 @@ const nativeAgentClient: AgentClient = {
   previewResource: (request) => nativeAgentApp().PreviewAgentResource(request),
   removeReference: (request) => nativeAgentApp().RemoveAgentMessageReference(request),
   openArtifact: (taskId, artifactId) => nativeAgentApp().OpenAgentArtifact(taskId, artifactId),
+  sessionCommand: (request) => nativeAgentApp().AgentSessionCommand(request),
   subscribe(listener) {
     if (typeof window.runtime?.EventsOn !== "function") return () => undefined;
     const unsubscribe = window.runtime.EventsOn(AGENT_EVENT_NAME, (payload) => {

@@ -21,6 +21,7 @@ type UtilityRequest struct {
 	WorkDir        string
 	Model          string
 	ThinkingLevel  string
+	ResourcePolicy string
 	Images         []UtilityImage
 	MaxOutputBytes int
 }
@@ -87,10 +88,17 @@ func (runner UtilityRunner) Run(
 	if factory == nil {
 		factory = nativeRuntimeFactory{}
 	}
+	configDir, err := resolvePIConfigDirectory(
+		request.ResourcePolicy,
+		filepath.Join(temporaryRoot, "pi-agent"),
+	)
+	if err != nil {
+		return "", err
+	}
 	options := ProcessOptions{
 		Executable:     runner.Executable,
 		WorkDir:        workDir,
-		ConfigDir:      filepath.Join(temporaryRoot, "pi-agent"),
+		ConfigDir:      configDir,
 		SessionDir:     filepath.Join(temporaryRoot, "pi-sessions"),
 		StartupTimeout: runner.StartupTimeout,
 		RequestTimeout: runner.RequestTimeout,
@@ -110,7 +118,7 @@ func (runner UtilityRunner) Run(
 		timeout = defaultRequestTimeout
 	}
 	if err := applyUtilitySettings(ctx, runtime, request.Model, request.ThinkingLevel, timeout); err != nil {
-		return "", err
+		return "", contextualizePICredentialError(err, request.ResourcePolicy)
 	}
 	fields := map[string]any{"message": request.Prompt}
 	if len(images) > 0 {
@@ -120,7 +128,7 @@ func (runner UtilityRunner) Run(
 	err = runtime.Call(requestCtx, "prompt", fields, nil)
 	cancel()
 	if err != nil {
-		return "", err
+		return "", contextualizePICredentialError(err, request.ResourcePolicy)
 	}
 
 	var output strings.Builder

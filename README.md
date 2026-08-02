@@ -114,9 +114,10 @@ go test ./internal/...
 ## 当前边界
 
 桌面端使用已验证的原生 PI `0.82.x`，以严格 LF JSONL 启动 `pi --mode rpc`，用 `get_state`
-和 BTask gate 心跳完成启动探针。配置、Session、上下文、运行日志和受控产物都位于当前任务目录；
-启动参数关闭全局扩展、技能、提示词模板、主题、上下文自动发现、内建工具和在线包发现，不读取或
-复制 `~/.pi/agent`，也不会回退调用 `omp`。
+和 BTask gate 心跳完成启动探针。Session、上下文、运行日志和受控产物都位于当前任务目录；
+默认配置同样按任务隔离。用户可在 PI 设置中显式选择读取本机 `PI_CODING_AGENT_DIR`（默认
+`~/.pi/agent`）的模型与 provider 登录，但不会复制凭据。启动参数始终关闭全局扩展、技能、
+提示词模板、主题、上下文自动发现、内建工具和在线包发现，也不会回退调用 `omp`。
 
 PI 仅能调用 BTask 显式注册的任务资源、artifact、worktree 和 Shell 工具。Go 后端校验
 task/session/run、模式、任务状态、nonce、路径和授权回执；未知工具、门禁失效、越界路径和隐藏的
@@ -143,3 +144,40 @@ Plane 收集箱只要求两项连接信息：
 详见 [完整目标架构](docs/SOFTWARE_ARCHITECTURE.md)、[MVP 落地架构](docs/ARCHITECTURE.md)、
 [PI Agent 工作台](docs/PI_AGENT_WORKBENCH.md)、[权限边界](docs/PERMISSIONS.md)、
 [数据迁移](docs/DATA_MIGRATION.md) 和 [第一版范围](docs/MVP_SCOPE.md)。
+
+## Reasonix 工作台（RX）
+
+任务详情的 `记录 / PI / RX` 标签页内嵌完整 DeepSeek-Reasonix 界面
+（源码 1:1 位于 `reasonix-app/`，Go 内核经 `reasonix-bridge/` 同进程融合）。
+
+**一个任务 = 一个 Reasonix 会话**：每个任务的会话 JSONL、检查点、事件流与
+记忆/技能数据按 taskId 隔离在应用数据目录（`~/Library/Application Support/
+BTaskAssistant/tasks/<taskId>/reasonix-sessions/`），离开任务详情页释放运行时，
+会话文件保留可恢复。
+
+功能：真实模型对话（复用本机 reasonix 配置/凭据）、历史（分页/回滚/分支/
+压缩）、模型与推理强度切换、ask 提问卡与工具审批、目标/计划模式、记忆与技能
+面板、会话重命名/删除（含侧车清理）、↑/↓ 提示历史。
+
+构建：`wails build` 单命令（prebuild 自动构建 reasonix 前端）。验证：
+`go test ./...`、`cd frontend && pnpm test`、`cd reasonix-app/desktop/frontend && pnpm test`。
+
+**开发模式注意**：`wails dev`（vite 开发服务器）下 `/reasonix/` 前缀由主应用
+asset server 提供，但 reasonix dist 由 `pnpm build`（prebuild）产出——若开发
+中改了 reasonix 前端，请先 `cd reasonix-app/desktop/frontend && pnpm build`
+再刷新 RX 标签；生产构建 `wails build` 会自动完成这一步。
+
+**运行时自检**：`BTA_RX_SELFCHECK=1 ./BTaskAssistant`（或 `go run .`）跳过
+UI 直接验证 RX 内核链路（会话构建/新会话/提交/事件流），返回退出码——
+无需打开应用即可确认融合内核可用，已纳入 `scripts/test-all.sh`。
+
+**VITE_REASONIX_URL 约束**：该环境变量只可配置**同源路径**前缀（默认
+`/reasonix/`）。ReasonixPage 桥按同源校验消息来源——指向跨源 dev server
+（如 `http://localhost:5173`）会导致全部桥调用被安全拒绝；开发 reasonix
+前端请按上文先 `pnpm build` 再刷新。
+
+**更新逻辑**：Reasonix 前端在宿主（RX）环境下不包含更新机制——`UpdaterProvider`
+host 模式直接提供"已是最新"（check/download/install 全 no-op）、设置面板无
+"更新"标签、`UpdateBanner` 不挂载、`CheckUpdate` 绑定参数为 `any`（杜绝参数
+解析错误）。此前"更新失败：error parsing arguments"源于旧版 `CheckUpdate(bool)`
+签名与前端 `channel: string` 契约不匹配，已修复并全路径验证（更新调用 0 次）。

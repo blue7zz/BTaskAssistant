@@ -103,6 +103,107 @@ func TestServicePersistsMultiTurnMessagesAndStableEvents(t *testing.T) {
 	}
 }
 
+func TestServiceExplicitlyInheritsPILoginWithoutSharingTaskSessions(t *testing.T) {
+	store := newServiceTestStore(t, "task_login", "登录配置任务")
+	configured := filepath.Join(t.TempDir(), "pi-login")
+	t.Setenv("PI_CODING_AGENT_DIR", configured)
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_login", ResourcePolicy: resourcePolicyExplicitInherit,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	options := factory.processOptions(0)
+	if session.ResourcePolicy != resourcePolicyExplicitInherit || options.ConfigDir != configured {
+		t.Fatalf("explicit PI config was not applied: %#v %#v", session, options)
+	}
+	workspace, err := store.TaskWorkspace("task_login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSessions := filepath.Join(workspace.RootPath, ".btask", "pi-sessions")
+	if options.SessionDir != wantSessions {
+		t.Fatalf("session dir = %q, want task-scoped %q", options.SessionDir, wantSessions)
+	}
+}
+
+func TestServicePromptPreflightCanBindActiveRun(t *testing.T) {
+	store := newServiceTestStore(t, "task_prompt_gate", "提示词闸门任务")
+	factory := &fakeRuntimeFactory{}
+	service := NewService(store, ServiceOptions{
+		RuntimeFactory: factory, RequestTimeout: 250 * time.Millisecond,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+	session, err := service.CreateSession(context.Background(), CreateSessionRequest{
+		TaskID: "task_prompt_gate", Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := factory.runtime(0)
+	options := factory.processOptions(0)
+	release := make(chan struct{})
+	placeholder, err := json.Marshal(gateRunRequest{
+		Version: options.Gate.Version, Nonce: options.Gate.Nonce,
+		TaskID: "task_prompt_gate", SessionID: session.ID, Mode: "ask",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.mutex.Lock()
+	runtime.promptGateRequest = map[string]any{
+		"type": "extension_ui_request", "id": "prompt-run-binding",
+		"method": "input", "title": "btask-run",
+		"placeholder": string(placeholder),
+	}
+	runtime.promptGateRelease = release
+	runtime.mutex.Unlock()
+
+	type promptResult struct {
+		run storage.ExecutionRunRecord
+		err error
+	}
+	result := make(chan promptResult, 1)
+	go func() {
+		run, sendErr := service.SendPrompt(context.Background(), PromptRequest{
+			TaskID: "task_prompt_gate", SessionID: session.ID, Message: "你好",
+		})
+		result <- promptResult{run: run, err: sendErr}
+	}()
+
+	notification := runtime.waitNotificationID(t, "prompt-run-binding")
+	value, _ := notification["value"].(string)
+	var binding struct {
+		RunID string `json:"runId"`
+	}
+	if err := json.Unmarshal([]byte(value), &binding); err != nil || binding.RunID == "" {
+		t.Fatalf("prompt preflight did not bind the active run: %#v, %v", notification, err)
+	}
+	close(release)
+	select {
+	case sent := <-result:
+		if sent.err != nil || sent.run.ID != binding.RunID {
+			t.Fatalf("prompt submission failed after run binding: %#v, %v", sent.run, sent.err)
+		}
+		waitForRunState(t, store, "task_prompt_gate", sent.run.ID, "succeeded")
+	case <-time.After(time.Second):
+		t.Fatal("prompt submission did not finish after gate binding")
+	}
+}
+
 func TestServiceBatchesStreamingDeltaDatabaseWrites(t *testing.T) {
 	baseStore := newServiceTestStore(t, "task_delta_batch", "流式批处理任务")
 	store := &countingServiceStore{SQLiteStore: baseStore}
@@ -1452,16 +1553,18 @@ func (factory *fakeRuntimeFactory) processOptions(index int) ProcessOptions {
 }
 
 type fakeRuntime struct {
-	mutex           sync.Mutex
-	calls           []string
-	callFields      []map[string]any
-	notifications   []map[string]any
-	events          chan rawEvent
-	done            chan struct{}
-	exit            ProcessExit
-	closeOnce       sync.Once
-	session         string
-	persistOnPrompt bool
+	mutex             sync.Mutex
+	calls             []string
+	callFields        []map[string]any
+	notifications     []map[string]any
+	events            chan rawEvent
+	done              chan struct{}
+	exit              ProcessExit
+	closeOnce         sync.Once
+	session           string
+	persistOnPrompt   bool
+	promptGateRequest map[string]any
+	promptGateRelease chan struct{}
 }
 
 func newFakeRuntime(session string) *fakeRuntime {
@@ -1471,7 +1574,7 @@ func newFakeRuntime(session string) *fakeRuntime {
 }
 
 func (runtime *fakeRuntime) Call(
-	_ context.Context,
+	ctx context.Context,
 	command string,
 	fields map[string]any,
 	result any,
@@ -1479,6 +1582,8 @@ func (runtime *fakeRuntime) Call(
 	runtime.mutex.Lock()
 	runtime.calls = append(runtime.calls, command)
 	runtime.callFields = append(runtime.callFields, fields)
+	promptGateRequest := runtime.promptGateRequest
+	promptGateRelease := runtime.promptGateRelease
 	runtime.mutex.Unlock()
 	switch command {
 	case "get_entries":
@@ -1486,6 +1591,14 @@ func (runtime *fakeRuntime) Call(
 	case "get_state":
 		return assignFakeResult(result, SessionState{SessionID: "fake", SessionFile: runtime.session})
 	case "prompt":
+		if promptGateRequest != nil {
+			runtime.emit(promptGateRequest)
+			select {
+			case <-promptGateRelease:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 		if runtime.persistOnPrompt {
 			if err := os.WriteFile(runtime.session, []byte("{}\n"), 0o600); err != nil {
 				return err

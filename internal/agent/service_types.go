@@ -87,11 +87,12 @@ type ServiceOptions struct {
 }
 
 type CreateSessionRequest struct {
-	TaskID        string `json:"taskId"`
-	Title         string `json:"title"`
-	Mode          string `json:"mode"`
-	Model         string `json:"model"`
-	ThinkingLevel string `json:"thinkingLevel"`
+	TaskID         string `json:"taskId"`
+	Title          string `json:"title"`
+	Mode           string `json:"mode"`
+	Model          string `json:"model"`
+	ThinkingLevel  string `json:"thinkingLevel"`
+	ResourcePolicy string `json:"resourcePolicy"`
 }
 
 type PromptRequest struct {
@@ -218,6 +219,15 @@ type ToolOutput struct {
 	Truncated bool   `json:"truncated"`
 }
 
+// CommandRequest 透传会话窗口的扩展 RPC 命令（get_commands / bash /
+// set_model / set_thinking_level / compact 等）。
+type CommandRequest struct {
+	TaskID    string         `json:"taskId"`
+	SessionID string         `json:"sessionId"`
+	Type      string         `json:"type"`
+	Payload   map[string]any `json:"payload"`
+}
+
 type AgentAPI interface {
 	RecoverInterrupted() error
 	Sessions(string) ([]storage.AgentSessionRecord, error)
@@ -242,6 +252,7 @@ type AgentAPI interface {
 	FollowUp(context.Context, PromptRequest) (storage.AgentMessageRecord, error)
 	Abort(context.Context, AbortRequest) error
 	StopToolExecution(execution.StopRequest) error
+	Command(context.Context, CommandRequest) (map[string]any, error)
 	ActiveTask(string) bool
 	Close(context.Context) error
 }

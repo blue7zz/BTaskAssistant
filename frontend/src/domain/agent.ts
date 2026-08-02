@@ -14,6 +14,8 @@ export type AgentMessageStatus =
   | "error"
   | "cancelled";
 
+export type PIResourcePolicy = "isolated" | "explicit-inherit";
+
 export interface AgentSession {
   id: string;
   taskId: string;
@@ -24,7 +26,7 @@ export interface AgentSession {
   mode: "ask" | "plan" | "agent";
   model?: string;
   thinkingLevel?: string;
-  resourcePolicy: "isolated";
+  resourcePolicy: PIResourcePolicy;
   state: AgentSessionState;
   lastEntryId?: string;
   lastSequence: number;
@@ -220,6 +222,14 @@ export interface CreateAgentSessionRequest {
   mode: "ask" | "plan" | "agent";
   model: string;
   thinkingLevel: string;
+  resourcePolicy?: PIResourcePolicy;
+}
+
+export interface AgentCommandRequest {
+  taskId: string;
+  sessionId: string;
+  type: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface AgentPromptRequest {

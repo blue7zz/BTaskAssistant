@@ -27,6 +27,20 @@
   --shadow:
     0 1px 2px rgba(20, 20, 24, 0.04),
     0 12px 32px rgba(20, 20, 24, 0.06);
+  /* Reasonix composer control tokens（会话方式 1:1） */
+  --border: #dcdae9;
+  --border-soft: #e6e4f0;
+  --surface-2: #f7f6fb;
+  --bg-soft: #f0eeff;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #f0eeff;
+  --fg: #4f5159;
+  --fg-dim: #68647d;
+  --fg-faint: #9b9da5;
+  --composer-control-height: 27px;
+  --composer-control-radius: 7px;
+  --composer-control-font-size: 7px;
+  --composer-control-font-weight: 650;
 }
 
 * {
@@ -4501,6 +4515,10 @@ body.panel-resizing .workspace-grid {
   gap: 8px;
 }
 
+.pi-resource-policy-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .pi-thinking-options label {
   display: flex;
   min-width: 0;
@@ -5905,15 +5923,22 @@ body.panel-resizing .workspace-grid {
 }
 
 .manual-task-scroll[hidden],
-.manual-pi-pane[hidden] {
+.manual-pi-pane[hidden],
+.manual-rx-pane[hidden] {
   display: none;
 }
 
-.manual-pi-pane {
+.manual-pi-pane,
+.manual-rx-pane {
   display: flex;
   min-width: 0;
   min-height: 0;
   flex: 1;
+}
+
+.manual-rx-pane {
+  padding: 0;
+  overflow: hidden;
 }
 
 .manual-task-scroll {
@@ -6112,6 +6137,18 @@ body.panel-resizing .workspace-grid {
   white-space: nowrap;
 }
 
+.agent-workbench-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-workbench-title-row strong {
+  min-width: 0;
+}
+
 .agent-workbench-status {
   display: flex;
   min-width: 0;
@@ -6176,9 +6213,326 @@ body.panel-resizing .workspace-grid {
   font-size: 7px;
 }
 
+.agent-workbench-actions .agent-new-session-model input {
+  width: 130px;
+  min-height: 27px;
+  padding: 0 6px;
+  border: 1px solid #dcdae9;
+  border-radius: 7px;
+  outline: none;
+  color: #68647d;
+  background: white;
+  font-size: 7px;
+}
+
 .agent-workbench-actions .button {
   min-height: 27px;
   white-space: nowrap;
+}
+
+/* ── 会话方式（Reasonix 1:1：执行方式 / 工作模式 / 审批） ─────────────── */
+.agent-workbench-actions {
+  position: relative;
+}
+
+.agent-workbench-mode-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.composer-task-mode-trigger {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: var(--composer-control-height);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--composer-control-radius);
+  background: var(--surface-2);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--composer-control-font-size);
+  font-weight: var(--composer-control-font-weight);
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+
+.composer-profile-trigger {
+  --wails-draggable: no-drag;
+  --composer-profile-accent: var(--fg-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: var(--composer-control-height);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--composer-control-radius);
+  background: var(--surface-2);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--composer-control-font-size);
+  font-weight: var(--composer-control-font-weight);
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+
+.composer-task-mode-trigger > svg,
+.composer-profile-trigger > svg {
+  flex: 0 0 auto;
+}
+
+.composer-task-mode-trigger__value {
+  min-width: 0;
+  overflow: hidden;
+  color: #4f5159;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-task-mode-trigger > svg {
+  flex: 0 0 auto;
+}
+
+.composer-task-mode-trigger__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-weight: var(--composer-control-font-weight);
+}
+
+.composer-task-mode-trigger:hover:not(:disabled),
+.composer-task-mode-trigger:focus-visible,
+.composer-task-mode-trigger--open,
+.composer-profile-trigger:hover:not(:disabled),
+.composer-profile-trigger:focus-visible,
+.composer-profile-trigger--open {
+  outline: none;
+  color: var(--fg);
+  border-color: var(--border-soft);
+  background: var(--bg-soft);
+}
+
+.composer-task-mode-trigger:disabled,
+.composer-profile-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.composer-task-mode-trigger:focus-visible,
+.composer-profile-trigger:focus-visible {
+  box-shadow: 0 0 0 2px rgba(120, 111, 225, 0.25);
+}
+
+.composer-profile-trigger[data-profile="economy"] {
+  --composer-profile-accent: #3b82f6;
+}
+
+.composer-profile-trigger[data-profile="delivery"] {
+  --composer-profile-accent: #f97316;
+}
+
+.composer-profile-trigger > svg:first-child {
+  flex: 0 0 auto;
+  color: var(--composer-profile-accent);
+}
+
+.composer-profile-trigger > svg:last-child {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
+
+.composer-profile-trigger__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-profile-trigger__value {
+  color: var(--fg);
+  font-weight: var(--composer-control-font-weight);
+}
+
+.composer-access-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(336px, calc(100vw - 16px));
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.composer-access-menu__section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.composer-access-menu__section + .composer-access-menu__section {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.composer-access-menu__label {
+  padding: 3px 8px 5px;
+  color: var(--fg-faint);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.composer-access-menu__item {
+  --wails-draggable: no-drag;
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  color: var(--fg-dim);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-access-menu__item > svg {
+  flex: 0 0 auto;
+}
+
+.composer-access-menu__item:hover,
+.composer-access-menu__item:focus-visible,
+.composer-access-menu__item--active {
+  outline: none;
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+
+.composer-access-menu__copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-access-menu__title {
+  color: inherit;
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.composer-access-menu__desc {
+  min-width: 0;
+  color: var(--fg-faint);
+  font-size: 8px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.composer-intent-menu,
+.composer-profile-menu {
+  width: min(284px, calc(100vw - 16px));
+}
+
+.composer-intent-menu__stop {
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  color: var(--danger);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 8.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.composer-intent-menu__stop:hover {
+  background: var(--danger-soft);
+}
+
+.agent-goal-input {
+  display: flex;
+  min-width: 150px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-goal-input input {
+  width: 150px;
+  min-height: 27px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--composer-control-radius);
+  outline: none;
+  color: var(--fg-dim);
+  background: white;
+  font-size: 7px;
+}
+
+.agent-goal-input input:focus {
+  border-color: var(--accent);
+}
+
+/* 审批模式滑块（Reasonix composer-modebar 1:1） */
+.composer-modebar--approval {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.composer-modebar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  color: var(--fg-faint);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 7px;
+  cursor: pointer;
+}
+
+.composer-modebar__item--active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.composer-modebar__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.composer-modebar__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(120, 111, 225, 0.25);
 }
 
 .agent-workbench-actions .icon-button {
@@ -7058,6 +7412,165 @@ body.panel-resizing .workspace-grid {
   font-size: 6.5px;
 }
 
+.agent-slash-picker {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 9;
+  display: flex;
+  max-height: 210px;
+  flex-direction: column;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid #dedbea;
+  border-radius: 9px;
+  background: white;
+  box-shadow: 0 9px 28px rgba(35, 32, 64, 0.13);
+}
+
+.agent-slash-picker > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  color: #61636d;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-slash-picker > button:hover {
+  color: #5850bb;
+  background: #f0eeff;
+}
+
+.agent-slash-picker span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-slash-picker strong,
+.agent-slash-picker small {
+  overflow: hidden;
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-slash-picker small {
+  color: #999ba3;
+  font-size: 6.5px;
+}
+
+/* ── 终端面板 ─────────────────────────────────────────────────────────── */
+.agent-terminal-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.agent-terminal-runs {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.agent-terminal-empty {
+  padding: 24px 10px;
+  color: #9b9da5;
+  text-align: center;
+  font-size: 7.5px;
+}
+
+.agent-terminal-run {
+  margin-bottom: 8px;
+}
+
+.agent-terminal-command {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #61636d;
+  font-size: 8px;
+}
+
+.agent-terminal-command code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-terminal-state {
+  flex: 0 0 auto;
+  color: #9b9da5;
+  font-size: 6.5px;
+}
+
+.agent-terminal-state.running {
+  color: #5850bb;
+}
+
+.agent-terminal-state.failed {
+  color: #b44850;
+}
+
+.agent-terminal-output {
+  max-height: 220px;
+  margin: 5px 0 0;
+  padding: 8px 9px;
+  overflow: auto;
+  color: #e8e9ee;
+  border-radius: 7px;
+  background: #23242c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.agent-terminal-input {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.agent-terminal-input input {
+  min-width: 0;
+  flex: 1;
+  padding: 6px 8px;
+  color: #61636d;
+  border: 1px solid #dcdae9;
+  border-radius: 7px;
+  outline: none;
+  font-size: 7.5px;
+}
+
+.agent-terminal-input input:focus {
+  border-color: #aaa5e2;
+}
+
+.agent-terminal-stop {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 9px;
+  color: white;
+  border: 0;
+  border-radius: 7px;
+  background: #c45861;
+  cursor: pointer;
+}
+
 .agent-drop-overlay {
   position: absolute;
   inset: 5px;
@@ -7806,4 +8319,112 @@ body.panel-resizing .workspace-grid {
   .trash-card-actions {
     align-self: flex-end;
   }
+}
+
+/* ── Reasonix 工作台页面 ──────────────────────────────────────────────── */
+.reasonix-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: #16171b;
+}
+
+.reasonix-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #2a2b31;
+  background: #1c1d23;
+}
+
+.reasonix-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: #a9aab2;
+}
+
+.reasonix-title > svg {
+  color: #c8c3ff;
+}
+
+.reasonix-title div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.reasonix-title strong {
+  color: #e7e8eb;
+  font-size: 12px;
+}
+
+.reasonix-title span {
+  overflow: hidden;
+  color: #8b8d95;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reasonix-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.reasonix-launch-error {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  color: #ff9aa0;
+  border-bottom: 1px solid #3a2629;
+  background: #2a1d1f;
+  font-size: 8.5px;
+}
+
+.reasonix-frame-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  background: #16171b;
+}
+
+.reasonix-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #16171b;
+}
+
+.reasonix-frame-error {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  width: min(420px, calc(100% - 40px));
+  transform: translate(-50%, -50%);
+  padding: 22px;
+  color: #9b9da5;
+  border: 1px solid #2a2b31;
+  border-radius: 12px;
+  background: #1c1d23;
+  text-align: center;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.reasonix-frame-error code {
+  display: block;
+  margin-top: 6px;
+  color: #c8c3ff;
+  font-size: 8px;
 }

@@ -132,6 +132,7 @@ interface NativeApp {
   SelectTaskContextRoot(): Promise<string>;
   SetTaskContextRoot(path: string): Promise<TaskContextRootInfo>;
   OpenTaskContextRoot(): Promise<void>;
+  LaunchReasonix(): Promise<void>;
   EnsureTaskWorkspace?(taskId: string): Promise<TaskWorkspaceInfo>;
   ListTaskWorkspaceFiles?(
     taskId: string,
@@ -141,6 +142,12 @@ interface NativeApp {
     taskId: string,
     path: string,
   ): Promise<FilePreview>;
+  ReasonixEnsureTab?(
+    taskId: string,
+    workspaceRoot: string,
+    taskTitle?: string,
+  ): Promise<ReasonixTabView>;
+  ReasonixCloseTab?(taskId: string): Promise<void>;
   ListPlaneProjects(
     baseUrl: string,
     workspaceSlug: string,
@@ -388,6 +395,14 @@ export async function openTaskContextRoot(): Promise<void> {
   await requireTaskContextNativeApp().OpenTaskContextRoot();
 }
 
+export async function launchReasonix(): Promise<void> {
+  const app = nativeApp();
+  if (typeof app?.LaunchReasonix !== "function") {
+    throw new Error("当前版本不支持启动 Reasonix 工作台");
+  }
+  await app.LaunchReasonix();
+}
+
 function requireTaskWorkspaceNativeApp(): Required<
   Pick<
     NativeApp,
@@ -432,6 +447,47 @@ export async function readTaskWorkspaceFile(
   path: string,
 ): Promise<FilePreview> {
   return requireTaskWorkspaceNativeApp().ReadTaskWorkspaceFile(taskId, path);
+}
+
+export interface ReasonixTabView {
+  id: string;
+  workspaceRoot: string;
+  topicId: string;
+  topicTitle: string;
+  sessionPath?: string;
+  label: string;
+  ready: boolean;
+  running: boolean;
+  mode: string;
+  goal?: string;
+}
+
+/**
+ * ensureReasonixTab 为任务建立（或复用）Reasonix 会话。
+ * 一个任务 = 一个 Reasonix 会话：控制器、会话文件（JSONL）与事件流全部
+ * 按 taskId 隔离，工作区根与 PI 工作台一致。
+ */
+export async function ensureReasonixTab(
+  taskId: string,
+  workspaceRoot: string,
+  taskTitle = "",
+): Promise<ReasonixTabView> {
+  const app = nativeApp();
+  if (typeof app?.ReasonixEnsureTab !== "function") {
+    throw new Error("当前版本不支持 Reasonix 工作台（需 Wails 桌面客户端）");
+  }
+  return app.ReasonixEnsureTab(taskId, workspaceRoot, taskTitle);
+}
+
+/**
+ * closeReasonixTab 释放任务的 Reasonix 会话运行时（会话文件保留）。
+ * 任务详情页卸载时调用，避免控制器长期驻留累积内存。
+ */
+export async function closeReasonixTab(taskId: string): Promise<void> {
+  const app = nativeApp();
+  if (typeof app?.ReasonixCloseTab === "function") {
+    await app.ReasonixCloseTab(taskId);
+  }
 }
 
 export async function generateDailyReport(

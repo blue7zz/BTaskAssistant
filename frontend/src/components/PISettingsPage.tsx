@@ -67,9 +67,9 @@ export function PISettingsPage({
           <span className="eyebrow">NATIVE PI</span>
           <h2>配置原生 PI 的模型与推理偏好</h2>
           <p>
-            每个任务使用隔离的 PI 配置目录，默认不读取或复制
-            ~/.pi/agent。模型与思考强度会在新建任务级 Session 时通过 RPC
-            显式设置。
+            默认使用任务隔离的 PI 配置目录；需要调用真实模型时，可以显式使用
+            本机 PI 已登录的 provider。模型、凭据来源与思考强度会在新建
+            Session 时应用。
           </p>
         </div>
         <div className={`pi-runtime-state ${engine?.configured ? "online" : ""}`}>
@@ -111,9 +111,59 @@ export function PISettingsPage({
                   placeholder="例如 provider/model；留空则由原生 PI 会话选择"
                 />
                 <small className="pi-field-help">
-                  使用 provider/model 格式；留空不会读取或复制全局 PI 配置。
+                  使用 provider/model 格式；留空时由所选凭据来源的原生 PI 会话选择模型。
                 </small>
               </label>
+
+              <fieldset className="pi-thinking-fieldset">
+                <legend>模型凭据来源</legend>
+                <div className="pi-thinking-options pi-resource-policy-options">
+                  <label
+                    className={
+                      draft.resourcePolicy === "isolated" ? "selected" : ""
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="pi-resource-policy"
+                      value="isolated"
+                      checked={draft.resourcePolicy === "isolated"}
+                      onChange={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          resourcePolicy: "isolated",
+                        }))
+                      }
+                    />
+                    <span>任务隔离</span>
+                    <small>不读取本机 PI 登录配置，适合无模型调用的隔离检查。</small>
+                  </label>
+                  <label
+                    className={
+                      draft.resourcePolicy === "explicit-inherit"
+                        ? "selected"
+                        : ""
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="pi-resource-policy"
+                      value="explicit-inherit"
+                      checked={draft.resourcePolicy === "explicit-inherit"}
+                      onChange={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          resourcePolicy: "explicit-inherit",
+                        }))
+                      }
+                    />
+                    <span>使用本机 PI 登录配置</span>
+                    <small>
+                      读取 PI_CODING_AGENT_DIR（默认 ~/.pi/agent）的模型与认证，不复制密钥。
+                    </small>
+                  </label>
+                </div>
+              </fieldset>
 
               <fieldset className="pi-thinking-fieldset">
                 <legend>思考强度</legend>
@@ -184,11 +234,22 @@ export function PISettingsPage({
           <section className="pi-compatibility-card">
             <CheckCircle2 size={20} />
             <div>
-              <strong>已启用每任务隔离策略</strong>
-              <p>
-                默认资源策略为 isolated，不继承 ~/.pi/agent。旧的 max
-                思考强度会读时迁移为 xhigh，实际可用档位由原生 PI RPC 校验。
-              </p>
+              <strong>
+                {draft.resourcePolicy === "explicit-inherit"
+                  ? "已显式使用本机 PI 登录配置"
+                  : "已启用每任务隔离策略"}
+              </strong>
+              {draft.resourcePolicy === "explicit-inherit" ? (
+                <p>
+                  仅使用本机 provider 认证与模型配置；不会复制密钥，任务 Session
+                  与运行记录仍保持隔离。
+                </p>
+              ) : (
+                <p>
+                  默认资源策略为 isolated，不继承 ~/.pi/agent。旧的 max
+                  思考强度会读时迁移为 xhigh，实际可用档位由原生 PI RPC 校验。
+                </p>
+              )}
             </div>
           </section>
         </div>
@@ -231,8 +292,12 @@ export function PISettingsPage({
               </div>
             </header>
             <ul>
-              <li>默认不继承全局 PI 资源或凭据</li>
-              <li>任务会话与固定分析均禁用所有工具</li>
+              <li>
+                {draft.resourcePolicy === "explicit-inherit"
+                  ? "仅显式读取本机 PI 的模型配置与 provider 凭据"
+                  : "不继承本机 PI 的模型配置或 provider 凭据"}
+              </li>
+              <li>全局扩展、技能、Prompt、主题与内建工具仍不自动加载</li>
               <li>任务资料、Session 与运行目录按任务隔离</li>
               <li>分析结果仍需用户采纳和人工批准</li>
             </ul>

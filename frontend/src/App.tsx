@@ -20,6 +20,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  SquareTerminal,
   Trash2,
   Wrench,
   X,
@@ -35,6 +36,7 @@ import {
   SettingsPage,
   type SettingsCategory,
 } from "./components/SettingsPage";
+
 import { TrashView } from "./components/TrashView";
 import { STATUS_META, TASK_STATUSES, type TaskStatus } from "./domain/task";
 import {
@@ -624,6 +626,7 @@ export default function App() {
         </div>
 
         <div className="sidebar-footer">
+
           <button
             type="button"
             className={`nav-item ${activeView === "settings" ? "active" : ""}`}
@@ -649,28 +652,28 @@ export default function App() {
           onPointerDown={(event) => startPanelResize("sidebar", event)}
           onKeyDown={(event) => resizePanelWithKeyboard("sidebar", event)}
         />
-      </nav>
+        </nav>
 
-      <main className="main-shell">
-        {activeView === "settings" ? (
-          <SettingsPage
-            initialCategory={settingsInitialCategory}
-            engine={engines.find((engine) => engine.id === "pi")}
-            planeConnected={planeAvailable}
-            onBack={closeSettings}
-            onPlaneConnectionChange={() =>
-              setPlaneConnectionRevision((revision) => revision + 1)
-            }
-            onSuccess={reportSuccess}
-            onError={reportError}
-          />
-        ) : activeView === "report" ? (
-          <DailyReportPage
-            onOpenSettings={() => openSettings("report")}
-            onSuccess={reportSuccess}
-            onError={reportError}
-          />
-        ) : activeView === "plane" ? (
+        <main className="main-shell">
+          {activeView === "settings" ? (
+            <SettingsPage
+              initialCategory={settingsInitialCategory}
+              engine={engines.find((engine) => engine.id === "pi")}
+              planeConnected={planeAvailable}
+              onBack={closeSettings}
+              onPlaneConnectionChange={() =>
+                setPlaneConnectionRevision((revision) => revision + 1)
+              }
+              onSuccess={reportSuccess}
+              onError={reportError}
+            />
+          ) : activeView === "report" ? (
+            <DailyReportPage
+              onOpenSettings={() => openSettings("report")}
+              onSuccess={reportSuccess}
+              onError={reportError}
+            />
+          ) : activeView === "plane" ? (
           <PlaneCollector
             connected={planeAvailable}
             onError={reportError}

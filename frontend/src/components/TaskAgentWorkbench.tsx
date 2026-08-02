@@ -1,25 +1,36 @@
 import {
   AlertTriangle,
   Activity,
+  ArrowRight,
   AtSign,
   Bot,
   Boxes,
+  Check,
+  ChevronsUpDown,
   Clock3,
+  Equal,
   ExternalLink,
   File,
   FileText,
+  Flag,
   FolderOpen,
+  Gauge,
   GitBranch,
   Image as ImageIcon,
   Info,
+  List,
   LoaderCircle,
   MessageSquare,
   Paperclip,
   Plus,
   RotateCcw,
   Send,
+  Shield,
   ShieldAlert,
+  ShieldCheck,
   Square,
+  Tag,
+  Target,
   X,
 } from "lucide-react";
 import {
@@ -45,10 +56,12 @@ import type {
   AgentToolCall,
 } from "../domain/agent";
 import { agentClient, type AgentClient } from "../lib/agentBridge";
+import { STATUS_META, type TaskPriority } from "../domain/task";
 import { useWorkspaceStore } from "../store/workspace";
-import { STATUS_META } from "../domain/task";
+import type { PIThinkingEffort } from "../domain/engine";
 import { AgentChangesPanel } from "./AgentChangesPanel";
 import { AgentPermissionCard } from "./AgentPermissionCard";
+import { AgentTerminalPanel } from "./AgentTerminalPanel";
 import { AgentRunsPanel } from "./AgentRunsPanel";
 import { AgentToolCard } from "./AgentToolCard";
 
@@ -59,7 +72,7 @@ interface TaskAgentWorkbenchProps {
   onEditTask?(): void;
 }
 
-type ResourcePanel = "context" | "files" | "changes" | "runs";
+type ResourcePanel = "context" | "files" | "changes" | "runs" | "terminal";
 
 type TimelineItem =
   | { type: "message"; id: string; at: string; sequence: number; message: AgentMessage }
@@ -105,6 +118,12 @@ const MODE_LABELS: Record<AgentSession["mode"], string> = {
   ask: "Ask",
   plan: "Plan",
   agent: "Agent",
+};
+
+const PRIORITY_LABEL: Record<TaskPriority, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
 };
 
 const MESSAGE_STATUS_LABELS: Record<AgentMessageStatus, string> = {
@@ -214,6 +233,7 @@ function mentionQuery(value: string): string | undefined {
   return match?.[1];
 }
 
+
 export function TaskAgentWorkbench({
   taskId,
   taskTitle,
@@ -221,11 +241,28 @@ export function TaskAgentWorkbench({
   onEditTask,
 }: TaskAgentWorkbenchProps) {
   const piSettings = useWorkspaceStore((state) => state.piSettings);
+  const updatePISettings = useWorkspaceStore((state) => state.updatePISettings);
   const taskStatus = useWorkspaceStore(
     (state) => state.tasks.find((task) => task.id === taskId)?.status ?? "inbox",
   );
+  const taskPriority = useWorkspaceStore(
+    (state) =>
+      state.tasks.find((task) => task.id === taskId)?.priority ?? "medium",
+  );
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [collaborationMode, setCollaborationMode] = useState<
+    "normal" | "plan" | "goal"
+  >("normal");
+  const [tokenMode, setTokenMode] = useState<"economy" | "full" | "delivery">(
+    "full",
+  );
+  const [toolApprovalMode, setToolApprovalMode] = useState<
+    "ask" | "auto" | "yolo"
+  >("ask");
+  const [intentMenuOpen, setIntentMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [historyCursor, setHistoryCursor] = useState("");
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
@@ -236,12 +273,29 @@ export function TaskAgentWorkbench({
   const [resolvingPermissions, setResolvingPermissions] = useState<Set<string>>(new Set());
   const [revokingGrants, setRevokingGrants] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState("");
-  const [newSessionMode, setNewSessionMode] = useState<AgentSession["mode"]>("ask");
   const [resources, setResources] = useState<AgentResource[]>([]);
   const [artifacts, setArtifacts] = useState<AgentResource[]>([]);
   const [mentionOptions, setMentionOptions] = useState<AgentResource[]>([]);
   const [selectedResources, setSelectedResources] = useState<AgentResource[]>([]);
   const [resourcePanel, setResourcePanel] = useState<ResourcePanel>("context");
+  const [slashCommands, setSlashCommands] = useState<
+    Array<{ name: string; description?: string }>
+  >([]);
+  const intentMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!intentMenuOpen && !profileMenuOpen) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (intentMenuRef.current?.contains(target)) return;
+      if (profileMenuRef.current?.contains(target)) return;
+      setIntentMenuOpen(false);
+      setProfileMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [intentMenuOpen, profileMenuOpen]);
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
   const [runRefreshVersion, setRunRefreshVersion] = useState(0);
   const [preview, setPreview] = useState<AgentResourcePreview>();
@@ -818,6 +872,78 @@ export function TaskAgentWorkbench({
       if (epoch === epochRef.current) setError(errorText(reason));
     }
   };
+  const loadSlashCommands = async () => {
+    if (!selectedSessionId || slashCommands.length > 0 || !client.sessionCommand) {
+      return;
+    }
+    try {
+      const result = await client.sessionCommand({
+        taskId,
+        sessionId: selectedSessionId,
+        type: "get_commands",
+        payload: {},
+      });
+      if (Array.isArray(result.commands)) {
+        setSlashCommands(result.commands as Array<{ name: string; description?: string }>);
+      }
+    } catch {
+      // 命令列表不可用时静默
+    }
+  };
+
+  const slashQuery = draft.startsWith("/") ? draft.slice(1).trim() : "";
+  const slashMatches = slashQuery
+    ? slashCommands.filter(
+        (command) =>
+          command.name.includes(slashQuery) ||
+          (command.description ?? "").includes(slashQuery),
+      )
+    : slashCommands;
+
+  const insertSlashCommand = (name: string) => {
+    const tokenEnd = draft.indexOf(" ") < 0 ? draft.length : draft.indexOf(" ");
+    const remainder = draft.slice(tokenEnd).replace(/^\s+/, "");
+    setDraft(remainder ? `/${name} ${remainder}` : `/${name} `);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const chooseTaskMode = (mode: "normal" | "plan" | "goal") => {
+    setCollaborationMode(mode);
+    setIntentMenuOpen(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const chooseTokenMode = (mode: "economy" | "full" | "delivery") => {
+    setTokenMode(mode);
+    setProfileMenuOpen(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const chooseApprovalMode = (mode: "ask" | "auto" | "yolo") => {
+    setToolApprovalMode(mode);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const TaskModeIcon =
+    collaborationMode === "plan"
+      ? List
+      : collaborationMode === "goal"
+        ? Target
+        : ArrowRight;
+  const taskModeShortKey =
+    collaborationMode === "plan"
+      ? "计划"
+      : collaborationMode === "goal"
+        ? "目标"
+        : "常规";
+  const RuntimeProfileIcon =
+    tokenMode === "economy" ? Gauge : tokenMode === "delivery" ? Flag : Equal;
+  const runtimeProfileShortKey =
+    tokenMode === "economy"
+      ? "轻量"
+      : tokenMode === "delivery"
+        ? "交付"
+        : "均衡";
 
   const createSession = async () => {
     const epoch = epochRef.current;
@@ -827,9 +953,15 @@ export function TaskAgentWorkbench({
       const session = await client.createSession({
         taskId,
         title: `${taskTitle} · PI`,
-        mode: newSessionMode,
+        mode:
+          collaborationMode === "plan"
+            ? "plan"
+            : collaborationMode === "goal"
+              ? "agent"
+              : "ask",
         model: piSettings.model,
         thinkingLevel: piSettings.thinkingEffort,
+        resourcePolicy: piSettings.resourcePolicy,
       });
       if (epoch !== epochRef.current) return;
       selectedSessionRef.current = session.id;
@@ -1087,35 +1219,34 @@ export function TaskAgentWorkbench({
       return time || left.sequence - right.sequence || left.id.localeCompare(right.id);
     });
   }, [messages, permissionRequests, toolCalls]);
-
   return (
     <section className="task-agent-workbench" aria-label="PI 会话工作台">
       <header className="agent-workbench-topbar">
         <div className="agent-workbench-identity">
           <span className="eyebrow">任务 Agent 工作台</span>
-          <strong title={taskTitle}>{taskTitle}</strong>
+          <div className="agent-workbench-title-row">
+            <span className={`status-chip status-${taskStatus}`}>
+              {STATUS_META[taskStatus].label}
+            </span>
+            <span className={`manual-priority-chip priority-${taskPriority}`}>
+              <Tag size={12} />
+              {PRIORITY_LABEL[taskPriority]}
+            </span>
+            <strong title={taskTitle}>{taskTitle}</strong>
+          </div>
         </div>
-        <div className="agent-workbench-status" aria-label="当前任务与 PI 状态">
-          <span>
-            <small>任务</small>
-            <strong>{STATUS_META[taskStatus].label}</strong>
-          </span>
+        <div className="agent-workbench-status" aria-label="会话状态">
           <span>
             <small>模式</small>
-            <strong>{MODE_LABELS[activeSession?.mode ?? newSessionMode]}</strong>
-          </span>
-          <span title={activeSession?.model || piSettings.model || "使用 PI 默认模型"}>
-            <small>模型</small>
-            <strong>{activeSession?.model || piSettings.model || "PI 默认"}</strong>
-          </span>
-          <span>
-            <small>PI</small>
             <strong>
-              {client.runtimeMode() === "browser-mock"
-                ? "浏览器 Mock"
-                : activeSession
-                  ? SESSION_STATE_LABELS[activeSession.state]
-                  : "未启动"}
+              {MODE_LABELS[
+                activeSession?.mode ??
+                  (collaborationMode === "plan"
+                    ? "plan"
+                    : collaborationMode === "goal"
+                      ? "agent"
+                      : "ask")
+              ]}
             </strong>
           </span>
           <span title={workspaceState}>
@@ -1140,20 +1271,6 @@ export function TaskAgentWorkbench({
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>{session.title}</option>
               ))}
-            </select>
-          </label>
-          <label>
-            <span>新会话模式</span>
-            <select
-              aria-label="新会话模式"
-              value={newSessionMode}
-              disabled={creating || busy}
-              onChange={(event) =>
-                setNewSessionMode(event.target.value as AgentSession["mode"])}
-            >
-              <option value="ask">Ask</option>
-              <option value="plan">Plan</option>
-              <option value="agent">Agent</option>
             </select>
           </label>
           <button
@@ -1201,6 +1318,152 @@ export function TaskAgentWorkbench({
             >
               <Info size={14} />
             </button>
+          )}
+          <div className="composer-modebar composer-modebar--approval" data-mode={toolApprovalMode}>
+            <span className="composer-modebar__thumb" aria-hidden="true" />
+            <button
+              type="button"
+              className={`composer-modebar__item composer-modebar__item--ask${toolApprovalMode === "ask" ? " composer-modebar__item--active" : ""}`}
+              onClick={() => chooseApprovalMode("ask")}
+              disabled={creating || busy}
+              aria-pressed={toolApprovalMode === "ask"}
+              title="需审批的工具调用会先询问；询问不是只读模式"
+            >
+              <Shield size={14} />
+              <span>询问</span>
+            </button>
+            <button
+              type="button"
+              className={`composer-modebar__item composer-modebar__item--auto${toolApprovalMode === "auto" ? " composer-modebar__item--active" : ""}`}
+              onClick={() => chooseApprovalMode("auto")}
+              disabled={creating || busy}
+              aria-pressed={toolApprovalMode === "auto"}
+              title="自动执行，只在需要用户决定计划时询问"
+            >
+              <ShieldCheck size={14} />
+              <span>自动</span>
+            </button>
+            <button
+              type="button"
+              className={`composer-modebar__item composer-modebar__item--yolo${toolApprovalMode === "yolo" ? " composer-modebar__item--active" : ""}`}
+              onClick={() => chooseApprovalMode("yolo")}
+              disabled={creating || busy}
+              aria-pressed={toolApprovalMode === "yolo"}
+              title="Yolo 批准会跳过普通工具权限提示"
+            >
+              <ShieldAlert size={14} />
+              <span>Yolo</span>
+            </button>
+          </div>
+          {collaborationMode === "goal" && (
+            <label className="agent-goal-input">
+              <span>目标</span>
+              <input
+                value={goalDraft}
+                placeholder="请输入目标…"
+                aria-label="目标说明"
+                disabled={creating || busy}
+                onChange={(event) => setGoalDraft(event.target.value)}
+              />
+            </label>
+          )}
+          {intentMenuOpen && (
+            <div
+              className="composer-access-menu composer-intent-menu"
+              role="menu"
+              aria-label="执行方式"
+              ref={intentMenuRef}
+            >
+              <div className="composer-access-menu__label">执行方式</div>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={collaborationMode === "normal"}
+                className={`composer-access-menu__item composer-intent-menu__item${collaborationMode === "normal" ? " composer-access-menu__item--active" : ""}`}
+                onClick={() => chooseTaskMode("normal")}
+                disabled={creating || busy}
+              >
+                <ArrowRight size={16} />
+                <span className="composer-access-menu__copy">
+                  <span className="composer-access-menu__title">常规 · 边做边推进</span>
+                  <span className="composer-access-menu__desc">边分析边执行，适合明确的日常任务。</span>
+                </span>
+                {collaborationMode === "normal" && <Check size={16} />}
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={collaborationMode === "plan"}
+                className={`composer-access-menu__item composer-intent-menu__item${collaborationMode === "plan" ? " composer-access-menu__item--active" : ""}`}
+                onClick={() => chooseTaskMode("plan")}
+                disabled={creating || busy}
+              >
+                <List size={16} />
+                <span className="composer-access-menu__copy">
+                  <span className="composer-access-menu__title">计划 · 确认后执行</span>
+                  <span className="composer-access-menu__desc">先产出计划；工具是否执行仍由当前权限与沙箱决定。</span>
+                </span>
+                {collaborationMode === "plan" && <Check size={16} />}
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={collaborationMode === "goal"}
+                className={`composer-access-menu__item composer-intent-menu__item${collaborationMode === "goal" ? " composer-access-menu__item--active" : ""}`}
+                onClick={() => chooseTaskMode("goal")}
+                disabled={creating || busy}
+              >
+                <Target size={16} />
+                <span className="composer-access-menu__copy">
+                  <span className="composer-access-menu__title">目标 · 持续推进</span>
+                  <span className="composer-access-menu__desc">
+                    {goalDraft || "请输入目标…"}
+                  </span>
+                </span>
+                {collaborationMode === "goal" && <Check size={16} />}
+              </button>
+              {collaborationMode === "goal" && goalDraft && (
+                <button
+                  type="button"
+                  className="composer-intent-menu__stop"
+                  onClick={() => {
+                    setGoalDraft("");
+                    setIntentMenuOpen(false);
+                  }}
+                  disabled={creating || busy}
+                >
+                  结束目标
+                </button>
+              )}
+            </div>
+          )}
+          {profileMenuOpen && (
+            <div className="composer-access-menu composer-profile-menu" role="menu" aria-label="工作模式" ref={profileMenuRef}>
+              <div className="composer-access-menu__label">工作模式</div>
+              {([
+                ["economy", Gauge, "轻量 · 快速省用量", "少上下文 · 工具按需启用"],
+                ["full", Equal, "均衡 · 日常通用", "完整工具 · 模型自主执行"],
+                ["delivery", Flag, "交付 · 完整验证", "强制验收 · 复查验证"],
+              ] as const).map(([profile, Icon, title, desc]) => (
+                <button
+                  key={profile}
+                  type="button"
+                  role="menuitemradio"
+                  className={`composer-access-menu__item composer-profile-menu__item${tokenMode === profile ? " composer-access-menu__item--active" : ""}`}
+                  onClick={() => chooseTokenMode(profile)}
+                  disabled={creating || busy}
+                  title={desc}
+                  aria-checked={tokenMode === profile}
+                >
+                  <Icon size={16} strokeWidth={1.75} />
+                  <span className="composer-access-menu__copy">
+                    <span className="composer-access-menu__title">{title}</span>
+                    <span className="composer-access-menu__desc">{desc}</span>
+                  </span>
+                  {tokenMode === profile && <Check size={15} />}
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </header>
@@ -1510,12 +1773,16 @@ export function TaskAgentWorkbench({
               <div className="agent-selected-resources" aria-label="待发送引用">
                 {selectedResources.map((resource) => (
                   <span key={resource.id}>
-                    {resource.mimeType?.startsWith("image/") ? <ImageIcon size={11} /> : <FileText size={11} />}
+                    <Paperclip size={11} />
                     {resourceName(resource)}
                     <button
                       type="button"
-                      aria-label={`移除待发送引用 ${resourceName(resource)}`}
-                      onClick={() => setSelectedResources((current) => current.filter((item) => item.id !== resource.id))}
+                      aria-label={`移除引用 ${resourceName(resource)}`}
+                      onClick={() =>
+                        setSelectedResources((current) =>
+                          current.filter((item) => item.id !== resource.id),
+                        )
+                      }
                     >
                       <X size={10} />
                     </button>
@@ -1533,12 +1800,16 @@ export function TaskAgentWorkbench({
                   selectedSessionId
                     ? busy
                       ? "运行中：输入明确的 Steer 引导或 Follow-up 后续消息……"
-                      : "输入消息，键入 @ 引用当前任务资源；可粘贴或拖放附件……"
+                      : "输入消息，键入 @ 引用当前任务资源；键入 / 打开会话命令……"
                     : "请先新建 PI 会话"
                 }
                 disabled={!selectedSessionId || stopping || recovering}
                 onPaste={handlePaste}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDraft(value);
+                  if (value.startsWith("/")) void loadSlashCommands();
+                }}
                 onKeyDown={(event) => {
                   if (
                     busy &&
@@ -1556,6 +1827,23 @@ export function TaskAgentWorkbench({
                   }
                 }}
               />
+              {draft.startsWith("/") && slashMatches.length > 0 && (
+                <div className="agent-slash-picker" role="listbox" aria-label="会话命令">
+                  {slashMatches.map((command) => (
+                    <button
+                      type="button"
+                      role="option"
+                      key={command.name}
+                      onClick={() => insertSlashCommand(command.name)}
+                    >
+                      <span>
+                        <strong>/{command.name}</strong>
+                        {command.description && <small>{command.description}</small>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {activeMentionQuery !== undefined && mentionOptions.length > 0 && (
                 <div className="agent-mention-picker" role="listbox" aria-label="当前任务资源">
                   {mentionOptions.map((resource) => (
@@ -1706,6 +1994,13 @@ export function TaskAgentWorkbench({
           >
             运行
           </button>
+          <button
+            type="button"
+            className={resourcePanel === "terminal" ? "active" : ""}
+            onClick={() => setResourcePanel("terminal")}
+          >
+            终端
+          </button>
         </div>
         {(resourcePanel === "context" || resourcePanel === "files") && (
           <div className="agent-resource-list">
@@ -1749,6 +2044,14 @@ export function TaskAgentWorkbench({
             sessionId={selectedSessionId}
             client={client}
             refreshVersion={runRefreshVersion}
+          />
+        )}
+        {resourcePanel === "terminal" && (
+          <AgentTerminalPanel
+            taskId={taskId}
+            sessionId={selectedSessionId}
+            client={client}
+            onError={(message) => setError(message)}
           />
         )}
         {(resourcePanel === "context" || resourcePanel === "files") && previewResource && (

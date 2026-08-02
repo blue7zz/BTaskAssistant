@@ -62,6 +62,11 @@ describe("PI settings page", () => {
       inputSetter?.call(modelInput, "openai-codex/gpt-5.5");
       modelInput.dispatchEvent(new Event("input", { bubbles: true }));
       (
+        container.querySelector(
+          'input[value="explicit-inherit"]',
+        ) as HTMLInputElement
+      ).click();
+      (
         container.querySelector('input[value="high"]') as HTMLInputElement
       ).click();
       const timeout = container.querySelector("select") as HTMLSelectElement;
@@ -78,6 +83,7 @@ describe("PI settings page", () => {
       model: "openai-codex/gpt-5.5",
       thinkingEffort: "high",
       timeoutMinutes: 5,
+      resourcePolicy: "explicit-inherit",
     });
     expect(onSuccess).toHaveBeenCalledWith(
       "PI 设置已保存，将在新建 PI 会话时应用",

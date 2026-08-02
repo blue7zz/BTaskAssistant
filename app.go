@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	goruntime "runtime"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 	"github.com/blue7zz/BTaskAssistant/internal/workflow"
+	"reasonix/bridge"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -52,6 +55,11 @@ type App struct {
 	openDirectoryDialog     directoryDialogOpener
 	openPath                pathOpener
 	startupErr              error
+	rxManager              *bridge.Manager
+	rxMu                   *sync.Mutex
+	rxTabs                 map[string]rxTabEntry
+	rxActiveTaskID         string
+	rxActiveWorkspaceRoot  string
 }
 
 func NewApp() *App {
@@ -83,6 +91,7 @@ func NewApp() *App {
 			}
 		},
 	})
+	app.initReasonix()
 	return app
 }
 
@@ -98,6 +107,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	a.rxCloseAll()
 	if a.agentService != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = a.agentService.Close(ctx)
@@ -210,6 +220,21 @@ func (a *App) ListAgentSessions(
 		return nil, errors.New("PI 会话服务未初始化")
 	}
 	return a.agentService.Sessions(taskID)
+}
+
+// AgentSessionCommand 透传会话窗口的扩展 RPC 命令（/命令、bash、模型切换等）。
+func (a *App) AgentSessionCommand(
+	request agent.CommandRequest,
+) (map[string]any, error) {
+	if a.startupErr != nil {
+		return nil, a.startupErr
+	}
+	if a.agentService == nil {
+		return nil, errors.New("PI 会话服务未初始化")
+	}
+	ctx, cancel := context.WithTimeout(a.appContext(), 60*time.Second)
+	defer cancel()
+	return a.agentService.Command(ctx, request)
 }
 
 func (a *App) ListAgentMessages(
@@ -1174,4 +1199,27 @@ func (a *App) AnalyzeRequirements(
 		input,
 		settings,
 	)
+}
+
+// LaunchReasonix 启动 reasonix-app 的独立桌面应用（完整 Reasonix 界面）。
+// 应用二进制由 reasonix-app/desktop 的 wails build 产出。
+func (a *App) LaunchReasonix() error {
+	executable, err := os.Executable()
+	if err == nil {
+		candidates := []string{
+			// 开发：以项目根为工作目录运行
+			"reasonix-app/desktop/build/bin/reasonix-desktop.app",
+			// 打包：reasonix app 与 BTask 应用同级目录
+			filepath.Join(
+				filepath.Dir(filepath.Dir(filepath.Dir(executable))),
+				"reasonix-desktop.app",
+			),
+		}
+		for _, candidate := range candidates {
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				return exec.Command("open", candidate).Start()
+			}
+		}
+	}
+	return errors.New("未找到 reasonix-desktop.app，请先构建 reasonix-app/desktop")
 }

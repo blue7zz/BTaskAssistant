@@ -1,4 +1,5 @@
 export type PIThinkingEffort = "low" | "medium" | "high" | "xhigh";
+export type PIResourcePolicy = "isolated" | "explicit-inherit";
 
 export const NATIVE_PI_ENGINE = "pi" as const;
 export const CODEX_ENGINE = "codex" as const;
@@ -25,12 +26,14 @@ export interface PISettings {
   model: string;
   thinkingEffort: PIThinkingEffort;
   timeoutMinutes: number;
+  resourcePolicy: PIResourcePolicy;
 }
 
 export const DEFAULT_PI_SETTINGS: PISettings = {
   model: "",
   thinkingEffort: "xhigh",
   timeoutMinutes: 3,
+  resourcePolicy: "isolated",
 };
 
 const THINKING_EFFORTS: PIThinkingEffort[] = [
@@ -45,6 +48,7 @@ export function normalizePISettings(
     model?: string;
     thinkingEffort?: string;
     timeoutMinutes?: number;
+    resourcePolicy?: string;
   },
 ): PISettings {
   const thinkingEffort =
@@ -63,5 +67,9 @@ export function normalizePISettings(
     model: settings?.model?.trim() ?? DEFAULT_PI_SETTINGS.model,
     thinkingEffort,
     timeoutMinutes,
+    resourcePolicy:
+      settings?.resourcePolicy === "explicit-inherit"
+        ? "explicit-inherit"
+        : DEFAULT_PI_SETTINGS.resourcePolicy,
   };
 }

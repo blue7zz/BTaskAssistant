@@ -550,6 +550,7 @@ func runDailyReportCLI(
 			Prompt: prompt, Model: runtime.Model,
 			ThinkingLevel:  runtime.ThinkingEffort,
 			MaxOutputBytes: maxDailyReportOutputBytes,
+			ResourcePolicy: runtime.ResourcePolicy,
 		})
 		if err != nil {
 			return "", fmt.Errorf("PI 日报生成失败: %w", err)

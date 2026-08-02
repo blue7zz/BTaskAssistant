@@ -20,13 +20,45 @@ import (
 )
 
 const (
-	defaultStartupTimeout = 8 * time.Second
-	defaultRequestTimeout = 10 * time.Second
-	defaultShutdownGrace  = 2 * time.Second
-	defaultStderrLimit    = 64 * 1024
+	defaultStartupTimeout         = 8 * time.Second
+	defaultRequestTimeout         = 10 * time.Second
+	defaultShutdownGrace          = 2 * time.Second
+	defaultStderrLimit            = 64 * 1024
+	resourcePolicyIsolated        = "isolated"
+	resourcePolicyExplicitInherit = "explicit-inherit"
 )
 
 var piVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:\D|$)`)
+
+func normalizePIResourcePolicy(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return resourcePolicyIsolated, nil
+	}
+	if value != resourcePolicyIsolated && value != resourcePolicyExplicitInherit {
+		return "", errors.New("PI 资源策略不受支持")
+	}
+	return value, nil
+}
+
+func resolvePIConfigDirectory(resourcePolicy string, isolatedDirectory string) (string, error) {
+	policy, err := normalizePIResourcePolicy(resourcePolicy)
+	if err != nil {
+		return "", err
+	}
+	if policy == resourcePolicyIsolated {
+		return filepath.Abs(isolatedDirectory)
+	}
+	configured := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR"))
+	if configured == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("定位本机 PI 配置目录失败: %w", err)
+		}
+		configured = filepath.Join(home, ".pi", "agent")
+	}
+	return filepath.Abs(configured)
+}
 
 func ProbeInstalledPI(ctx context.Context) (string, string, error) {
 	executable, err := resolvePIExecutable("")
