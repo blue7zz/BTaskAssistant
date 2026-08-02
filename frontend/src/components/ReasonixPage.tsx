@@ -29,7 +29,7 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
   const hostRef = useRef<HTMLDivElement | null>(null);
   const unmountRef = useRef<(() => void) | null>(null);
   const requestSeqRef = useRef(0);
-  const [frameKey, setFrameKey] = useState(0);
+  const mountedRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [readyError, setReadyError] = useState("");
 
@@ -55,9 +55,11 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
 
   // 挂载 reasonix App（动态 import：embed 模块在挂载时才加载，且 compat.ts
   // 只在 ?host=1 / ?browser=1 时删除 window.go——embed 无该参数，直连可用）。
+  // 单实例：仅首次 ready 时挂载一次，任务切换不再卸载/重挂载。
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !ready) return undefined;
+    if (!host || !ready || mountedRef.current) return undefined;
+    mountedRef.current = true;
     let disposed = false;
     let unmount: (() => void) | null = null;
 
@@ -99,17 +101,11 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
       }
       unmountRef.current = null;
     };
-  }, [ready, frameKey]);
+  }, [ready]);
 
-  // 任务切换时重挂载 embed：reasonix 前端按后端 tab 状态渲染，不重挂载
-  // 会继续显示旧任务的内容（ManualTaskDetail 无 key，切换任务不重挂载组件）。
-  const prevTaskIdRef = useRef(taskId);
-  useEffect(() => {
-    if (prevTaskIdRef.current !== taskId) {
-      prevTaskIdRef.current = taskId;
-      setFrameKey((key) => key + 1);
-    }
-  }, [taskId]);
+  // 任务切换：单实例保活——reasonix App 不重建。ActivateReasonixTask 成功后
+  // 后端发 host:tab-activated 事件，reasonix 前端 syncActiveTab 切换会话。
+  // （App 首次挂载后常驻；ManualTaskDetail 切换任务只更新 props。）
 
   // 组件真正卸载（离开任务详情页）时释放会话运行时（会话文件保留）。
   // 任务切换（taskId 变化）不关闭控制器——切换回来秒开，会话状态保留。

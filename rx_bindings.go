@@ -201,7 +201,20 @@ func (a *App) ActivateReasonixTask(taskID string, workspaceRoot string, taskTitl
 	a.rxTabs[tab.ID] = rxTabEntry{taskID: taskID, workspaceRoot: workspaceRoot}
 	a.rxActiveTaskID = taskID
 	a.rxActiveWorkspaceRoot = workspaceRoot
+	// 通知单实例 reasonix 前端同步激活 tab（任务切换不重建 App）
+	a.rxEmitHostTabActivated(tab.ID)
 	return bridge.TabViewOf(tab, taskID, workspaceRoot), nil
+}
+
+// rxEmitHostTabActivated 通知嵌入的 reasonix 前端切换激活 tab。
+func (a *App) rxEmitHostTabActivated(tabID string) {
+	if a.ctx == nil {
+		return
+	}
+	wailsruntime.EventsEmit(a.ctx, reasonixEventName, map[string]any{
+		"type":  "host:tab-activated",
+		"tabId": tabID,
+	})
 }
 
 // ReasonixEnsureTab 保留旧名（无序号激活；内部路径使用）。

@@ -51,8 +51,8 @@ func TestSessionMemoryFootprint(t *testing.T) {
 		float64(after1)/1024/1024, float64(after1-baseline)/1024/1024,
 		float64(rssAfter1)/1024/1024, float64(rssAfter1-rssBaseline)/1024/1024)
 
-	// 4 个更多会话（共 5 个）
-	for i := 2; i <= 5; i++ {
+	// 3 个更多会话（共 4 个，不超过 idle 上限 MaxIdleRuntimes——避免被自动回收）
+	for i := 2; i <= 4; i++ {
 		if _, err := manager.Ensure(ctx, "task_mem"+string(rune('0'+i)), t.TempDir()); err != nil {
 			t.Fatal(err)
 		}
@@ -60,13 +60,13 @@ func TestSessionMemoryFootprint(t *testing.T) {
 	runtime.GC()
 	after5 := procRSS()
 	rssAfter5 := procRSS()
-	t.Logf("5 会话后 heap: %.1f MiB（累计增量 %.1f MiB，平均每会话 %.1f MiB）/ RSS: %.1f MiB（累计增量 %.1f MiB，平均每会话 %.1f MiB）",
+	t.Logf("4 会话后 heap: %.1f MiB（累计增量 %.1f MiB，平均每会话 %.1f MiB）/ RSS: %.1f MiB（累计增量 %.1f MiB，平均每会话 %.1f MiB）",
 		float64(after5)/1024/1024,
 		float64(after5-baseline)/1024/1024,
-		float64(after5-after1)/4/1024/1024,
+		float64(after5-after1)/3/1024/1024,
 		float64(rssAfter5)/1024/1024,
 		float64(rssAfter5-rssBaseline)/1024/1024,
-		float64(rssAfter5-rssAfter1)/4/1024/1024)
+		float64(rssAfter5-rssAfter1)/3/1024/1024)
 
 	// 会话活跃后（提交一轮）的内存
 	if err := manager.Submit("task_mem1", "内存测量"); err != nil {

@@ -208,6 +208,22 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
   会话活跃时拒绝。
 - 测试：符号链接逃逸、工作区解析（无绑定/ready/未就绪三态）。
 
+### 任务级会话保活（阶段 3）
+
+- **单实例前端**：reasonix App 挂载后常驻——任务切换只调
+  `ActivateReasonixTask`（序号递增），后端发 `host:tab-activated` 事件，
+  reasonix 前端 `onHostTabActivated` → `syncActiveTab` 切换会话显示。
+  不再卸载/重建整套 React App；离开详情页才释放（`closeReasonixTab`）。
+- **后台运行**：A 生成中切到 B，A 控制器保留继续后台运行（事件按 tabId
+  分发到 store）；返回 A 立即恢复流式状态/历史/待审批。
+- **idle LRU 回收**：后台 idle 运行时超过 `MaxIdleRuntimes`（4）时按
+  `LastActive` 回收最旧（Close 语义：快照 + 记录最后会话）；running /
+  等待审批提问（PendingPrompt）/ 有后台任务的会话绝不回收。
+- **RuntimeEntry**：taskID/tabID/工作区身份/RequestSeq/LastActive/
+  model/effort/tokenMode 覆盖值。
+- **退出 quiesce**：shutdown → rxCloseAll → Manager.Shutdown（保存最后
+  会话 → 等待 in-flight 快照落盘 → 关闭全部控制器）。
+
 ### 事件流
 
 内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(

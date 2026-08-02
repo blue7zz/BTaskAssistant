@@ -74,7 +74,7 @@ describe("ReasonixPage embed", () => {
     ).toBe(true);
   });
 
-  it("任务切换时重挂载 embed（避免显示旧任务）", async () => {
+  it("任务切换只激活不重挂载（单实例保活）", async () => {
     await renderPage();
     expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -85,9 +85,15 @@ describe("ReasonixPage embed", () => {
         }),
       );
     });
-    // 任务切换 → ensureReasonixTab 再次调用 + embed 重新挂载
+    // 任务切换 → 仅 Activate（序号递增）；App 保持挂载（不重建）
     expect(bridge.ensureReasonixTab).toHaveBeenCalledTimes(2);
-    expect(mountReasonixEmbed).toHaveBeenCalledTimes(2);
+    expect(bridge.ensureReasonixTab).toHaveBeenLastCalledWith(
+      "task_2",
+      "",
+      "",
+      2,
+    );
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
   });
 
   it("卸载时释放会话运行时（closeReasonixTab）", async () => {

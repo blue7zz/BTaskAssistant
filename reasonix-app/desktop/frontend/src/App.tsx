@@ -43,7 +43,7 @@ import { asArray } from "./lib/array";
 import { createBoundedRefreshCoordinator, sameTabMetaLists, shouldRefreshTabMetaForEvent, TAB_META_MAX_IN_FLIGHT, tabMetaFallbackDelay } from "./lib/tabMetaRefresh";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
-import { app, isHostMode, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
+import { app, isHostMode, onEvent, onHostTabActivated, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
 import { preferredRemoteWorkspace, workbenchTargetTransitioning, type WorkbenchActiveTarget } from "./lib/workbenchTarget";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
@@ -1242,10 +1242,19 @@ export default function App() {
         setWorkspaceControllerEpoch((value) => value + 1);
       }
     });
+    // 嵌入模式：宿主切换任务（ActivateReasonixTask）→ 重新同步激活 tab。
+    // 单实例保活：reasonix App 不重建，仅切换后端激活的会话。
+    // syncActiveTab 经 ref 取最新引用，订阅只建立一次。
+    const syncActiveTabRef = useRef(syncActiveTab);
+    syncActiveTabRef.current = syncActiveTab;
+    const unsubHostActivated = onHostTabActivated(() => {
+      void syncActiveTabRef.current();
+    });
     return () => {
       unsub();
       unsubReady();
       unsubRebuilt();
+      unsubHostActivated();
     };
   }, []);
 

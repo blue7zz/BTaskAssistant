@@ -153,3 +153,51 @@ func TestNewSessionTriggersPrune(t *testing.T) {
 	}
 	manager.Shutdown()
 }
+
+// TestPruneIdleRuntimesKeepsActive 验证 idle LRU 回收（Activate 自动触发）：
+// 后台 idle 超过 MaxIdleRuntimes 时按最后活跃时间回收最旧；running 绝不回收。
+func TestPruneIdleRuntimesKeepsActive(t *testing.T) {
+	dataRoot := t.TempDir()
+	manager := bridge.NewManager(dataRoot, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	// 激活 MaxIdleRuntimes+2 个 idle 任务：第 5 个起每次激活自动回收最旧
+	for i := 0; i < bridge.MaxIdleRuntimes+2; i++ {
+		taskID := "task_idle_" + string(rune('a'+i))
+		ws := t.TempDir()
+		tab, err := manager.Activate(ctx, taskID, ws, "任务"+string(rune('A'+i)), uint64(i+1))
+		if err != nil {
+			t.Fatalf("激活 %s 失败: %v", taskID, err)
+		}
+		// 错开 LastActive（模拟不同活跃时间）
+		tab.LastActive = time.Now().Add(-time.Duration(i) * time.Minute)
+	}
+	// 再加一个 running 会话（绝不回收）
+	runningID := "task_running"
+	runningTab, err := manager.Activate(ctx, runningID, t.TempDir(), "运行中", uint64(99))
+	if err != nil {
+		t.Fatalf("激活 running 失败: %v", err)
+	}
+	_ = runningTab
+
+	// 自动回收后：idle ≤ 上限，running 保留
+	if manager.Tab(runningID) == nil {
+		t.Fatal("running 会话被回收")
+	}
+	idleCount := 0
+	for i := 0; i < bridge.MaxIdleRuntimes+2; i++ {
+		taskID := "task_idle_" + string(rune('a'+i))
+		if manager.Tab(taskID) != nil {
+			idleCount++
+		}
+	}
+	if idleCount > bridge.MaxIdleRuntimes {
+		t.Fatalf("idle 应 ≤ %d 个，实际 %d", bridge.MaxIdleRuntimes, idleCount)
+	}
+	// 手动再触发一次（无超额应为 0）
+	if removed := manager.PruneIdleRuntimes(); removed != 0 {
+		t.Fatalf("无超额时不应回收，实际 %d", removed)
+	}
+	manager.Shutdown()
+}

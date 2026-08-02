@@ -881,6 +881,19 @@ export function onFilesDropped(cb: (paths: string[]) => void): () => void {
 // onRuntimeRebuilt fires when a tab's controller is replaced in place
 // (model/effort/token-mode switch, clear-while-running). The rebuilt
 // controller restarts prompt ids, so per-tab id-keyed state must reset.
+// onHostTabActivated 宿主（BTask）切换激活任务时通知嵌入的 reasonix 前端
+// 重新同步激活 tab（单实例保活：切换任务不重建 App）。
+export function onHostTabActivated(cb: (tabId?: string) => void): () => void {
+  if (isEmbedded() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("reasonix:event", (payload: unknown) => {
+      const data = payload as { type?: string; tabId?: string } | null;
+      if (!data || data.type !== "host:tab-activated") return;
+      cb(data.tabId);
+    });
+  }
+  return () => {};
+}
+
 export function onRuntimeRebuilt(cb: (tabId?: string, runtimeEpoch?: string) => void): () => void {
   if (isEmbedded() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn("reasonix:event", (payload: unknown) => {

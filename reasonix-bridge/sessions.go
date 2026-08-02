@@ -75,6 +75,10 @@ type WorkspaceIdentity struct {
 // MaxSessionsPerTask 每任务保留的会话文件上限（超出时按最后使用时间清理最旧）。
 const MaxSessionsPerTask = 10
 
+// MaxIdleRuntimes 后台保留的 idle 运行时上限（阶段 3：idle LRU 回收）。
+// 运行中 / 等待审批提问 / 有后台任务的会话绝不回收。
+const MaxIdleRuntimes = 4
+
 // lastSessionMarker 记录任务最后活跃会话路径（关闭/重建后恢复续写）。
 const lastSessionMarker = "last-session.txt"
 
@@ -249,6 +253,8 @@ func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot str
 		ctrl.Close()
 	}
 	m.mu.Unlock()
+	// idle 运行时 LRU 回收（锁外；运行中/等待审批不回收）
+	m.PruneIdleRuntimes()
 	return tab, nil
 }
 
@@ -338,6 +344,46 @@ func (m *Manager) NewSession(taskID string) error {
 	m.saveLastSession(taskID, tab.Ctrl.SessionPath())
 	m.PruneOldSessions(taskID, MaxSessionsPerTask)
 	return nil
+}
+
+// PruneIdleRuntimes 回收超出上限的 idle 运行时（按最后活跃时间 LRU）。
+// 返回回收数量。running / 等待审批提问 / 有后台任务的会话绝不回收；
+// 回收前先快照并记录最后会话（Close 语义）。
+func (m *Manager) PruneIdleRuntimes() int {
+	m.mu.Lock()
+	type idleEntry struct {
+		taskID string
+		tab    *TaskTab
+	}
+	var idle []idleEntry
+	for taskID, tab := range m.roots {
+		if tab == nil || tab.Ctrl == nil {
+			continue
+		}
+		status := tab.Ctrl.RuntimeStatus()
+		if status.Running || status.PendingPrompt || status.BackgroundJobs > 0 {
+			continue
+		}
+		idle = append(idle, idleEntry{taskID: taskID, tab: tab})
+	}
+	if len(idle) <= MaxIdleRuntimes {
+		m.mu.Unlock()
+		return 0
+	}
+	sort.Slice(idle, func(i, j int) bool {
+		return idle[i].tab.LastActive.Before(idle[j].tab.LastActive)
+	})
+	excess := idle[:len(idle)-MaxIdleRuntimes]
+	m.mu.Unlock()
+	removed := 0
+	for _, entry := range excess {
+		m.Close(entry.taskID)
+		removed++
+	}
+	if removed > 0 {
+		fmt.Fprintf(os.Stderr, "reasonix-bridge: 回收 idle 运行时 %d 个（上限 %d）\n", removed, MaxIdleRuntimes)
+	}
+	return removed
 }
 
 // sessionSidecars 返回会话路径对应的全部侧车文件（与桌面端 deleteSessionFile
