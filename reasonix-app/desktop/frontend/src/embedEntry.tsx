@@ -53,7 +53,9 @@ export interface ReasonixEmbedOptions {
  * 返回卸载函数：卸载 React 树并清理 embed 上下文。
  */
 export function mountReasonixEmbed(host: HTMLElement, options: ReasonixEmbedOptions = {}): () => void {
-  const shadow = host.attachShadow({ mode: "open" });
+  // host 元素可能在任务切换时被复用（ReasonixPage 不重挂载）——已存在的
+  // shadow root 必须复用，否则 attachShadow 会抛 "already hosts a shadow tree"。
+  const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
 
   const style = document.createElement("style");
   style.textContent = scopedStyles;
