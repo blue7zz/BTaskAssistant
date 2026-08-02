@@ -84,6 +84,28 @@ export interface FilePreview {
   truncated: boolean;
 }
 
+export interface ReasonixProviderView {
+  name: string;
+  kind: string;
+  baseUrl: string;
+  keySet: boolean;
+}
+
+export interface ReasonixSettingsView {
+  configPath: string;
+  homePath: string;
+  isolated: boolean;
+  defaultModel: string;
+  plannerModel: string;
+  defaultToolApproval: string;
+  effort: string;
+  models: string[];
+  providers: ReasonixProviderView[];
+  reasoningLanguage: string;
+  maxSessionsPerTask: number;
+  maxIdleRuntimes: number;
+}
+
 interface NativeApp {
   LoadState(): Promise<string>;
   SaveState(payload: string): Promise<void>;
@@ -203,6 +225,12 @@ interface BTaskRuntime {
 
 const nativeApp = (): NativeApp | undefined =>
   (window as unknown as { go?: { main?: { App?: NativeApp } } }).go?.main?.App;
+
+// rxSettingsApp 返回 Reasonix 设置绑定（window.go 全局类型由 reasonix 契约
+// 声明控制，宿主设置方法不在其内——统一经断言访问）。
+export const rxSettingsApp = (): Record<string, (...args: unknown[]) => Promise<unknown>> =>
+  (window as unknown as { go?: { main?: { App?: Record<string, (...args: unknown[]) => Promise<unknown>> } } })
+    .go?.main?.App ?? {};
 
 const nativeRuntime = (): BTaskRuntime | undefined =>
   (window as unknown as { runtime?: BTaskRuntime }).runtime;

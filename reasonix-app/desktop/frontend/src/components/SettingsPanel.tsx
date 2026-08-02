@@ -246,7 +246,14 @@ export function SettingsPanel({
   const lazySettingsPageFallback = <div className="empty">{t("settings.loading")}</div>;
 
   return (
-    <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+    <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onMouseDown={(e) =>
+      { if (e.target === e.currentTarget) requestClose(); }}>
+      {isHostMode() && (
+        <div className="settings-host-notice">
+          Reasonix 全局设置（Provider / 模型 / Home）请在 BTask 的
+          “设置 → Reasonix 设置”中配置；本面板仅显示任务级选项。
+        </div>
+      )}
       <div className="management-modal settings-modal" data-state={status}>
         <header className="management-modal__head settings-modal__head">
           <div className="management-modal__title settings-modal__title">{t("settings.title")}</div>

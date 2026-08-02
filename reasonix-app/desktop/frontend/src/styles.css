@@ -36141,3 +36141,15 @@ body > .mermaid-diagram--fullscreen {
 .footer.footer--compact {
   padding-bottom: 4px !important;
 }
+
+/* 嵌入宿主模式提示（BTask Reasonix 设置入口） */
+.settings-host-notice {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid #3a3f52;
+  border-radius: 6px;
+  background: #1c1f2b;
+  color: #b8bcc9;
+  font-size: 12px;
+  line-height: 1.5;
+}

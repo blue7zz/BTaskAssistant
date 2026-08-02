@@ -328,7 +328,7 @@ describe("Task context settings", () => {
     );
     expect(storageTab?.textContent).toContain("任务资料");
     expect(container.querySelector(".task-context-settings-page")).not.toBeNull();
-    expect(container.querySelectorAll('button[role="tab"]')).toHaveLength(4);
+    expect(container.querySelectorAll('button[role="tab"]')).toHaveLength(5);
   });
 });
 

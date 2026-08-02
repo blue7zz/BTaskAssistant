@@ -224,6 +224,21 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 - **退出 quiesce**：shutdown → rxCloseAll → Manager.Shutdown（保存最后
   会话 → 等待 in-flight 快照落盘 → 关闭全部控制器）。
 
+### Reasonix 设置（阶段 4）
+
+- **唯一入口**：BTask 设置新增"Reasonix 设置"分类（Provider/模型/审批/
+  Home/保留上限）；Reasonix 内部设置面板 embed 模式顶部提示"全局设置在
+  BTask 设置中配置"。
+- **真实内核读写**：`reasonix-bridge/settings.go` 走 rxconfig
+  （Load/SetDefaultModel/SetPlannerModel/SetDesktopDefaultToolApprovalMode/
+  UpsertProvider/SaveTo）；模型列表来自内核 Models。
+- **凭据安全**：API Key 只写内核 `.env`（0600 + 原子替换），前端只接收
+  "已配置/未配置"（keySet 布尔）；不落 SQLite、不进日志、不进前端状态
+  （TestCredentialWriteIsolated 验证权限与隔离）。
+- **Home 策略**：默认共享系统 Reasonix Home；设置页可切换 BTask 隔离目录
+  （`<BTask 数据>/reasonix-home`），进程内 REASONIX_HOME + 持久化模式文件。
+- **会话保留展示**：每任务会话上限与后台 idle 运行时上限只读展示。
+
 ### 事件流
 
 内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(

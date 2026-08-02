@@ -79,6 +79,10 @@ const MaxSessionsPerTask = 10
 // 运行中 / 等待审批提问 / 有后台任务的会话绝不回收。
 const MaxIdleRuntimes = 4
 
+// BridgeMaxSessionsPerTask / BridgeMaxIdleRuntimes 供宿主设置面板展示。
+const BridgeMaxSessionsPerTask = MaxSessionsPerTask
+const BridgeMaxIdleRuntimes = MaxIdleRuntimes
+
 // lastSessionMarker 记录任务最后活跃会话路径（关闭/重建后恢复续写）。
 const lastSessionMarker = "last-session.txt"
 

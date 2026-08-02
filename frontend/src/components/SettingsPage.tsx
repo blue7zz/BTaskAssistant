@@ -4,21 +4,24 @@ import {
   CloudDownload,
   HardDrive,
   NotebookPen,
+  SquareTerminal,
 } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { EngineStatus } from "../lib/bridge";
 import { DailyReportSettings } from "./DailyReportSettings";
 import { PISettingsPage } from "./PISettingsPage";
 import { PlaneConnectionSettings } from "./PlaneConnectionSettings";
+import { ReasonixSettings } from "./ReasonixSettings";
 import { TaskContextSettings } from "./TaskContextSettings";
 
-export type SettingsCategory = "pi" | "storage" | "plane" | "report";
+export type SettingsCategory = "pi" | "storage" | "plane" | "report" | "reasonix";
 
 const SETTINGS_CATEGORIES: SettingsCategory[] = [
   "pi",
   "storage",
   "plane",
   "report",
+  "reasonix",
 ];
 
 interface SettingsPageProps {
@@ -169,6 +172,24 @@ export function SettingsPage({
               <small>人员资料、AI 提示词与云端提交</small>
             </span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            id="settings-tab-reasonix"
+            aria-controls="settings-panel-reasonix"
+            aria-selected={category === "reasonix"}
+            tabIndex={category === "reasonix" ? 0 : -1}
+            data-settings-category="reasonix"
+            className={category === "reasonix" ? "active" : ""}
+            onClick={() => setCategory("reasonix")}
+            onKeyDown={selectAdjacentCategory}
+          >
+            <SquareTerminal size={17} />
+            <span>
+              <strong>Reasonix 设置</strong>
+              <small>模型、Provider 与 Home</small>
+            </span>
+          </button>
         </nav>
 
         <div
@@ -188,6 +209,8 @@ export function SettingsPage({
               onSuccess={onSuccess}
               onError={onError}
             />
+          ) : category === "reasonix" ? (
+            <ReasonixSettings onSuccess={onSuccess} onError={onError} />
           ) : (
             <DailyReportSettings onSuccess={onSuccess} onError={onError} />
           )}
