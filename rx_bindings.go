@@ -108,12 +108,55 @@ func (a *App) rxTaskContext(taskID string) (string, error) {
 
 // ── 绑定方法（reasonix 前端 wailsjs 同名调用）─────────────────────────────
 
-// ReasonixEnsureTab 供 BTask 主 frame 桥调用：为任务建立（或复用）Reasonix 会话。
+// ActivateReasonixTask 供宿主前端调用：以 requestSeq（单调递增）原子激活任务。
+// 并发激活（快速 A→B→A 切换）时只有最新序号能成为活动任务；过期请求
+// 返回 ErrStaleActivate 且不会写回 rxActiveTaskID。
+func (a *App) ActivateReasonixTask(taskID string, workspaceRoot string, taskTitle string, requestSeq int64) (bridge.TabView, error) {
+	if a.rxManager == nil {
+		return bridge.TabView{}, errors.New("Reasonix 内核未初始化")
+	}
+	a.rxMu.Lock()
+	if requestSeq < int64(a.rxActivateSeq) {
+		a.rxMu.Unlock()
+		return bridge.TabView{}, bridge.ErrStaleActivate
+	}
+	if requestSeq > int64(a.rxActivateSeq) {
+		a.rxActivateSeq = uint64(requestSeq)
+	}
+	a.rxMu.Unlock()
+
+	if workspaceRoot == "" {
+		root, err := a.rxTaskContext(taskID)
+		if err != nil {
+			return bridge.TabView{}, err
+		}
+		workspaceRoot = root
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	tab, err := a.rxManager.Activate(ctx, taskID, workspaceRoot, taskTitle, uint64(requestSeq))
+	if err != nil {
+		return bridge.TabView{}, err
+	}
+
+	// 写回前复查：只有仍是最新序号才成为活动任务（修复 A 晚于 B 完成时
+	// 把 rxActiveTaskID 写回 A 的竞态）。
+	a.rxMu.Lock()
+	defer a.rxMu.Unlock()
+	if requestSeq < int64(a.rxActivateSeq) {
+		return bridge.TabViewOf(tab, taskID, workspaceRoot), bridge.ErrStaleActivate
+	}
+	a.rxTabs[tab.ID] = rxTabEntry{taskID: taskID, workspaceRoot: workspaceRoot}
+	a.rxActiveTaskID = taskID
+	a.rxActiveWorkspaceRoot = workspaceRoot
+	return bridge.TabViewOf(tab, taskID, workspaceRoot), nil
+}
+
+// ReasonixEnsureTab 保留旧名（无序号激活；内部路径使用）。
 func (a *App) ReasonixEnsureTab(taskID string, workspaceRoot string, taskTitle string) (bridge.TabView, error) {
 	if a.rxManager == nil {
 		return bridge.TabView{}, errors.New("Reasonix 内核未初始化")
 	}
-	// 会话-任务绑定：记录任务标题（TabView 的 TopicTitle 展示）
 	a.rxManager.SetTaskTitle(taskID, taskTitle)
 	if workspaceRoot == "" {
 		root, err := a.rxTaskContext(taskID)
@@ -124,14 +167,12 @@ func (a *App) ReasonixEnsureTab(taskID string, workspaceRoot string, taskTitle s
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	tab, err := a.rxManager.Ensure(ctx, taskID, workspaceRoot)
+	tab, err := a.rxManager.Activate(ctx, taskID, workspaceRoot, taskTitle, 0)
 	if err != nil {
 		return bridge.TabView{}, err
 	}
 	a.rxMu.Lock()
 	a.rxTabs[tab.ID] = rxTabEntry{taskID: taskID, workspaceRoot: workspaceRoot}
-	a.rxActiveTaskID = taskID
-	a.rxActiveWorkspaceRoot = workspaceRoot
 	a.rxMu.Unlock()
 	return bridge.TabViewOf(tab, taskID, workspaceRoot), nil
 }
@@ -952,7 +993,7 @@ func (a *App) ClearSession() error {
 }
 
 // EnsureBlankSurface 确保任务有空白会话（等价 EnsureBlankTab）。
-func (a *App) EnsureBlankSurface(workspaceRoot string) (bridge.TabView, error) {
+func (a *App) EnsureBlankSurface(scope string, workspaceRoot string) (bridge.TabView, error) {
 	return a.EnsureBlankTab("project", workspaceRoot)
 }
 
@@ -1621,7 +1662,7 @@ func (a *App) ReloadSettings() error {
 }
 
 // ReportCrash 崩溃上报（宿主：no-op）。
-func (a *App) ReportCrash(_report any) error {
+func (a *App) ReportCrash(_kind string, _detail string) error {
 	return nil
 }
 
@@ -1674,12 +1715,12 @@ func (a *App) ResetThemePack() error {
 // 终端（宿主无 reasonix 终端——返回不可用而非未绑定错误）。
 
 // TerminalOutputForTab 终端输出（宿主：不可用）。
-func (a *App) TerminalOutputForTab(_tabID string, _sessionID string, _offset int64) (map[string]any, error) {
-	return map[string]any{"data": "", "offset": _offset, "ended": true}, nil
+func (a *App) TerminalOutputForTab(_tabID string, _sessionID string) (map[string]any, error) {
+	return map[string]any{"data": "", "offset": 0, "ended": true}, nil
 }
 
 // TerminalWorkspaceForTab 终端工作区（宿主：不可用）。
-func (a *App) TerminalWorkspaceForTab(_tabID string, _sessionID string) (map[string]any, error) {
+func (a *App) TerminalWorkspaceForTab(_tabID string) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -1711,7 +1752,7 @@ func (a *App) ReadRemoteFile(_hostID string, _path string) (map[string]any, erro
 }
 
 // WriteRemoteFile 写入远程文件（宿主：不可用）。
-func (a *App) WriteRemoteFile(_hostID string, _path string, _content string) error {
+func (a *App) WriteRemoteFile(_hostID string, _path string, _content string, _expectMtimeUnix int64) error {
 	return nil
 }
 
@@ -1733,4 +1774,55 @@ func (a *App) PollBotConnectionInstall(_installID string) (map[string]any, error
 // StartBotConnectionInstall 启动机器人连接安装（宿主：无机器人）。
 func (a *App) StartBotConnectionInstall(_provider string, _authCode string) (map[string]any, error) {
 	return map[string]any{"installId": "", "state": "done"}, nil
+}
+
+// ── 核心契约真实现（阶段 1：消除可见假实现）────────────────────────────────
+
+// Memory 返回激活任务的真实记忆（内核 MemoryControl 数据）。
+func (a *App) Memory() (map[string]any, error) {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return a.rxManager.MemoryView("")
+	}
+	return a.rxManager.MemoryView(taskID)
+}
+
+// MemorySuggestions 返回记忆建议（宿主：内核记忆当前无建议流——空列表）。
+func (a *App) MemorySuggestions() ([]any, error) {
+	return []any{}, nil
+}
+
+// MemorySuggestionsForTab 返回指定任务的记忆建议（宿主：空列表）。
+func (a *App) MemorySuggestionsForTab(_tabID string) ([]any, error) {
+	return []any{}, nil
+}
+
+// MemoryRevisions 返回记忆修订历史（宿主：未接入内核修订 API——空列表）。
+func (a *App) MemoryRevisions(_ref string) ([]any, error) {
+	return []any{}, nil
+}
+
+// MemoryRevisionsForTab 返回指定任务记忆修订历史（宿主：空列表）。
+func (a *App) MemoryRevisionsForTab(_tabID string, _ref string) ([]any, error) {
+	return []any{}, nil
+}
+
+// RestoreMemoryRevision 恢复记忆修订（宿主：内核无此 API——显式不支持）。
+func (a *App) RestoreMemoryRevision(_ref string, _revision string) error {
+	return errors.New("Reasonix 宿主未实现: RestoreMemoryRevision（内核无修订恢复 API）")
+}
+
+// RestoreMemoryRevisionForTab 恢复记忆修订（宿主：显式不支持）。
+func (a *App) RestoreMemoryRevisionForTab(_tabID string, _ref string, _revision string) error {
+	return errors.New("Reasonix 宿主未实现: RestoreMemoryRevisionForTab")
+}
+
+// RestoreArchivedMemory 恢复归档记忆（宿主：显式不支持）。
+func (a *App) RestoreArchivedMemory(_archivePath string) error {
+	return errors.New("Reasonix 宿主未实现: RestoreArchivedMemory")
+}
+
+// RestoreArchivedMemoryForTab 恢复归档记忆（宿主：显式不支持）。
+func (a *App) RestoreArchivedMemoryForTab(_tabID string, _archivePath string) error {
+	return errors.New("Reasonix 宿主未实现: RestoreArchivedMemoryForTab")
 }

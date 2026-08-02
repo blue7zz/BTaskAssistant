@@ -28,6 +28,7 @@ interface EmbedModule {
 export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridgeProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const unmountRef = useRef<(() => void) | null>(null);
+  const requestSeqRef = useRef(0);
   const [frameKey, setFrameKey] = useState(0);
   const [ready, setReady] = useState(false);
   const [readyError, setReadyError] = useState("");
@@ -37,7 +38,9 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
     let active = true;
     setReady(false);
     setReadyError("");
-    ensureReasonixTab(taskId, workspaceRoot, taskTitle)
+    // 激活序号单调递增：后端只让最新请求成为活动任务（防快速切换竞态）
+    const requestSeq = ++requestSeqRef.current;
+    ensureReasonixTab(taskId, workspaceRoot, taskTitle, requestSeq)
       .then(() => {
         if (active) setReady(true);
       })

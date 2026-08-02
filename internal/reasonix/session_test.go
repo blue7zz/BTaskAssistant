@@ -332,6 +332,7 @@ func TestMultiTurnAndModelSwitch(t *testing.T) {
 	// 模型切换（重建控制器 + AdoptHistory 续会话）
 	models := bridge.Models(workspace, "")
 	if len(models) == 0 {
+		manager.Close("task_multi")
 		t.Skip("无已配置模型，跳过切换验证")
 	}
 	if err := manager.SetModel(ctx, "task_multi", workspace, models[0].Ref, "", ""); err != nil {
@@ -450,6 +451,8 @@ func TestHistoryPagination(t *testing.T) {
 		t.Logf("3 轮且 limit=2 的第二页仍可能 hasOlder（startTurn=1）")
 	}
 	_ = older
+	// 等待 in-flight 快照落盘后关闭（否则 TempDir 清理因残留写入而失败）
+	manager.Shutdown()
 }
 
 // TestEffortOverrideApplied 验证 effort/token 覆盖真正传入内核构建。

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,14 +37,28 @@ import (
 // 工具调用等）按 wire 形状（与 reasonix 桌面端 agent:event 完全一致）回调。
 type EventSink func(tabID string, payload map[string]any)
 
-// TaskTab 是「一个任务一个会话」的运行时条目。
+// TaskTab 是「一个任务一个会话」的运行时条目（阶段 1：RuntimeEntry 化）。
+// 会话覆盖值（model/effort/tokenMode）与生命周期状态在重复 Activate 时保留，
+// 不会被 Ensure 覆盖；RequestSeq 用于并发激活的序号仲裁。
 type TaskTab struct {
 	TaskID string
 	ID     string // tab 标识：task_<taskID 摘要>
 	Title  string // 任务显示标题（会话-任务绑定）
 	Ctrl   *rxcontrol.Controller
 	Dir    string // 会话目录（任务隔离）
+
+	// 会话覆盖值（SetModel/SetEffort 等重建后仍保留，重复 Activate 不覆盖）
+	Model     string
+	Effort    string
+	TokenMode string
+
+	// 生命周期
+	RequestSeq uint64    // 最近一次 Activate 的序号（并发激活仲裁）
+	LastActive time.Time // 最后激活时间（idle LRU 回收依据，阶段 3）
 }
+
+// ErrStaleActivate 表示激活请求序号已过期（更晚的请求已接管该任务）。
+var ErrStaleActivate = errors.New("stale reasonix activate request")
 
 // MaxSessionsPerTask 每任务保留的会话文件上限（超出时按最后使用时间清理最旧）。
 const MaxSessionsPerTask = 10
@@ -120,25 +135,61 @@ func shortHash(value string) string {
 
 // Ensure 返回任务的 tab；不存在则构建控制器（首次会加载任务工作区的
 // reasonix 配置与模型解析，RequireKey=false 保证无凭据时界面仍可达）。
-func (m *Manager) Ensure(ctx context.Context, taskID string, workspaceRoot string) (*TaskTab, error) {
+// Activate 是任务级激活的原子入口：requestSeq 单调递增（宿主前端每次切换
+// 任务递增）。同任务乱序请求（旧序号晚到）返回 ErrStaleActivate；不同任务
+// 可并行建立控制器（后台保活，阶段 3）。"活动任务"指针由宿主侧
+// （rx_bindings.ActivateReasonixTask 的 rxActivateSeq）仲裁。
+// title 在控制器构建前即保存（首次打开不丢）；已存在的会话覆盖值
+// （model/effort/tokenMode）不会被重复激活覆盖。
+func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot string, title string, requestSeq uint64) (*TaskTab, error) {
 	m.mu.Lock()
 	if tab, ok := m.roots[taskID]; ok {
+		// 复用：标题/序号更新，覆盖值保留；同任务乱序（旧序号晚到）拒绝
+		if requestSeq != 0 && requestSeq < tab.RequestSeq {
+			m.mu.Unlock()
+			return nil, ErrStaleActivate
+		}
+		if requestSeq > tab.RequestSeq {
+			tab.RequestSeq = requestSeq
+		}
+		tab.LastActive = time.Now()
+		if title != "" {
+			tab.Title = title
+		}
 		m.mu.Unlock()
 		return tab, nil
 	}
+	dir := m.TaskSessionDir(taskID)
+	tab := &TaskTab{
+		TaskID:     taskID,
+		ID:         m.tabID(taskID),
+		Title:      title, // 控制器创建前即保存（首次打开标题不丢）
+		Dir:        dir,
+		RequestSeq: requestSeq,
+		LastActive: time.Now(),
+	}
+	// 占位注册：构建期间并发 Activate 复用它而不是重复构建
+	m.roots[taskID] = tab
 	m.mu.Unlock()
 
-	dir := m.TaskSessionDir(taskID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		m.mu.Lock()
+		if m.roots[taskID] == tab {
+			delete(m.roots, taskID)
+		}
+		m.mu.Unlock()
 		return nil, fmt.Errorf("创建 Reasonix 会话目录: %w", err)
 	}
 
-	tab := &TaskTab{TaskID: taskID, ID: m.tabID(taskID), Dir: dir}
 	ctrl, err := m.build(ctx, taskID, workspaceRoot, dir, "", "", "")
 	if err != nil {
+		m.mu.Lock()
+		if m.roots[taskID] == tab {
+			delete(m.roots, taskID)
+		}
+		m.mu.Unlock()
 		return nil, err
 	}
-	tab.Ctrl = ctrl
 	// 重建后恢复任务最后活跃会话（任务切换/离开后返回时续写原会话内容）。
 	if lastPath := m.loadLastSession(taskID); lastPath != "" {
 		if loaded, loadErr := agent.LoadSession(lastPath); loadErr == nil {
@@ -149,14 +200,19 @@ func (m *Manager) Ensure(ctx context.Context, taskID string, workspaceRoot strin
 	}
 
 	m.mu.Lock()
-	if existing, ok := m.roots[taskID]; ok {
-		m.mu.Unlock()
+	// 只有本占位仍是当前条目时写回（期间同任务被更新的 Activate 替换则关闭）。
+	if cur, ok := m.roots[taskID]; ok && cur == tab {
+		tab.Ctrl = ctrl
+	} else {
 		ctrl.Close()
-		return existing, nil
 	}
-	m.roots[taskID] = tab
 	m.mu.Unlock()
 	return tab, nil
+}
+
+// Ensure 保留旧名（无序号激活：等价于 Activate(seq=0)）。
+func (m *Manager) Ensure(ctx context.Context, taskID string, workspaceRoot string) (*TaskTab, error) {
+	return m.Activate(ctx, taskID, workspaceRoot, "", 0)
 }
 
 // build 构建任务的控制器（boot.Build），事件经 sink 回调转发给宿主。

@@ -170,6 +170,26 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 - 构建：`wails build` 单命令产出全量（reasonix 源码直接打包，无需独立 dist；
   独立应用构建脚本 `scripts/build-reasonix-frontend.sh` 保留）。
 
+### 宿主契约与运行时（阶段 1 收敛）
+
+- **契约校验**：`internal/reasonix/contract_test.go` 从 reasonix 前端
+  `AppBindings`（bridge.ts）与宿主绑定源码自动校验方法名与参数数量——
+  签名漂移（假兼容根源）在 CI 即失败；当前 358 个契约方法全部有宿主绑定
+  且参数数一致（尾逗号/函数类型参数已处理）。
+- **ActivateReasonixTask(taskId, workspaceRoot, title, requestSeq)**：序号
+  原子激活——只有最新请求能成为活动任务；同任务乱序（旧序号晚到）拒绝
+  （ErrStaleActivate）；不同任务可并行建立控制器（后台保活基础）。
+  标题在控制器构建前即保存（首次打开不丢）；重复激活保留 model/effort/
+  token 覆盖值。
+- **build-then-swap**：SetModel 先构建新控制器并恢复原会话，成功后才原子
+  替换，最后关闭旧控制器——构建失败时旧会话继续可用（原实现先关旧控制器，
+  失败即毁掉会话）。
+- **假实现收敛**：核心 stub（对话框/Provider/MCP 等 48 个）改为显式错误
+  （"Reasonix 宿主未实现"），不再返回假成功；Memory 读类（Memory/
+  MemorySuggestions/MemoryRevisions）接入内核真实数据。
+- **测试隔离**：TestMain 设置临时 REASONIX_HOME——不读取本机真实配置、
+  不消耗真实 API 额度；`go test -race` 无竞态。
+
 ### 事件流
 
 内核控制器事件 → `reasonix-bridge` sink → BTask `wailsruntime.EventsEmit(

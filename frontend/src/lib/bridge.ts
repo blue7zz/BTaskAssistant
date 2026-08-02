@@ -142,10 +142,11 @@ interface NativeApp {
     taskId: string,
     path: string,
   ): Promise<FilePreview>;
-  ReasonixEnsureTab?(
+  ActivateReasonixTask?(
     taskId: string,
     workspaceRoot: string,
-    taskTitle?: string,
+    taskTitle: string,
+    requestSeq: number,
   ): Promise<ReasonixTabView>;
   ReasonixCloseTab?(taskId: string): Promise<void>;
   ListPlaneProjects(
@@ -478,12 +479,13 @@ export async function ensureReasonixTab(
   taskId: string,
   workspaceRoot: string,
   taskTitle = "",
+  requestSeq = 0,
 ): Promise<ReasonixTabView> {
   const app = nativeApp();
-  if (typeof app?.ReasonixEnsureTab !== "function") {
+  if (typeof app?.ActivateReasonixTask !== "function") {
     throw new Error("当前版本不支持 Reasonix 工作台（需 Wails 桌面客户端）");
   }
-  return app.ReasonixEnsureTab(taskId, workspaceRoot, taskTitle);
+  return app.ActivateReasonixTask(taskId, workspaceRoot, taskTitle, requestSeq);
 }
 
 /**

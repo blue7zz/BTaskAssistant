@@ -343,8 +343,8 @@ func (m *Manager) Resume(taskID string, path string, beforeTurn int, limit int) 
 	}
 	// 计算每条消息的 turn 并筛选
 	type pageMessage struct {
-		view      HistoryMessageView
-		userTurn  int
+		view     HistoryMessageView
+		userTurn int
 	}
 	messages := make([]pageMessage, 0, len(entries))
 	turn := 0
@@ -435,23 +435,41 @@ func (m *Manager) SetModel(ctx context.Context, taskID string, workspaceRoot str
 	if tab == nil {
 		return fmt.Errorf("任务 %s 的 Reasonix 会话尚未初始化", taskID)
 	}
-	oldPath := tab.Ctrl.SessionPath()
+	if tab.Ctrl == nil {
+		return fmt.Errorf("任务 %s 的 Reasonix 会话初始化中", taskID)
+	}
+	// build-then-swap：先构建新控制器并恢复状态，成功后才原子替换；
+	// 构建失败时旧控制器继续可用（原实现先 Close 旧控制器，失败即毁掉会话）。
 	oldCtrl := tab.Ctrl
 	if oldCtrl.RuntimeStatus().Cancellable {
 		oldCtrl.Cancel()
 	}
 	history := oldCtrl.History()
-	oldCtrl.Close()
+	oldPath := oldCtrl.SessionPath()
 
-	dir := tab.Dir
-	newCtrl, err := m.build(ctx, taskID, workspaceRoot, dir, model, effort, tokenMode)
+	newCtrl, err := m.build(ctx, taskID, workspaceRoot, tab.Dir, model, effort, tokenMode)
 	if err != nil {
-		return err
+		return fmt.Errorf("重建 Reasonix 会话失败（原会话保持可用）: %w", err)
 	}
-	tab.Ctrl = newCtrl
+	// 新控制器恢复原会话（续写同一文件），保持历史与检查点。
 	if oldPath != "" {
-		tab.Ctrl.AdoptHistory(history, oldPath)
+		if loaded, loadErr := rxagent.LoadSession(oldPath); loadErr == nil {
+			newCtrl.Resume(loaded, oldPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "reasonix-bridge: 重建后恢复会话失败 task=%s path=%s: %v\n", taskID, oldPath, loadErr)
+		}
+	} else if history != nil {
+		newCtrl.AdoptHistory(history, "")
 	}
+
+	m.mu.Lock()
+	tab.Ctrl = newCtrl
+	tab.Model = model
+	tab.Effort = effort
+	tab.TokenMode = tokenMode
+	m.mu.Unlock()
+	// 原子替换完成后再关闭旧控制器（桌面端同约定）。
+	oldCtrl.Close()
 	return nil
 }
 

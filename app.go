@@ -8,9 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blue7zz/BTaskAssistant/internal/agent"
@@ -23,8 +23,8 @@ import (
 	"github.com/blue7zz/BTaskAssistant/internal/storage"
 	"github.com/blue7zz/BTaskAssistant/internal/taskspace"
 	"github.com/blue7zz/BTaskAssistant/internal/workflow"
-	"reasonix/bridge"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"reasonix/bridge"
 )
 
 type directoryDialogOpener func(
@@ -55,11 +55,12 @@ type App struct {
 	openDirectoryDialog     directoryDialogOpener
 	openPath                pathOpener
 	startupErr              error
-	rxManager              *bridge.Manager
-	rxMu                   *sync.Mutex
-	rxTabs                 map[string]rxTabEntry
-	rxActiveTaskID         string
-	rxActiveWorkspaceRoot  string
+	rxManager               *bridge.Manager
+	rxMu                    *sync.Mutex
+	rxTabs                  map[string]rxTabEntry
+	rxActiveTaskID          string
+	rxActiveWorkspaceRoot   string
+	rxActivateSeq           uint64 // 宿主侧激活序号（只有最新请求能成为活动任务）
 }
 
 func NewApp() *App {
