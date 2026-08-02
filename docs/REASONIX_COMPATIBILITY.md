@@ -529,6 +529,28 @@
 | `WorkbenchDisconnectRemote` | 0 | 1 | ⚠️ stub |
 | `WorkbenchRemoteRequest` | 2 | 1 | ⚠️ stub |
 
+## 阶段 6 清零结果（核心面）
+
+核心工作台方法最终状态：**90 真实现 / 42 显式错误 / 0 空返回**。
+
+本轮新增真实现：
+- 附件：SavePastedImage / SavePastedFile / AttachmentDataURL（任务会话目录
+  attachments/，路径归属 + 符号链接校验）；SaveClipboardImage 显式错误。
+- Provider：SaveProvider / SaveProviderWithKey / SaveProviderKey /
+  ClearProviderKey（映射内核 .env，凭据不落库）；SetPermissionMode 映射
+  审批模式。
+- 工作台无参版：Submit / Cancel / AnswerQuestion / ClearGoal / History /
+  HistoryPage / Checkpoints / Rewind / Fork / SummarizeFrom / SummarizeUpTo
+  （全部映射激活任务）。
+- 文档：SaveDoc / SaveDocForTab（任务会话 docs/）；导出：
+  SaveExportFile / SaveExportImageFiles（文件对话框）。
+- RestoreSession（回收站恢复）。
+
+显式错误（诚实禁用，不返回假成功）：恢复管理（ResolveRecovery /
+RecoveryCheckpointEnabled）、显示提交（SubmitDisplay*）、频道会话、
+MCP/插件、远程 SSH/机器人、主题包、Hook、迁移、切换工作区（嵌入单任务
+工作树）——对应 UI 已在 host 模式隐藏（SettingsPanel tabs）或显示错误。
+
 ## 生成方式
 
 本矩阵由脚本从 `bridge.ts`（契约）、`rx_bindings.go`/（`rx_bindings_stubs.go` 宿主实现）与

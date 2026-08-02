@@ -663,3 +663,43 @@ func readSessionFile(path string) ([]sessionEntry, error) {
 var _ = rxagent.CanonicalSessionPath
 var _ = rxevent.Event{}
 var _ = rxeventwire.ToWire
+
+// SaveSessionDoc 保存会话文档到任务会话目录 docs/（内核记忆文档同域，
+// 路径归属校验：仅允许 docs/ 子目录内）。
+func (m *Manager) SaveSessionDoc(taskID string, path string, body string) error {
+	sessionDir := m.TaskSessionDir(taskID)
+	cleaned := filepath.Clean(path)
+	if filepath.IsAbs(cleaned) {
+		return fmt.Errorf("拒绝绝对路径文档: %s", path)
+	}
+	full := filepath.Join(sessionDir, "docs", cleaned)
+	rel, err := filepath.Rel(filepath.Join(sessionDir, "docs"), full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("拒绝 docs 目录外的文档: %s", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(full, []byte(body), 0o644)
+}
+
+// RestoreSessionFile 从回收站恢复会话（回收站 = <会话目录>/trash/）。
+func (m *Manager) RestoreSessionFile(path string) error {
+	dir := filepath.Dir(path)
+	trash := filepath.Join(dir, "trash")
+	base := filepath.Base(path)
+	if !strings.HasPrefix(base, "trashed-") {
+		return nil // 非回收站文件：无需恢复
+	}
+	original := strings.TrimPrefix(base, "trashed-")
+	target := filepath.Join(dir, original)
+	if err := os.Rename(path, target); err != nil {
+		return err
+	}
+	// 侧车同步恢复
+	for _, sidecar := range sessionSidecars(path) {
+		_ = os.Rename(sidecar, filepath.Join(dir, strings.TrimPrefix(filepath.Base(sidecar), "trashed-")))
+	}
+	_ = os.RemoveAll(trash)
+	return nil
+}

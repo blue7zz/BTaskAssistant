@@ -71,11 +71,6 @@ func (a *App) AttachDropped(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// AttachmentDataURL 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) AttachmentDataURL(_arg1 any) (string, error) {
-	return "", errors.New("Reasonix 宿主未实现: AttachmentDataURL（阶段 6 接入）")
-}
-
 // AvailableSubagentTools 宿主边界方法（契约 0 参数）：返回合理默认值。
 func (a *App) AvailableSubagentTools() ([]any, error) {
 	return []any{}, nil
@@ -86,29 +81,9 @@ func (a *App) BotRuntimeStatus() (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// CancelTrySubagentProfile 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) CancelTrySubagentProfile() (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: CancelTrySubagentProfile（阶段 6 接入）")
-}
-
 // CapabilityDiagnostics 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) CapabilityDiagnostics(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// ClearBotSecret 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) ClearBotSecret(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ClearBotSecret（阶段 6 接入）")
-}
-
-// ClearMCPServerAuthentication 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) ClearMCPServerAuthentication(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ClearMCPServerAuthentication（阶段 6 接入）")
-}
-
-// ClearProviderKey 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) ClearProviderKey(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ClearProviderKey（阶段 6 接入）")
 }
 
 // CloseTab 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -124,21 +99,6 @@ func (a *App) ConfirmRemoteHostKey(_arg1 any, _arg2 any) (map[string]any, error)
 // ConfirmRemoteSecret 宿主边界方法（契约 4 参数）：返回合理默认值。
 func (a *App) ConfirmRemoteSecret(_arg1 any, _arg2 any, _arg3 any, _arg4 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// ConnectKey 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) ConnectKey(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ConnectKey（阶段 6 接入）")
-}
-
-// ConnectRemoteHost 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) ConnectRemoteHost(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ConnectRemoteHost（阶段 6 接入）")
-}
-
-// CopyThemePack 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) CopyThemePack(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: CopyThemePack（阶段 6 接入）")
 }
 
 // CreateDeliveryWorktree 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -166,11 +126,6 @@ func (a *App) DeleteThemePack(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// DiagnoseBotConnection 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) DiagnoseBotConnection(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: DiagnoseBotConnection（阶段 6 接入）")
-}
-
 // DisconnectRemoteHost 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) DisconnectRemoteHost(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -181,24 +136,9 @@ func (a *App) DownloadUpdateRequest(_arg1 any, _arg2 any, _arg3 any) (map[string
 	return map[string]any{}, nil
 }
 
-// ExportThemePack 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) ExportThemePack(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ExportThemePack（阶段 6 接入）")
-}
-
 // FetchProviderModels 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) FetchProviderModels(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// HooksSettings 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) HooksSettings(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: HooksSettings（阶段 6 接入）")
-}
-
-// ImportThemePack 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) ImportThemePack(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ImportThemePack（阶段 6 接入）")
 }
 
 // InstallMCPServer 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -214,41 +154,6 @@ func (a *App) InstallPlugin(_arg1 any, _arg2 any) (map[string]any, error) {
 // InstallUpdateRequest 宿主边界方法（契约 3 参数）：返回合理默认值。
 func (a *App) InstallUpdateRequest(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// ListRemoteDir 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) ListRemoteDir(_arg1 any, _arg2 any) ([]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ListRemoteDir（阶段 6 接入）")
-}
-
-// ListThemePacks 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) ListThemePacks() ([]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ListThemePacks（阶段 6 接入）")
-}
-
-// MCPMarketplace 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) MCPMarketplace(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: MCPMarketplace（阶段 6 接入）")
-}
-
-// MCPMarketplaceResolve 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) MCPMarketplaceResolve(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: MCPMarketplaceResolve（阶段 6 接入）")
-}
-
-// MCPServers 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) MCPServers() ([]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: MCPServers（阶段 6 接入）")
-}
-
-// MigrateDesktopPreferences 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) MigrateDesktopPreferences(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: MigrateDesktopPreferences（阶段 6 接入）")
-}
-
-// OpenChannelSessionPageForTab 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) OpenChannelSessionPageForTab(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: OpenChannelSessionPageForTab（阶段 6 接入）")
 }
 
 // OpenDownloadPage 宿主边界方法（契约 0 参数）：返回合理默认值。
@@ -291,16 +196,6 @@ func (a *App) PickThemeBackground() (string, error) {
 	return "", nil
 }
 
-// PickWorkspace 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) PickWorkspace() (string, error) {
-	return "", errors.New("Reasonix 宿主未实现: PickWorkspace（阶段 6 接入）")
-}
-
-// PlanPluginInstall 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) PlanPluginInstall(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: PlanPluginInstall（阶段 6 接入）")
-}
-
 // PluginDoctor 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) PluginDoctor(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -309,16 +204,6 @@ func (a *App) PluginDoctor(_arg1 any) (map[string]any, error) {
 // Plugins 宿主边界方法（契约 0 参数）：返回合理默认值。
 func (a *App) Plugins() ([]any, error) {
 	return []any{}, nil
-}
-
-// PurgeRecoveryCopy 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) PurgeRecoveryCopy(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: PurgeRecoveryCopy（阶段 6 接入）")
-}
-
-// PurgeTrashedSession 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) PurgeTrashedSession(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: PurgeTrashedSession（阶段 6 接入）")
 }
 
 // ReconnectMCPServer 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -391,79 +276,9 @@ func (a *App) ResetProviderPresetAccess(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// RestoreSession 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) RestoreSession(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: RestoreSession（阶段 6 接入）")
-}
-
-// RevealPath 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) RevealPath(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: RevealPath（阶段 6 接入）")
-}
-
-// RevealWorkspacePathForTab 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) RevealWorkspacePathForTab(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: RevealWorkspacePathForTab（阶段 6 接入）")
-}
-
 // RunShellForTab 宿主边界方法（契约 2 参数）：返回合理默认值。
 func (a *App) RunShellForTab(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// SaveClipboardImage 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) SaveClipboardImage() (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveClipboardImage（阶段 6 接入）")
-}
-
-// SaveDoc 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SaveDoc(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveDoc（阶段 6 接入）")
-}
-
-// SaveDocForTab 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) SaveDocForTab(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveDocForTab（阶段 6 接入）")
-}
-
-// SaveExportFile 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) SaveExportFile(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveExportFile（阶段 6 接入）")
-}
-
-// SaveExportImageFiles 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SaveExportImageFiles(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveExportImageFiles（阶段 6 接入）")
-}
-
-// SaveHooksSettingsForRoot 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) SaveHooksSettingsForRoot(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveHooksSettingsForRoot（阶段 6 接入）")
-}
-
-// SavePastedFile 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SavePastedFile(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SavePastedFile（阶段 6 接入）")
-}
-
-// SavePastedImage 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SavePastedImage(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SavePastedImage（阶段 6 接入）")
-}
-
-// SaveProvider 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SaveProvider(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveProvider（阶段 6 接入）")
-}
-
-// SaveProviderKey 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SaveProviderKey(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveProviderKey（阶段 6 接入）")
-}
-
-// SaveProviderWithKey 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SaveProviderWithKey(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SaveProviderWithKey（阶段 6 接入）")
 }
 
 // SaveThemePack 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -474,11 +289,6 @@ func (a *App) SaveThemePack(_arg1 any) (map[string]any, error) {
 // SaveWindowState 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) SaveWindowState(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// ScanSSHConfig 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) ScanSSHConfig() (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: ScanSSHConfig（阶段 6 接入）")
 }
 
 // SetBotConnectionToolApprovalMode 宿主边界方法（契约 2 参数）：返回合理默认值。
@@ -494,11 +304,6 @@ func (a *App) SetBotSecret(_arg1 any, _arg2 any) (map[string]any, error) {
 // SetBotSettings 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) SetBotSettings(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
-}
-
-// SetCloseBehavior 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SetCloseBehavior(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SetCloseBehavior（阶段 6 接入）")
 }
 
 // SetColdResumePrune 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -596,11 +401,6 @@ func (a *App) SetNetwork(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// SetPermissionMode 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SetPermissionMode(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SetPermissionMode（阶段 6 接入）")
-}
-
 // SetPlannerModel 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) SetPlannerModel(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -676,36 +476,6 @@ func (a *App) SetTopicPinned(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// SubmitDeliveryRecoveryToTab 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) SubmitDeliveryRecoveryToTab(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SubmitDeliveryRecoveryToTab（阶段 6 接入）")
-}
-
-// SubmitDisplayToTab 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) SubmitDisplayToTab(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SubmitDisplayToTab（阶段 6 接入）")
-}
-
-// SubmitEditedDisplayToTab 宿主边界方法（契约 4 参数）：返回合理默认值。
-func (a *App) SubmitEditedDisplayToTab(_arg1 any, _arg2 any, _arg3 any, _arg4 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SubmitEditedDisplayToTab（阶段 6 接入）")
-}
-
-// SubmitInvocationsToTab 宿主边界方法（契约 4 参数）：返回合理默认值。
-func (a *App) SubmitInvocationsToTab(_arg1 any, _arg2 any, _arg3 any, _arg4 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SubmitInvocationsToTab（阶段 6 接入）")
-}
-
-// SwitchWorkspace 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SwitchWorkspace(_arg1 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: SwitchWorkspace（阶段 6 接入）")
-}
-
-// TestBotConnection 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) TestBotConnection(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: TestBotConnection（阶段 6 接入）")
-}
-
 // TrySubagentProfile 宿主边界方法（契约 2 参数）：返回合理默认值。
 func (a *App) TrySubagentProfile(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -761,26 +531,6 @@ func (a *App) WorkbenchSwitchLocal() (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// WorkspaceChangeDetail 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) WorkspaceChangeDetail(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: WorkspaceChangeDetail（阶段 6 接入）")
-}
-
-// WorkspaceGitHistory 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) WorkspaceGitHistory(_arg1 any, _arg2 any) (map[string]any, error) {
-	return nil, errors.New("Reasonix 宿主未实现: WorkspaceGitHistory（阶段 6 接入）")
-}
-
-// Submit 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) Submit(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// SubmitDisplay 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SubmitDisplay(_arg1 any, _arg2 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // RunShell 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) RunShell(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -791,18 +541,8 @@ func (a *App) Steer(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// Cancel 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) Cancel() (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // Approve 宿主边界方法（契约 4 参数）：返回合理默认值。
 func (a *App) Approve(_arg1 any, _arg2 any, _arg3 any, _arg4 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// ResolveRecovery 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) ResolveRecovery(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -816,19 +556,9 @@ func (a *App) SetRecoveryCheckpointEnabledTab(_arg1 any, _arg2 any) (map[string]
 	return map[string]any{}, nil
 }
 
-// RecoveryCheckpointEnabled 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) RecoveryCheckpointEnabled() (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // RecoveryCheckpointEnabledTab 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) RecoveryCheckpointEnabledTab(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// AnswerQuestion 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) AnswerQuestion(_arg1 any, _arg2 any) (map[string]any, error) {
-	return map[string]any{}, nil
+	return map[string]any{}, errors.New("Reasonix 宿主未实现: RecoveryCheckpointEnabledTab（恢复管理未接入）")
 }
 
 // SetPlanMode 宿主边界方法（契约 1 参数）：返回合理默认值。
@@ -861,53 +591,8 @@ func (a *App) SetGoal(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// ClearGoal 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) ClearGoal() (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // Compact 宿主边界方法（契约 0 参数）：返回合理默认值。
 func (a *App) Compact() (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// History 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) History() (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// HistoryPage 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) HistoryPage(_arg1 any, _arg2 any) ([]any, error) {
-	return []any{}, nil
-}
-
-// Checkpoints 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) Checkpoints() ([]any, error) {
-	return []any{}, nil
-}
-
-// Rewind 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) Rewind(_arg1 any, _arg2 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// Fork 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) Fork(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// SummarizeFrom 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SummarizeFrom(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// SummarizeUpTo 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) SummarizeUpTo(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// OpenChannelSessionForTab 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) OpenChannelSessionForTab(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -976,11 +661,6 @@ func (a *App) SetMCPServerTier(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// ListDir 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) ListDir(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // SearchFileRefs 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) SearchFileRefs(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -998,11 +678,6 @@ func (a *App) GitBranches() (map[string]any, error) {
 
 // GitCheckout 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) GitCheckout(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// WorkspaceGitCommitDetail 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) WorkspaceGitCommitDetail(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -1026,11 +701,6 @@ func (a *App) OpenWorkspaceInExternalOpenerForTab(_arg1 any, _arg2 any) (map[str
 	return map[string]any{}, nil
 }
 
-// RevealWorkspacePath 宿主边界方法（契约 1 参数）：返回合理默认值。
-func (a *App) RevealWorkspacePath(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // SetModel 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) SetModel(_arg1 any) (map[string]any, error) {
 	return map[string]any{}, nil
@@ -1043,11 +713,6 @@ func (a *App) SetEffort(_arg1 any) (map[string]any, error) {
 
 // SetTokenMode 宿主边界方法（契约 1 参数）：返回合理默认值。
 func (a *App) SetTokenMode(_arg1 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// SaveHooksSettings 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) SaveHooksSettings(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -1083,11 +748,6 @@ func (a *App) ActivateBaseStyle(_arg1 any) (map[string]any, error) {
 
 // DisableThemePack 宿主边界方法（契约 0 参数）：返回合理默认值。
 func (a *App) DisableThemePack() (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-// RestoreGraphiteAppearance 宿主边界方法（契约 0 参数）：返回合理默认值。
-func (a *App) RestoreGraphiteAppearance() (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -1141,17 +801,217 @@ func (a *App) MkdirRemote(_arg1 any, _arg2 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// RenameRemotePath 宿主边界方法（契约 3 参数）：返回合理默认值。
-func (a *App) RenameRemotePath(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 // DeleteRemotePath 宿主边界方法（契约 3 参数）：返回合理默认值。
 func (a *App) DeleteRemotePath(_arg1 any, _arg2 any, _arg3 any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-// EnsureRemoteServer 宿主边界方法（契约 2 参数）：返回合理默认值。
-func (a *App) EnsureRemoteServer(_arg1 any, _arg2 any) (map[string]any, error) {
-	return map[string]any{}, nil
+// SubmitDisplayToTab 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SubmitDisplayToTab(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: SubmitDisplayToTab")
+}
+
+// SubmitDeliveryRecoveryToTab 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SubmitDeliveryRecoveryToTab(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: SubmitDeliveryRecoveryToTab")
+}
+
+// SubmitInvocationsToTab 宿主边界方法（契约 4 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SubmitInvocationsToTab(_arg1 any, _arg2 any, _arg3 any, _arg4 any) error {
+	return errors.New("Reasonix 宿主未实现: SubmitInvocationsToTab")
+}
+
+// SubmitEditedDisplayToTab 宿主边界方法（契约 4 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SubmitEditedDisplayToTab(_arg1 any, _arg2 any, _arg3 any, _arg4 any) error {
+	return errors.New("Reasonix 宿主未实现: SubmitEditedDisplayToTab")
+}
+
+// OpenChannelSessionForTab 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) OpenChannelSessionForTab(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: OpenChannelSessionForTab")
+}
+
+// OpenChannelSessionPageForTab 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) OpenChannelSessionPageForTab(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: OpenChannelSessionPageForTab")
+}
+
+// PurgeTrashedSession 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) PurgeTrashedSession(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: PurgeTrashedSession")
+}
+
+// PurgeRecoveryCopy 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) PurgeRecoveryCopy(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: PurgeRecoveryCopy")
+}
+
+// PickWorkspace 宿主边界方法（契约 0 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) PickWorkspace() error {
+	return errors.New("Reasonix 宿主未实现: PickWorkspace")
+}
+
+// SwitchWorkspace 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SwitchWorkspace(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: SwitchWorkspace")
+}
+
+// MCPServers 宿主边界方法（契约 0 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) MCPServers() error {
+	return errors.New("Reasonix 宿主未实现: MCPServers")
+}
+
+// MCPMarketplace 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) MCPMarketplace(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: MCPMarketplace")
+}
+
+// MCPMarketplaceResolve 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) MCPMarketplaceResolve(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: MCPMarketplaceResolve")
+}
+
+// PlanPluginInstall 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) PlanPluginInstall(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: PlanPluginInstall")
+}
+
+// ClearMCPServerAuthentication 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ClearMCPServerAuthentication(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: ClearMCPServerAuthentication")
+}
+
+// CancelTrySubagentProfile 宿主边界方法（契约 0 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) CancelTrySubagentProfile() error {
+	return errors.New("Reasonix 宿主未实现: CancelTrySubagentProfile")
+}
+
+// ListDir 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ListDir(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: ListDir")
+}
+
+// WorkspaceChangeDetail 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) WorkspaceChangeDetail(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: WorkspaceChangeDetail")
+}
+
+// WorkspaceGitHistory 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) WorkspaceGitHistory(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: WorkspaceGitHistory")
+}
+
+// WorkspaceGitCommitDetail 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) WorkspaceGitCommitDetail(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: WorkspaceGitCommitDetail")
+}
+
+// RevealWorkspacePath 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) RevealWorkspacePath(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: RevealWorkspacePath")
+}
+
+// RevealWorkspacePathForTab 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) RevealWorkspacePathForTab(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: RevealWorkspacePathForTab")
+}
+
+// RevealPath 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) RevealPath(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: RevealPath")
+}
+
+// HooksSettings 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) HooksSettings(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: HooksSettings")
+}
+
+// SaveHooksSettings 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SaveHooksSettings(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: SaveHooksSettings")
+}
+
+// SaveHooksSettingsForRoot 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SaveHooksSettingsForRoot(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: SaveHooksSettingsForRoot")
+}
+
+// ClearBotSecret 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ClearBotSecret(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: ClearBotSecret")
+}
+
+// DiagnoseBotConnection 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) DiagnoseBotConnection(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: DiagnoseBotConnection")
+}
+
+// TestBotConnection 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) TestBotConnection(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: TestBotConnection")
+}
+
+// SetCloseBehavior 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) SetCloseBehavior(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: SetCloseBehavior")
+}
+
+// ListThemePacks 宿主边界方法（契约 0 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ListThemePacks() error {
+	return errors.New("Reasonix 宿主未实现: ListThemePacks")
+}
+
+// RestoreGraphiteAppearance 宿主边界方法（契约 0 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) RestoreGraphiteAppearance() error {
+	return errors.New("Reasonix 宿主未实现: RestoreGraphiteAppearance")
+}
+
+// CopyThemePack 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) CopyThemePack(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: CopyThemePack")
+}
+
+// ImportThemePack 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ImportThemePack(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: ImportThemePack")
+}
+
+// ExportThemePack 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ExportThemePack(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: ExportThemePack")
+}
+
+// MigrateDesktopPreferences 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) MigrateDesktopPreferences(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: MigrateDesktopPreferences")
+}
+
+// ConnectKey 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ConnectKey(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: ConnectKey")
+}
+
+// ScanSSHConfig 宿主边界方法（契约 0 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ScanSSHConfig() error {
+	return errors.New("Reasonix 宿主未实现: ScanSSHConfig")
+}
+
+// ConnectRemoteHost 宿主边界方法（契约 1 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ConnectRemoteHost(_arg1 any) error {
+	return errors.New("Reasonix 宿主未实现: ConnectRemoteHost")
+}
+
+// ListRemoteDir 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) ListRemoteDir(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: ListRemoteDir")
+}
+
+// RenameRemotePath 宿主边界方法（契约 3 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) RenameRemotePath(_arg1 any, _arg2 any, _arg3 any) error {
+	return errors.New("Reasonix 宿主未实现: RenameRemotePath")
+}
+
+// EnsureRemoteServer 宿主边界方法（契约 2 参数）：显式不支持（桌面功能或未接入）。
+func (a *App) EnsureRemoteServer(_arg1 any, _arg2 any) error {
+	return errors.New("Reasonix 宿主未实现: EnsureRemoteServer")
 }

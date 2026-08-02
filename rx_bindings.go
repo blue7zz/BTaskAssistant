@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1939,4 +1940,322 @@ func (a *App) RestoreArchivedMemory(_archivePath string) error {
 // RestoreArchivedMemoryForTab 恢复归档记忆（宿主：显式不支持）。
 func (a *App) RestoreArchivedMemoryForTab(_tabID string, _archivePath string) error {
 	return errors.New("Reasonix 宿主未实现: RestoreArchivedMemoryForTab")
+}
+
+// ── 附件真实现（阶段 6）────────────────────────────────────────────────────
+
+// SavePastedImage 保存粘贴图片（data URL）到任务附件目录。
+func (a *App) SavePastedImage(dataURL string) (string, error) {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return "", err
+	}
+	return a.rxManager.SavePastedImage(taskID, dataURL)
+}
+
+// SavePastedFile 保存粘贴/拖入文件到任务附件目录。
+func (a *App) SavePastedFile(name string, dataURL string) (string, error) {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return "", err
+	}
+	return a.rxManager.SavePastedFile(taskID, name, dataURL)
+}
+
+// SaveClipboardImage 剪贴板图片（宿主无剪贴板读取——显式错误）。
+func (a *App) SaveClipboardImage() (string, error) {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return "", err
+	}
+	return a.rxManager.SaveClipboardImage(taskID)
+}
+
+// AttachmentDataURL 读取任务附件并返回 data URL（路径归属校验）。
+func (a *App) AttachmentDataURL(path string) (string, error) {
+	taskID, err := a.rxTaskForAttachmentPath(path)
+	if err != nil {
+		return "", err
+	}
+	return a.rxManager.AttachmentDataURL(taskID, path)
+}
+
+// rxTaskForAttachmentPath 从附件路径反查任务（附件在任务会话目录内）。
+func (a *App) rxTaskForAttachmentPath(path string) (string, error) {
+	a.rxMu.Lock()
+	defer a.rxMu.Unlock()
+	cleaned := filepath.Clean(path)
+	for _, entry := range a.rxTabs {
+		dir := filepath.Clean(a.rxManager.TaskSessionDir(entry.taskID))
+		rel, err := filepath.Rel(dir, cleaned)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return entry.taskID, nil
+		}
+	}
+	return "", fmt.Errorf("拒绝会话目录外的附件: %s", path)
+}
+
+// ── 核心矩阵清零（阶段 6：真实现可见功能）────────────────────────────────
+
+// SaveProvider 新增/更新 Provider（reasonix 内部设置面板入口；参数为
+// provider 草稿对象，映射到 bridge.SaveProvider——凭据经内核 .env）。
+func (a *App) SaveProvider(draft map[string]any) error {
+	name, _ := draft["name"].(string)
+	kind, _ := draft["kind"].(string)
+	baseURL, _ := draft["baseUrl"].(string)
+	apiKeyEnv, _ := draft["apiKeyEnv"].(string)
+	key, _ := draft["keyDraft"].(string)
+	if key == "" {
+		key, _ = draft["key"].(string)
+	}
+	return bridge.SaveProvider(name, kind, baseURL, apiKeyEnv, key)
+}
+
+// SaveProviderWithKey 保存 Provider 与 Key（reasonix 前端调用面）。
+func (a *App) SaveProviderWithKey(provider map[string]any, key string) error {
+	name, _ := provider["name"].(string)
+	kind, _ := provider["kind"].(string)
+	baseURL, _ := provider["baseUrl"].(string)
+	apiKeyEnv, _ := provider["apiKeyEnv"].(string)
+	return bridge.SaveProvider(name, kind, baseURL, apiKeyEnv, key)
+}
+
+// SaveProviderKey 保存 Provider 凭据（按环境变量名，内核 .env）。
+func (a *App) SaveProviderKey(apiKeyEnv string, value string) error {
+	return bridge.WriteCredential(apiKeyEnv, value)
+}
+
+// ClearProviderKey 清除 Provider 凭据（宿主：从 .env 移除）。
+func (a *App) ClearProviderKey(apiKeyEnv string) error {
+	return bridge.ClearCredential(apiKeyEnv)
+}
+
+// SetPermissionMode 设置默认工具审批模式（映射内核 SetDesktopDefaultToolApprovalMode）。
+func (a *App) SetPermissionMode(mode string) error {
+	return bridge.SetApprovalMode(mode)
+}
+
+// SaveDoc 保存会话文档（写入任务会话目录 docs/——与内核记忆文档同域）。
+func (a *App) SaveDoc(path string, body string) error {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return err
+	}
+	return a.rxManager.SaveSessionDoc(taskID, path, body)
+}
+
+// SaveDocForTab 保存指定任务的会话文档。
+func (a *App) SaveDocForTab(tabID string, path string, body string) error {
+	taskID, err := a.rxTaskForTab(tabID)
+	if err != nil {
+		return err
+	}
+	return a.rxManager.SaveSessionDoc(taskID, path, body)
+}
+
+// RestoreSession 从回收站恢复会话（宿主：会话文件移至回收站后由内核
+// 文件移动恢复——直接恢复主文件与侧车）。
+func (a *App) RestoreSession(path string) error {
+	if err := a.rxValidateSessionPath(path); err != nil {
+		return err
+	}
+	return a.rxManager.RestoreSessionFile(path)
+}
+
+// SaveExportFile 导出会话内容到用户选择的文件（文件对话框）。
+func (a *App) SaveExportFile(path string, payload string, base64Encoded bool) error {
+	_ = path
+	data := []byte(payload)
+	if base64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return fmt.Errorf("导出内容 base64 解码失败: %w", err)
+		}
+		data = decoded
+	}
+	if a.ctx == nil {
+		return errors.New("桌面客户端尚未初始化")
+	}
+	selected, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		Title:           "导出 Reasonix 内容",
+		DefaultFilename: "reasonix-export.txt",
+	})
+	if err != nil {
+		return err
+	}
+	if selected == "" {
+		return nil // 用户取消
+	}
+	return os.WriteFile(selected, data, 0o644)
+}
+
+// SaveExportImageFiles 导出多张图片（宿主：逐张选择导出）。
+func (a *App) SaveExportImageFiles(path string, payloads []string) error {
+	_ = path
+	for index, payload := range payloads {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(payload, "data:image/png;base64,"))
+		if err != nil {
+			return fmt.Errorf("图片 %d 解码失败: %w", index, err)
+		}
+		if a.ctx == nil {
+			return errors.New("桌面客户端尚未初始化")
+		}
+		selected, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+			Title:           "导出图片",
+			DefaultFilename: fmt.Sprintf("image-%d.png", index+1),
+		})
+		if err != nil {
+			return err
+		}
+		if selected == "" {
+			return nil
+		}
+		if err := os.WriteFile(selected, decoded, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ── 核心工作台无参版（阶段 6：映射激活任务）──────────────────────────────
+
+func (a *App) rxActiveTabID() (string, error) {
+	taskID, _, err := a.rxActiveTask()
+	if err != nil {
+		return "", err
+	}
+	if tab := a.rxManager.Tab(taskID); tab != nil {
+		return tab.ID, nil
+	}
+	return "", errors.New("Reasonix 会话尚未初始化")
+}
+
+// Submit 提交消息到激活任务。
+func (a *App) Submit(input string) error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.SubmitToTab(tabID, input)
+}
+
+// Cancel 取消激活任务的进行中回合。
+func (a *App) Cancel() error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.CancelForTab(tabID)
+}
+
+// CancelForTab 取消指定任务的进行中回合。
+func (a *App) CancelForTab(tabID string) error {
+	taskID, err := a.rxTaskForTab(tabID)
+	if err != nil {
+		return err
+	}
+	a.rxManager.Cancel(taskID)
+	return nil
+}
+
+// AnswerQuestion 回答激活任务的提问（id + answers 列表）。
+func (a *App) AnswerQuestion(id string, answers []any) error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.AnswerQuestionForTab(tabID, id, answers)
+}
+
+// ClearGoal 清除激活任务的目标。
+func (a *App) ClearGoal() error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.ClearGoalForTab(tabID)
+}
+
+// History 返回激活任务的完整历史。
+func (a *App) History() ([]bridge.HistoryMessageView, error) {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return []bridge.HistoryMessageView{}, err
+	}
+	return a.HistoryForTab(tabID)
+}
+
+// HistoryPage 返回激活任务的历史分页。
+func (a *App) HistoryPage(beforeTurn int, limit int) (bridge.HistoryPageView, error) {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return bridge.HistoryPageView{}, err
+	}
+	return a.HistoryPageForTab(tabID, beforeTurn, limit)
+}
+
+// Checkpoints 返回激活任务的检查点。
+func (a *App) Checkpoints() ([]any, error) {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return []any{}, err
+	}
+	return a.CheckpointsForTab(tabID)
+}
+
+// Rewind 回退激活任务（turn + scope）。
+func (a *App) Rewind(turn int, scope string) error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.RewindForTab(tabID, turn, scope)
+}
+
+// Fork 分叉激活任务。
+func (a *App) Fork(turn int) (string, error) {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return "", err
+	}
+	view, err := a.ForkForTab(tabID, turn)
+	if err != nil {
+		return "", err
+	}
+	return view.SessionPath, nil
+}
+
+// SummarizeFrom 从指定轮次压缩激活任务。
+func (a *App) SummarizeFrom(turn int) error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.SummarizeFromForTab(tabID, turn)
+}
+
+// SummarizeUpTo 压缩到指定轮次。
+func (a *App) SummarizeUpTo(turn int) error {
+	tabID, err := a.rxActiveTabID()
+	if err != nil {
+		return err
+	}
+	return a.SummarizeUpToForTab(tabID, turn)
+}
+
+// RecoveryCheckpointEnabled 激活任务恢复检查点开关（宿主：内核恢复管理
+// 未接入——显式不支持）。
+func (a *App) RecoveryCheckpointEnabled() (bool, error) {
+	return false, errors.New("Reasonix 宿主未实现: RecoveryCheckpointEnabled（恢复管理未接入）")
+}
+
+// ResolveRecovery 解决激活任务的恢复卡（宿主：显式不支持）。
+func (a *App) ResolveRecovery(_id string, _action string, _feedback string) error {
+	return errors.New("Reasonix 宿主未实现: ResolveRecovery（恢复管理未接入）")
+}
+
+// SubmitDisplay 提交显示内容（宿主：工具调用结果经内核事件流处理——
+// 显式不支持，避免假成功）。
+func (a *App) SubmitDisplay(_display map[string]any, _input string) error {
+	return errors.New("Reasonix 宿主未实现: SubmitDisplay（工具调用结果经内核事件流呈现）")
 }

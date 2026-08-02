@@ -226,3 +226,38 @@ func writeCredential(home string, envName string, value string) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// WriteCredential 写入 <home>/.env 中的 KEY=value（供宿主凭据绑定）。
+func WriteCredential(envName string, value string) error {
+	return writeCredential(rxconfig.ReasonixHomeDir(), envName, value)
+}
+
+// ClearCredential 从 <home>/.env 移除 KEY。
+func ClearCredential(envName string) error {
+	home := rxconfig.ReasonixHomeDir()
+	if home == "" || envName == "" {
+		return errors.New("凭据目标无效")
+	}
+	path := filepath.Join(home, ".env")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil // 无 .env 即视为已清除
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		key := trimmed
+		if idx := strings.IndexAny(trimmed, "=:"); idx >= 0 {
+			key = strings.TrimSpace(trimmed[:idx])
+		}
+		if key != envName {
+			kept = append(kept, line)
+		}
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(kept, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}

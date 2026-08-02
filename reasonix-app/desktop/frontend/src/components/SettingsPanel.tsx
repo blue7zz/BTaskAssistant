@@ -66,11 +66,18 @@ import { getSuccessPreference, setSuccessPreference, getAttentionPreference, set
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 
+// 嵌入宿主模式：隐藏桌面专属功能（bots/mcp/remote/plugins/updates）与
+// 尚未真实接入的全局配置（sandbox/network/hooks）——避免假兼容界面；
+// 任务工作台相关（models/skills/memory/权限/快捷键/诊断）保留。
 const SETTINGS_TABS: SettingsTab[] = [
-  "general", "models", "bots", "mcp", "remote", "skills", "subagents", "plugins",
-  "memory", "hooks", "diagnostics", "shortcuts", "permissions", "sandbox", "network",
-  "appearance",
-  ...(isHostMode() ? [] : ["updates" as SettingsTab]),
+  "general", "models", "skills", "subagents",
+  "memory", "diagnostics", "shortcuts", "permissions", "appearance",
+  ...(isHostMode()
+    ? []
+    : ([
+        "bots", "mcp", "remote", "plugins", "hooks", "sandbox", "network",
+        "updates",
+      ] as SettingsTab[])),
 ];
 export type SettingsInitialFocus =
   | { target: "bot-allowlist"; connectionId?: string }
