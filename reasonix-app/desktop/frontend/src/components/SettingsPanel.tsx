@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
-import { rxActiveElement, rxQuerySelector } from "../lib/embedHost";
+import { isEmbedded, rxActiveElement, rxQuerySelector } from "../lib/embedHost";
 import { Bot as BotIcon, Check, CheckCircle2, ChevronDown, ChevronUp, Clipboard, ExternalLink, GripVertical, KeyRound, Loader2, MessageCircle, Play, QrCode, RefreshCw, Send } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useDeferredClose } from "../lib/useMountTransition";
@@ -69,15 +69,14 @@ import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 // 嵌入宿主模式：隐藏桌面专属功能（bots/mcp/remote/plugins/updates）与
 // 尚未真实接入的全局配置（sandbox/network/hooks）——避免假兼容界面；
 // 任务工作台相关（models/skills/memory/权限/快捷键/诊断）保留。
-const SETTINGS_TABS: SettingsTab[] = [
+const HOST_SETTINGS_TABS: SettingsTab[] = [
   "general", "models", "skills", "subagents",
   "memory", "diagnostics", "shortcuts", "permissions", "appearance",
-  ...(isHostMode()
-    ? []
-    : ([
-        "bots", "mcp", "remote", "plugins", "hooks", "sandbox", "network",
-        "updates",
-      ] as SettingsTab[])),
+];
+const DESKTOP_SETTINGS_TABS: SettingsTab[] = [
+  ...HOST_SETTINGS_TABS,
+  "bots", "mcp", "remote", "plugins", "hooks", "sandbox", "network",
+  "updates",
 ];
 export type SettingsInitialFocus =
   | { target: "bot-allowlist"; connectionId?: string }
@@ -104,6 +103,7 @@ export function SettingsPanel({
   agentRunning = false,
   desktopPlatform,
   onUseSubagent,
+  inline = false,
 }: {
   onClose: () => void;
   onChanged: (settings?: SettingsView | null) => void;
@@ -112,6 +112,7 @@ export function SettingsPanel({
   agentRunning?: boolean;
   desktopPlatform: DesktopPlatform;
   onUseSubagent: (command: string) => void;
+  inline?: boolean;
 }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
@@ -130,6 +131,9 @@ export function SettingsPanel({
   const [customFontName, setCustomFontNameState] = useState<string>(getCustomFontName());
   const [customMonoFontName, setCustomMonoFontNameState] = useState<string>(getCustomMonoFontName());
   const [tab, setTab] = useState<SettingsTab>(initialTab === "providers" ? "models" : initialTab ?? "general");
+  const settingsTabs = isHostMode() || isEmbedded()
+    ? HOST_SETTINGS_TABS
+    : DESKTOP_SETTINGS_TABS;
   const pendingSubagentCommandRef = useRef<string | null>(null);
   // Play the modal exit animation, then let the parent unmount us and focus
   // the composer with the selected slash command.
@@ -238,12 +242,13 @@ export function SettingsPanel({
 
   // Close on Esc
   useEffect(() => {
+    if (inline) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !rxQuerySelector("[data-anchored-popover='active']")) requestClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [requestClose]);
+  }, [inline, requestClose]);
 
   // The settings-reliant pages (general, models, network, permissions,
   // sandbox, appearance, updates) need SettingsView loaded. MCP, Skills, Plugins,
@@ -253,23 +258,31 @@ export function SettingsPanel({
   const lazySettingsPageFallback = <div className="empty">{t("settings.loading")}</div>;
 
   return (
-    <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onMouseDown={(e) =>
-      { if (e.target === e.currentTarget) requestClose(); }}>
-      {isHostMode() && (
+    <div
+      className={`management-modal-backdrop settings-modal-backdrop${inline ? " settings-modal-backdrop--inline" : ""}`}
+      data-state={status}
+      onMouseDown={(e) => {
+        if (!inline && e.target === e.currentTarget) requestClose();
+      }}
+    >
+      {(isHostMode() || isEmbedded()) && !inline && (
         <div className="settings-host-notice">
           Reasonix 全局设置（Provider / 模型 / Home）请在 BTask 的
           “设置 → Reasonix 设置”中配置；本面板仅显示任务级选项。
         </div>
       )}
-      <div className="management-modal settings-modal" data-state={status}>
+      <div
+        className={`management-modal settings-modal${inline ? " settings-modal--inline" : ""}`}
+        data-state={status}
+      >
         <header className="management-modal__head settings-modal__head">
           <div className="management-modal__title settings-modal__title">{t("settings.title")}</div>
-          <ModalCloseButton label={t("common.close")} onClick={requestClose} />
+          {!inline && <ModalCloseButton label={t("common.close")} onClick={requestClose} />}
         </header>
 
         <div className="settings-center">
           <nav className="settings-center__nav" aria-label={t("settings.title")}>
-            {SETTINGS_TABS.map((id) => (
+            {settingsTabs.map((id) => (
               <button
                 key={id}
                 className={`settings-center__navitem${tab === id ? " settings-center__navitem--active" : ""}`}

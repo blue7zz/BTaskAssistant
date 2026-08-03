@@ -450,6 +450,7 @@ describe("PlaneCollector", () => {
       "team",
       "project-1",
       "ONE",
+      [],
     );
     expect(container.textContent).toContain("新收集候选");
     expect(container.textContent).toContain(
@@ -457,5 +458,95 @@ describe("PlaneCollector", () => {
     );
     expect(loadDetails).not.toHaveBeenCalled();
     expect(useWorkspaceStore.getState().tasks).toHaveLength(0);
+  });
+
+  it("collects only the selected assignee's Plane work items", async () => {
+    useWorkspaceStore.setState({
+      planeSettings: {
+        baseUrl: "https://plane.example.com",
+        workspaceSlug: "team",
+        projectId: "project-1",
+        projectName: "Project One",
+        projectIdentifier: "ONE",
+        showInTaskSources: true,
+      },
+    });
+    const payload = (
+      externalId: string,
+      title: string,
+      assigneeId: string,
+      assigneeName: string,
+    ): PlaneCandidatePayload => ({
+      externalId,
+      externalKey: externalId.toUpperCase(),
+      title,
+      descriptionMarkdown: "",
+      sourceMarkdown: `# ${title}`,
+      priority: "medium",
+      stateName: "待办",
+      stateGroup: "backlog",
+      labels: [],
+      assignees: [assigneeName],
+      assigneeDetails: [{ id: assigneeId, name: assigneeName }],
+      comments: [],
+      detailsLoaded: false,
+    });
+    useWorkspaceStore.getState().ingestPlaneCandidates([
+      payload("existing-alice", "Alice 旧任务", "user-alice", "Alice"),
+      payload("existing-bob", "Bob 旧任务", "user-bob", "Bob"),
+    ]);
+    const collectPlaneWorkItems = vi.fn().mockResolvedValue([
+      payload("new-alice", "Alice 新任务", "user-alice", "Alice"),
+      payload(
+        "unexpected-bob",
+        "不应收集的 Bob 任务",
+        "user-bob",
+        "Bob",
+      ),
+    ]);
+    window.go = {
+      main: {
+        App: {
+          SaveState: vi.fn().mockResolvedValue(undefined),
+          CollectPlaneWorkItems: collectPlaneWorkItems,
+        },
+      },
+    } as unknown as typeof window.go;
+
+    await act(async () => {
+      root.render(
+        createElement(PlaneCollector, {
+          connected: true,
+          onSuccess: vi.fn(),
+          onError: vi.fn(),
+          onOpenTask: vi.fn(),
+        }),
+      );
+    });
+    await act(async () => {
+      (
+        container.querySelector(
+          'input[aria-label="筛选负责人 Alice"]',
+        ) as HTMLInputElement
+      ).click();
+    });
+    const collectButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("从 Plane 收集"))!;
+    await act(async () => {
+      collectButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(collectPlaneWorkItems).toHaveBeenCalledWith(
+      "https://plane.example.com",
+      "team",
+      "project-1",
+      "ONE",
+      ["user-alice"],
+    );
+    expect(container.textContent).toContain("Alice 新任务");
+    expect(container.textContent).not.toContain("不应收集的 Bob 任务");
   });
 });

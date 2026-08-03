@@ -5,16 +5,75 @@
 // 一切需要 document 级查询/样式/焦点操作的代码，在 embed 模式下都必须走这里，
 // 否则会命中主 document（找不到 shadow 内元素、污染宿主样式/属性）。
 
+let primaryShadowRoot: ShadowRoot | null = null;
 let shadowRoot: ShadowRoot | null = null;
+const auxiliaryShadowRoots: ShadowRoot[] = [];
 
-/** 由 embedEntry 在挂载/卸载时设置。 */
+export const OPEN_HOST_REASONIX_SETTINGS_EVENT =
+  "btask:open-reasonix-settings";
+export const EMBEDDED_REASONIX_SETTINGS_CHANGED_EVENT =
+  "btask:reasonix-settings-changed";
+
+function prepareEmbedRoot(root: ShadowRoot): void {
+  const host = root.host as HTMLElement;
+  host.setAttribute("data-rx-embed", "true");
+  // embedEntry 不经过 desktop main.tsx 的 initTheme。先补默认视觉方向，
+  // 避免 --surface-* 未定义时 button 回退成系统白色；异步设置加载后会覆盖。
+  if (!host.hasAttribute("data-theme-style")) {
+    host.setAttribute("data-theme-style", "graphite");
+  }
+}
+
+function refreshActiveShadowRoot(): void {
+  shadowRoot = auxiliaryShadowRoots.at(-1) ?? primaryShadowRoot;
+}
+
+/** 由主工作区 embedEntry 在挂载/卸载时设置。 */
 export function setEmbedShadowRoot(root: ShadowRoot | null): void {
-  shadowRoot = root;
+  const previous = primaryShadowRoot;
+  primaryShadowRoot = root;
+  if (
+    previous &&
+    previous !== root &&
+    !auxiliaryShadowRoots.includes(previous)
+  ) {
+    (previous.host as HTMLElement).removeAttribute("data-rx-embed");
+  }
+  if (root) prepareEmbedRoot(root);
+  refreshActiveShadowRoot();
+}
+
+/**
+ * 注册临时的嵌入界面（例如宿主设置页中的原生 RX 设置面板）。临时界面
+ * 活跃期间成为 DOM 查询与主题操作目标，卸载后自动恢复主工作区根节点。
+ */
+export function registerAuxiliaryEmbedShadowRoot(root: ShadowRoot): () => void {
+  auxiliaryShadowRoots.push(root);
+  prepareEmbedRoot(root);
+  refreshActiveShadowRoot();
+  return () => {
+    const index = auxiliaryShadowRoots.lastIndexOf(root);
+    if (index >= 0) auxiliaryShadowRoots.splice(index, 1);
+    if (root !== primaryShadowRoot && !auxiliaryShadowRoots.includes(root)) {
+      (root.host as HTMLElement).removeAttribute("data-rx-embed");
+    }
+    refreshActiveShadowRoot();
+  };
 }
 
 /** 当前是否处于 shadow 嵌入模式。 */
 export function isEmbedded(): boolean {
   return shadowRoot !== null;
+}
+
+/**
+ * 嵌入 BTask 时把设置导航交还宿主；独立 Reasonix 返回 false，继续打开
+ * 自己的设置中心。
+ */
+export function requestHostReasonixSettings(): boolean {
+  if (!isEmbedded() || typeof window === "undefined") return false;
+  window.dispatchEvent(new CustomEvent(OPEN_HOST_REASONIX_SETTINGS_EVENT));
+  return true;
 }
 
 /** shadow 内的文档（与主 document 相同对象，仅供类型一致）。 */

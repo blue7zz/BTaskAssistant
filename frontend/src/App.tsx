@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -29,6 +30,7 @@ import { TaskComposer, type ComposerMode } from "./components/TaskComposer";
 import { TaskBasicInfoDialog } from "./components/TaskBasicInfoDialog";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { ManualTaskDetail } from "./components/ManualTaskDetail";
+import { preloadReasonixEmbed } from "./components/ReasonixPage";
 import { TaskList } from "./components/TaskList";
 import { PlaneCollector } from "./components/PlaneCollector";
 import { DailyReportPage } from "./components/DailyReportPage";
@@ -50,6 +52,7 @@ import {
   useWorkspaceStore,
   type StatusFilter,
 } from "./store/workspace";
+import { OPEN_HOST_REASONIX_SETTINGS_EVENT } from "../../reasonix-app/desktop/frontend/src/lib/embedHost";
 
 const NAV_ICONS: Record<TaskStatus, typeof Inbox> = {
   inbox: Inbox,
@@ -155,6 +158,11 @@ export default function App() {
   const [activeResize, setActiveResize] = useState<ActiveResize>();
   const [taskMenu, setTaskMenu] = useState<TaskMenuState>();
   const [editingTaskID, setEditingTaskID] = useState<string>();
+
+  useEffect(() => {
+    // RX 前端在桌面应用首次打开时即后台加载；真正显示 RX 时只需切换任务会话。
+    void preloadReasonixEmbed().catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -358,11 +366,26 @@ export default function App() {
     setComposerOpen(true);
   };
 
-  const openSettings = (category: SettingsCategory) => {
-    if (activeView !== "settings") setSettingsReturnView(activeView);
+  const openSettings = useCallback((category: SettingsCategory) => {
     setSettingsInitialCategory(category);
-    setActiveView("settings");
-  };
+    setActiveView((currentView) => {
+      if (currentView !== "settings") setSettingsReturnView(currentView);
+      return "settings";
+    });
+  }, []);
+
+  useEffect(() => {
+    const openReasonixSettings = () => openSettings("reasonix");
+    window.addEventListener(
+      OPEN_HOST_REASONIX_SETTINGS_EVENT,
+      openReasonixSettings,
+    );
+    return () =>
+      window.removeEventListener(
+        OPEN_HOST_REASONIX_SETTINGS_EVENT,
+        openReasonixSettings,
+      );
+  }, [openSettings]);
 
   const planeConfigured = Boolean(
     planeSettings.baseUrl.trim() &&
@@ -655,7 +678,7 @@ export default function App() {
         </nav>
 
         <main className="main-shell">
-          {activeView === "settings" ? (
+          {activeView === "settings" && (
             <SettingsPage
               initialCategory={settingsInitialCategory}
               engine={engines.find((engine) => engine.id === "pi")}
@@ -667,126 +690,132 @@ export default function App() {
               onSuccess={reportSuccess}
               onError={reportError}
             />
-          ) : activeView === "report" ? (
+          )}
+          {activeView === "report" && (
             <DailyReportPage
               onOpenSettings={() => openSettings("report")}
               onSuccess={reportSuccess}
               onError={reportError}
             />
-          ) : activeView === "plane" ? (
-          <PlaneCollector
-            connected={planeAvailable}
-            onError={reportError}
-            onSuccess={reportSuccess}
-            onOpenTask={(taskID) => {
-              if (tasks.some((task) => task.id === taskID)) {
-                selectTask(taskID);
-                setStatusFilter("all");
-                setActiveView("tasks");
-              } else if (
-                trashedTasks.some((task) => task.id === taskID)
-              ) {
-                setActiveView("trash");
-                reportSuccess("该任务当前位于回收站");
-              } else {
-                reportError(new Error("没有找到这个任务"));
-              }
-            }}
-          />
-        ) : activeView === "trash" ? (
-          <TrashView
-            tasks={trashedTasks}
-            onRestore={handleRestoreTask}
-            onDeletePermanently={handleDeletePermanently}
-          />
-        ) : tasks.length === 0 ? (
-          <section className="empty-workspace">
-            <div className="empty-illustration">
-              <ClipboardList size={34} />
-              <span />
-              <span />
-              <span />
-            </div>
-            <span className="eyebrow">从一个真实任务开始</span>
-            <h2>任务池还是空的</h2>
-            <p>
-              手动添加任务，或把已有聊天记录完整导入。所有内容都由你填写，
-              系统只负责本地保存和分类。
-            </p>
-            <div>
-              <button
-                className="button primary"
-                onClick={() => openComposer("task")}
-              >
-                <Plus size={16} />
-                添加第一个任务
-              </button>
-              <button
-                className="button secondary"
-                onClick={() => openComposer("chat")}
-              >
-                <MessageSquareText size={16} />
-                导入聊天记录
-              </button>
-            </div>
-          </section>
-        ) : (
-          <div
-            className={`workspace-grid ${
-              taskListCollapsed ? "task-list-collapsed" : ""
-            }`}
-          >
-            <TaskList
-              tasks={filteredTasks}
-              selectedTaskID={selectedTaskID}
-              collapsed={taskListCollapsed}
-              searchQuery={query}
-              onSelect={selectTask}
-              onOpenContextMenu={(taskID, x, y) =>
-                setTaskMenu({ taskID, x, y })
-              }
-              onSearchQueryChange={setQuery}
-              onToggleCollapsed={() =>
-                setTaskListCollapsed((collapsed) => !collapsed)
-              }
+          )}
+          {activeView === "plane" && (
+            <PlaneCollector
+              connected={planeAvailable}
+              onError={reportError}
+              onSuccess={reportSuccess}
+              onOpenTask={(taskID) => {
+                if (tasks.some((task) => task.id === taskID)) {
+                  selectTask(taskID);
+                  setStatusFilter("all");
+                  setActiveView("tasks");
+                } else if (
+                  trashedTasks.some((task) => task.id === taskID)
+                ) {
+                  setActiveView("trash");
+                  reportSuccess("该任务当前位于回收站");
+                } else {
+                  reportError(new Error("没有找到这个任务"));
+                }
+              }}
             />
-            {!taskListCollapsed && (
-              <div
-                className={`panel-resizer task-list-resizer ${
-                  activeResize?.panel === "task-list" ? "active" : ""
-                }`}
-                role="separator"
-                aria-label="调整任务列表宽度"
-                aria-orientation="vertical"
-                aria-valuemin={PANEL_WIDTHS["task-list"].min}
-                aria-valuemax={maxPanelWidth("task-list")}
-                aria-valuenow={taskListWidth}
-                tabIndex={0}
-                onPointerDown={(event) =>
-                  startPanelResize("task-list", event)
+          )}
+          {activeView === "trash" && (
+            <TrashView
+              tasks={trashedTasks}
+              onRestore={handleRestoreTask}
+              onDeletePermanently={handleDeletePermanently}
+            />
+          )}
+          {activeView === "tasks" && tasks.length === 0 && (
+            <section className="empty-workspace">
+              <div className="empty-illustration">
+                <ClipboardList size={34} />
+                <span />
+                <span />
+                <span />
+              </div>
+              <span className="eyebrow">从一个真实任务开始</span>
+              <h2>任务池还是空的</h2>
+              <p>
+                手动添加任务，或把已有聊天记录完整导入。所有内容都由你填写，
+                系统只负责本地保存和分类。
+              </p>
+              <div>
+                <button
+                  className="button primary"
+                  onClick={() => openComposer("task")}
+                >
+                  <Plus size={16} />
+                  添加第一个任务
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => openComposer("chat")}
+                >
+                  <MessageSquareText size={16} />
+                  导入聊天记录
+                </button>
+              </div>
+            </section>
+          )}
+          {tasks.length > 0 && (
+            <div
+              className={`workspace-grid ${
+                taskListCollapsed ? "task-list-collapsed" : ""
+              }`}
+              hidden={activeView !== "tasks"}
+            >
+              <TaskList
+                tasks={filteredTasks}
+                selectedTaskID={selectedTaskID}
+                collapsed={taskListCollapsed}
+                searchQuery={query}
+                onSelect={selectTask}
+                onOpenContextMenu={(taskID, x, y) =>
+                  setTaskMenu({ taskID, x, y })
                 }
-                onKeyDown={(event) =>
-                  resizePanelWithKeyboard("task-list", event)
+                onSearchQueryChange={setQuery}
+                onToggleCollapsed={() =>
+                  setTaskListCollapsed((collapsed) => !collapsed)
                 }
               />
-            )}
-            {selectedTask ? (
-              <ManualTaskDetail
-                task={selectedTask}
-                onEdit={() => setEditingTaskID(selectedTask.id)}
-                onError={reportError}
-                onSuccess={reportSuccess}
-              />
-            ) : (
-              <section className="no-selection">
-                <ClipboardList size={28} />
-                <h2>选择一个任务</h2>
-                <p>从左侧任务列表进入工作台。</p>
-              </section>
-            )}
-          </div>
-        )}
-      </main>
+              {!taskListCollapsed && (
+                <div
+                  className={`panel-resizer task-list-resizer ${
+                    activeResize?.panel === "task-list" ? "active" : ""
+                  }`}
+                  role="separator"
+                  aria-label="调整任务列表宽度"
+                  aria-orientation="vertical"
+                  aria-valuemin={PANEL_WIDTHS["task-list"].min}
+                  aria-valuemax={maxPanelWidth("task-list")}
+                  aria-valuenow={taskListWidth}
+                  tabIndex={0}
+                  onPointerDown={(event) =>
+                    startPanelResize("task-list", event)
+                  }
+                  onKeyDown={(event) =>
+                    resizePanelWithKeyboard("task-list", event)
+                  }
+                />
+              )}
+              {selectedTask ? (
+                <ManualTaskDetail
+                  task={selectedTask}
+                  onEdit={() => setEditingTaskID(selectedTask.id)}
+                  onError={reportError}
+                  onSuccess={reportSuccess}
+                />
+              ) : (
+                <section className="no-selection">
+                  <ClipboardList size={28} />
+                  <h2>选择一个任务</h2>
+                  <p>从左侧任务列表进入工作台。</p>
+                </section>
+              )}
+            </div>
+          )}
+        </main>
 
       <TaskComposer
         open={composerOpen}

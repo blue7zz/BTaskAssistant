@@ -166,7 +166,7 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
   （`html`/`body`/`:root` 元素选择器改写为 `:host`，注释保护），与宿主 DOM/样式
   双向隔离。绑定调用经 `bridge.ts` embed 分支直连 `window.go.main.App`（同
   document，无 postMessage）；内核事件直连 `window.runtime` 订阅 `reasonix:event`。
-  任务切换保留控制器（秒开），离开详情页时释放（会话文件保留）。
+  任务切换或离开详情页都保留控制器；后台 idle 运行时由 LRU 限额回收。
 - 构建：`wails build` 单命令产出全量（reasonix 源码直接打包，无需独立 dist；
   独立应用构建脚本 `scripts/build-reasonix-frontend.sh` 保留）。
 
@@ -190,33 +190,36 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 - **测试隔离**：TestMain 设置临时 REASONIX_HOME——不读取本机真实配置、
   不消耗真实 API 额度；`go test -race` 无竞态。
 
-### 工作树绑定与路径加固（阶段 2）
+### 任务文件空间与路径加固（阶段 2）
 
-- **工作区解析**（`rxWorkspaceForTask`）：Git Binding 优先——state=ready 且
-  WorktreePath 通过真实路径校验（EvalSymlinks + 目录 + 非源仓库）→ 使用
-  工作树；无绑定/未就绪/路径失效 → 明确错误（禁止可写启动，提示先绑定）。
-  不再静默使用任务资料目录。工作区身份（BindingID/RootPath/Generation）存入
-  RuntimeEntry。
+- **工作区解析**（`rxWorkspaceForTask`）：Reasonix 始终使用当前任务的独立文件
+  空间（`task_workspaces.root_path`），通过 `EnsureTaskWorkspace` 确保目录和清单
+  已就绪，再以 EvalSymlinks 校验真实目录。Git Binding 是否存在及其状态都不
+  改变 RX 工作目录；任务 WorkspaceID 作为稳定代次存入 RuntimeEntry。
 - **路径校验统一**：`rxValidateSessionPath` 结构校验（必须位于
   `<dataRoot>/tasks/<taskID>/reasonix-sessions/`）+ 符号链接逃逸拒绝
   （目录与文件都解析真实路径，防 /var→/private/var 误报）；Resume/
   Preview/Restore 等恢复接口全部接入。
 - **last-session.txt**：相对会话文件名 + 临时文件原子替换；加载时校验
   仍在任务会话目录内（兼容旧绝对路径格式仅当路径不越界）。
-- **PI/RX 工作树互斥**：RX 回合运行中 PI 命令拒绝（AgentSessionCommand）；
-  PI 活跃时 RX 提交拒绝（SubmitToTab）；git worktree 清理/恢复在 RX
-  会话活跃时拒绝。
-- 测试：符号链接逃逸、工作区解析（无绑定/ready/未就绪三态）。
+- **PI/RX 文件空间互斥**：RX 回合运行中 PI 命令拒绝（AgentSessionCommand）；
+  PI 活跃时 RX 提交拒绝（SubmitToTab）。任务 worktree 位于文件空间的 `repos/`
+  下，因此 RX 会话活跃时仍拒绝清理 worktree。
+- 测试：符号链接逃逸、工作区解析（无绑定/ready/未就绪绑定三态均使用任务
+  文件空间）。
 
 ### 任务级会话保活（阶段 3）
 
 - **单实例前端**：reasonix App 挂载后常驻——任务切换只调
   `ActivateReasonixTask`（序号递增），后端发 `host:tab-activated` 事件，
-  reasonix 前端 `onHostTabActivated` → `syncActiveTab` 切换会话显示。
-  不再卸载/重建整套 React App；离开详情页才释放（`closeReasonixTab`）。
+  reasonix 前端 `onHostTabActivated` → `syncActiveTab` 切换会话显示，并原子刷新
+  活动 tab 元数据以立即恢复发送能力；历史、上下文等辅助数据在后台继续加载，
+  不阻塞已就绪控制器发送。不再卸载/重建整套 React App；离开
+  详情页也保持运行时，统一由 idle LRU 或应用退出释放。
 - **后台运行**：A 生成中切到 B，A 控制器保留继续后台运行（事件按 tabId
   分发到 store）；返回 A 立即恢复流式状态/历史/待审批。
-- **idle LRU 回收**：后台 idle 运行时超过 `MaxIdleRuntimes`（4）时按
+- **idle LRU 回收**：除当前活动会话外，后台 idle 运行时超过
+  `MaxIdleRuntimes`（4）时按
   `LastActive` 回收最旧（Close 语义：快照 + 记录最后会话）；running /
   等待审批提问（PendingPrompt）/ 有后台任务的会话绝不回收。
 - **RuntimeEntry**：taskID/tabID/工作区身份/RequestSeq/LastActive/
@@ -226,9 +229,11 @@ worktree 和异步响应必须同时匹配当前 task/session。切换任务会�
 
 ### Reasonix 设置（阶段 4）
 
-- **唯一入口**：BTask 设置新增"Reasonix 设置"分类（Provider/模型/审批/
-  Home/保留上限）；Reasonix 内部设置面板 embed 模式顶部提示"全局设置在
-  BTask 设置中配置"。
+- **唯一入口**：BTask 的"Reasonix 设置"默认直接挂载 RX 原生设置面板，
+  并保留 Provider/Home/保留上限等宿主全局配置子页；面板复用 RX 前端与
+  绑定，不创建第二个工作区或会话控制器。嵌入式 RX 不再显示重复入口，
+  快捷键或命令触发设置时通过宿主事件打开该分类；独立版 Reasonix 仍保留
+  自己的设置中心。
 - **真实内核读写**：`reasonix-bridge/settings.go` 走 rxconfig
   （Load/SetDefaultModel/SetPlannerModel/SetDesktopDefaultToolApprovalMode/
   UpsertProvider/SaveTo）；模型列表来自内核 Models。

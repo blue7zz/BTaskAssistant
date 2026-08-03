@@ -128,7 +128,7 @@ export function CloseTab(arg1:any):Promise<Record<string, any>>;
 
 export function CloseTerminalForTab(arg1:string,arg2:string):Promise<void>;
 
-export function CollectPlaneWorkItems(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<plane.Candidate>>;
+export function CollectPlaneWorkItems(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<Array<plane.Candidate>>;
 
 export function Commands():Promise<Array<Record<string, any>>>;
 

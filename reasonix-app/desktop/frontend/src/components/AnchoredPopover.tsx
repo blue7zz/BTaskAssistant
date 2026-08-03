@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
+import { rxPortalTarget } from "../lib/embedHost";
 
 type PopoverPosition = {
   left: number;
@@ -141,6 +142,9 @@ export function AnchoredPopover({
       if (event.key === "Escape") onClose();
     };
     const closeOnOutsideClick = (event: MouseEvent) => {
+      const path = event.composedPath();
+      if (popoverRef.current && path.includes(popoverRef.current)) return;
+      if (anchorRef.current && path.includes(anchorRef.current)) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popoverRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
@@ -182,6 +186,6 @@ export function AnchoredPopover({
     >
       {children}
     </div>,
-    document.body,
+    rxPortalTarget(),
   );
 }

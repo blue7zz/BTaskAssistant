@@ -2,11 +2,11 @@ package reasonix
 
 import (
 	"context"
-	"sync"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -122,6 +122,8 @@ func TestTaskSessionIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("task_a Ensure 失败: %v", err)
 	}
+	ctrlA := tabA.Ctrl
+	sessionA := tabA.Ctrl.SessionPath()
 	tabB, err := manager.Ensure(ctx, "task_b", workspaceB)
 	if err != nil {
 		t.Fatalf("task_b Ensure 失败: %v", err)
@@ -138,6 +140,19 @@ func TestTaskSessionIsolation(t *testing.T) {
 	if !filepath.IsAbs(dirA) || !filepath.IsAbs(dirB) {
 		t.Fatal("会话目录应为绝对路径")
 	}
+
+	// A→B→A 只切换活动任务，不重建 A 的控制器或新开会话。
+	tabAAgain, err := manager.Activate(ctx, "task_a", workspaceA, "", 3)
+	if err != nil {
+		t.Fatalf("再次激活 task_a 失败: %v", err)
+	}
+	if tabAAgain != tabA || tabAAgain.Ctrl != ctrlA {
+		t.Fatal("切回 task_a 时重建了已保留的运行时")
+	}
+	if tabAAgain.Ctrl.SessionPath() != sessionA {
+		t.Fatalf("切回 task_a 后会话路径变化: %s != %s", tabAAgain.Ctrl.SessionPath(), sessionA)
+	}
+	manager.Shutdown()
 }
 
 // TestSessionMetaContract 验证 Sessions() 输出与前端 SessionMeta 契约兼容。

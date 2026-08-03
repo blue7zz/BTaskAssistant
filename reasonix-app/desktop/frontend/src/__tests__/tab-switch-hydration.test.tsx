@@ -136,9 +136,11 @@ const tabG = tabMeta("tab-g");
 const tabH = tabMeta("tab-h");
 const tabI = tabMeta("tab-i", { running: true, pendingPrompt: true, cancellable: true });
 const tabJ = tabMeta("tab-j");
+const tabK = tabMeta("tab-k");
 let backendActiveId = "tab-a";
 const historyB = deferred<HistoryMessage[]>();
 const historyD = deferred<HistoryMessage[]>();
+const historyK = deferred<HistoryMessage[]>();
 let metaH = deferred<Meta>();
 let historyH = deferred<HistoryMessage[]>();
 const contextDGate = deferred<ContextInfo>();
@@ -173,7 +175,7 @@ let staleForkStarted = false;
 let holdStaleForkReassertG = false;
 let staleForkReassertGStarted = false;
 const runningTabs = new Set<string>();
-const tabsById = new Map([tabA, tabB, tabC, tabD, tabE, tabF, tabG, tabH, tabI].map((tab) => [tab.id, tab]));
+const tabsById = new Map([tabA, tabB, tabC, tabD, tabE, tabF, tabG, tabH, tabI, tabK].map((tab) => [tab.id, tab]));
 const eventHandlers: Array<(e: WireEvent) => void> = [];
 const readyHandlers: Array<(tabId?: string) => void> = [];
 
@@ -230,6 +232,7 @@ window.go = {
         if (tabID === "tab-h") return [userMessage("history H")];
         if (tabID === "tab-i") return [userMessage("fork I")];
         if (tabID === "tab-j") return [userMessage("fork J")];
+        if (tabID === "tab-k") return historyK.promise;
         return [userMessage("cached A")];
       },
       HistoryPageForTab: async (tabID: string) => {
@@ -343,6 +346,42 @@ await act(async () => {
   await flushPromises();
 });
 await waitFor("initial active tab", () => controller?.activeTabId === "tab-a" && controller.state.items.length === 1);
+
+backendActiveId = "tab-k";
+let hostSyncResolved = false;
+await act(async () => {
+  const sync = controller?.syncActiveTab(false, false, {
+    activeTab: { ...tabK, active: true },
+    backgroundHydration: true,
+    preserveCachedHistory: true,
+  });
+  sync?.then(() => {
+    hostSyncResolved = true;
+  });
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-k", "host activation selects the backend-ready task immediately");
+eq(controller?.state.meta?.ready, true, "host activation applies ready metadata before history finishes");
+eq(hostSyncResolved, true, "host activation resolves without waiting for history hydration");
+eq(controller?.state.hydrating, true, "host activation keeps history hydration running in the background");
+ok(historyCalls.includes("tab-k"), "host activation starts background history hydration");
+
+await act(async () => {
+  historyK.resolve([userMessage("history K")]);
+  await historyK.promise;
+  await flushPromises();
+});
+await waitFor("host background hydration", () => controller?.state.hydrating === false);
+backendActiveId = "tab-a";
+await act(async () => {
+  await controller?.syncActiveTab(false, false, {
+    activeTab: { ...tabA, active: true },
+    backgroundHydration: true,
+    preserveCachedHistory: true,
+  });
+  await flushPromises();
+});
+await waitFor("source tab restored after host sync", () => controller?.activeTabId === "tab-a");
 
 await act(async () => {
   for (const handler of eventHandlers) {

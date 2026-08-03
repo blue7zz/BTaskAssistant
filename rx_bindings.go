@@ -98,67 +98,44 @@ func rxShortHash(value string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// rxWorkspaceForTask 解析任务工作区（阶段 2：Git Binding 工作树优先）。
-// 解析顺序：
-//  1. 任务存在 state=ready 的 Git Binding 且 WorktreePath 通过真实路径校验
-//     （EvalSymlinks 解析后存在且为目录）→ 使用该工作树。
-//  2. 无绑定 / 未 ready / 路径失效 → 明确错误（禁止可写启动，提示先绑定）。
-//
-// 不再静默使用任务资料目录或源仓库。
+// rxWorkspaceForTask 解析 Reasonix 工作区。RX 始终使用任务自己的独立文件
+// 空间，不依赖 Git Binding；Git worktree 仍由 PI 的“变更”能力单独管理。
 func (a *App) rxWorkspaceForTask(taskID string) (bridge.WorkspaceIdentity, error) {
 	if a.store == nil {
 		return bridge.WorkspaceIdentity{}, errors.New("存储未就绪")
 	}
-	binding, err := a.store.GitBinding(taskID)
-	if err != nil || binding.ID == "" {
-		return bridge.WorkspaceIdentity{}, fmt.Errorf(
-			"任务未绑定 Git 工作树：请打开任务详情的『变更』标签页，点击『选择并绑定』绑定仓库工作树后再使用 Reasonix")
+	workspace, err := a.store.EnsureTaskWorkspace(taskID)
+	if err != nil {
+		return bridge.WorkspaceIdentity{}, fmt.Errorf("准备任务文件空间: %w", err)
 	}
-	if binding.State != "ready" {
-		return bridge.WorkspaceIdentity{}, fmt.Errorf(
-			"任务 Git 工作树未就绪（state=%s）：请先完成绑定后再使用 Reasonix", binding.State)
+	raw := strings.TrimSpace(workspace.RootPath)
+	if raw == "" {
+		return bridge.WorkspaceIdentity{}, errors.New("任务文件空间路径为空")
 	}
-	if binding.WorktreePath == nil || strings.TrimSpace(*binding.WorktreePath) == "" {
-		return bridge.WorkspaceIdentity{}, fmt.Errorf(
-			"任务 Git 工作树路径为空：请重新绑定工作树")
-	}
-	raw := *binding.WorktreePath
 	real, err := filepath.EvalSymlinks(raw)
 	if err != nil {
 		return bridge.WorkspaceIdentity{}, fmt.Errorf(
-			"任务工作树路径不可用（%s）：%v，请重新绑定", raw, err)
+			"任务文件空间路径不可用（%s）：%w", raw, err)
 	}
 	info, err := os.Stat(real)
 	if err != nil || !info.IsDir() {
 		return bridge.WorkspaceIdentity{}, fmt.Errorf(
-			"任务工作树路径不是有效目录（%s）：请重新绑定", real)
-	}
-	// 工作树真实路径必须是绑定声明的真实路径（防符号链接指向任务资料目录）
-	if binding.SourceRealPath != "" {
-		srcReal, srcErr := filepath.EvalSymlinks(binding.SourceRealPath)
-		if srcErr == nil && filepath.Clean(srcReal) == filepath.Clean(real) {
-			return bridge.WorkspaceIdentity{}, fmt.Errorf(
-				"任务工作树路径与源仓库相同：请绑定为独立工作树（git worktree）")
-		}
+			"任务文件空间路径不是有效目录（%s）", real)
 	}
 	return bridge.WorkspaceIdentity{
 		TaskID:     taskID,
-		BindingID:  binding.ID,
 		RootPath:   real,
-		Generation: binding.BaselineCommit,
+		Generation: workspace.WorkspaceID,
 	}, nil
 }
 
-// rxTaskContext 保留旧语义（任务资料目录）——仅用于非 Reasonix 场景。
+// rxTaskContext 返回任务独立文件空间，与 Reasonix 的工作目录保持一致。
 func (a *App) rxTaskContext(taskID string) (string, error) {
-	if a.store == nil {
-		return "", errors.New("存储未就绪")
-	}
-	workspace, err := a.store.EnsureTaskWorkspace(taskID)
+	identity, err := a.rxWorkspaceForTask(taskID)
 	if err != nil {
-		return "", fmt.Errorf("解析任务工作区: %w", err)
+		return "", err
 	}
-	return workspace.RootPath, nil
+	return identity.RootPath, nil
 }
 
 // ── 绑定方法（reasonix 前端 wailsjs 同名调用）─────────────────────────────

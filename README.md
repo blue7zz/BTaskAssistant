@@ -155,6 +155,10 @@ Plane 收集箱只要求两项连接信息：
 BTaskAssistant/tasks/<taskId>/reasonix-sessions/`），离开任务详情页释放运行时，
 会话文件保留可恢复。
 
+Reasonix 的工作目录固定为该任务自己的文件空间
+（`.../BTaskAssistant/tasks/<taskId>/`），无需先绑定 Git 仓库。若任务另外创建了
+Git worktree，它仍位于任务空间的 `repos/` 下，由“变更”面板独立管理。
+
 功能：真实模型对话（复用本机 reasonix 配置/凭据）、历史（分页/回滚/分支/
 压缩）、模型与推理强度切换、ask 提问卡与工具审批、目标/计划模式、记忆与技能
 面板、会话重命名/删除（含侧车清理）、↑/↓ 提示历史。

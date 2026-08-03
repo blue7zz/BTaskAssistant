@@ -185,6 +185,7 @@ interface NativeApp {
     workspaceSlug: string,
     projectId: string,
     projectIdentifier: string,
+    assigneeIds: string[],
   ): Promise<PlaneCandidatePayload[]>;
   LoadPlaneWorkItemDetails(
     baseUrl: string,
@@ -517,8 +518,8 @@ export async function ensureReasonixTab(
 }
 
 /**
- * closeReasonixTab 释放任务的 Reasonix 会话运行时（会话文件保留）。
- * 任务详情页卸载时调用，避免控制器长期驻留累积内存。
+ * closeReasonixTab 显式释放任务的 Reasonix 会话运行时（会话文件保留）。
+ * 普通页面离开不调用；后台运行时由 Manager 的 idle LRU 限额管理。
  */
 export async function closeReasonixTab(taskId: string): Promise<void> {
   const app = nativeApp();
@@ -674,12 +675,14 @@ export async function listPlaneProjects(
 
 export async function collectPlaneWorkItems(
   settings: PlaneSettings,
+  assigneeIds: string[] = [],
 ): Promise<PlaneCandidatePayload[]> {
   return requireNativeApp().CollectPlaneWorkItems(
     settings.baseUrl,
     settings.workspaceSlug,
     settings.projectId,
     settings.projectIdentifier ?? "",
+    assigneeIds,
   );
 }
 

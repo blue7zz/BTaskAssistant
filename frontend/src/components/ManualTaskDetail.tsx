@@ -48,7 +48,6 @@ export function ManualTaskDetail({
 }: ManualTaskDetailProps) {
   const updateTaskRecord = useWorkspaceStore((state) => state.updateTaskRecord);
   const [activeView, setActiveView] = useState<"record" | "pi" | "rx">("pi");
-  const [rxOpened, setRXOpened] = useState(false);
   const [piOpened, setPIOpened] = useState(true);
 
   const run = (action: () => void, message: string) => {
@@ -131,10 +130,7 @@ export function ManualTaskDetail({
           role="tab"
           aria-selected={activeView === "rx"}
           className={activeView === "rx" ? "active" : ""}
-          onClick={() => {
-            setRXOpened(true);
-            setActiveView("rx");
-          }}
+          onClick={() => setActiveView("rx")}
         >
           <SquareTerminal size={14} />
           RX
@@ -146,7 +142,7 @@ export function ManualTaskDetail({
         role="tabpanel"
         hidden={activeView !== "rx"}
       >
-        {rxOpened && <ReasonixPage taskId={task.id} workspaceRoot="" taskTitle={task.title} />}
+        <ReasonixPage taskId={task.id} workspaceRoot="" taskTitle={task.title} />
       </div>
 
       <div

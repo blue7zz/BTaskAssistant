@@ -1091,6 +1091,7 @@ func (a *App) CollectPlaneWorkItems(
 	workspaceSlug string,
 	projectID string,
 	projectIdentifier string,
+	assigneeIDs []string,
 ) ([]plane.Candidate, error) {
 	client, err := a.planeClient(baseURL, workspaceSlug)
 	if err != nil {
@@ -1103,6 +1104,7 @@ func (a *App) CollectPlaneWorkItems(
 		workspaceSlug,
 		projectID,
 		projectIdentifier,
+		assigneeIDs,
 	)
 }
 

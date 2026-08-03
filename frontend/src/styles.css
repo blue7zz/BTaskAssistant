@@ -113,6 +113,17 @@ select:focus-visible {
   background:
     radial-gradient(circle at 30% -5%, rgba(115, 103, 240, 0.22), transparent 32%),
     var(--sidebar);
+  --wails-draggable: drag;
+  user-select: none;
+}
+
+.sidebar button,
+.sidebar [role="separator"] {
+  --wails-draggable: no-drag;
+}
+
+:root[data-platform="darwin"] .sidebar {
+  padding-top: 64px;
 }
 
 .brand {
@@ -566,6 +577,10 @@ select:focus-visible {
   min-height: 0;
   flex: 1;
   transition: grid-template-columns 180ms ease;
+}
+
+.workspace-grid[hidden] {
+  display: none;
 }
 
 .workspace-grid.task-list-collapsed {
@@ -4335,6 +4350,88 @@ body.panel-resizing .workspace-grid {
   display: flex;
   min-width: 0;
   min-height: 0;
+}
+
+.reasonix-settings-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: #16171b;
+}
+
+.reasonix-settings-view-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #303139;
+  background: #1c1d23;
+}
+
+.reasonix-settings-view-tabs > button {
+  padding: 7px 11px;
+  color: #9698a1;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 9px;
+}
+
+.reasonix-settings-view-tabs > button:hover {
+  color: #dedfe4;
+  background: #27282f;
+}
+
+.reasonix-settings-view-tabs > button.active {
+  color: #ebe9ff;
+  border-color: #4b466d;
+  background: #302d47;
+}
+
+.reasonix-settings-view,
+.reasonix-native-settings,
+.reasonix-native-settings-host {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.reasonix-settings-view,
+.reasonix-native-settings {
+  display: flex;
+  position: relative;
+}
+
+.reasonix-native-settings-host {
+  display: block;
+  width: 100%;
+}
+
+.reasonix-native-settings-status {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #a9abb4;
+  background: #16171b;
+  font-size: 9px;
+}
+
+.reasonix-native-settings-status.error {
+  color: #ff9aa0;
+}
+
+.reasonix-settings-view > .settings-section {
+  flex: 1;
+  padding: 22px 24px 36px;
+  overflow-y: auto;
+  color: #3c3e45;
+  background: #f7f7fa;
 }
 
 .pi-settings-page,
@@ -8427,4 +8524,50 @@ body.panel-resizing .workspace-grid {
   margin-top: 6px;
   color: #c8c3ff;
   font-size: 8px;
+}
+
+.reasonix-workspace-starting {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translate(-50%, -50%);
+  padding: 14px 16px;
+  color: #c9cbd2;
+  border: 1px solid #34363e;
+  border-radius: 10px;
+  background: rgba(28, 29, 35, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+.reasonix-workspace-starting > svg {
+  flex: 0 0 auto;
+  color: #c8c3ff;
+}
+
+.reasonix-workspace-starting > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reasonix-workspace-starting strong {
+  color: #e7e8eb;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.reasonix-workspace-starting span {
+  color: #8f9199;
+  font-size: 8px;
+}
+
+.reasonix-workspace-starting--switching {
+  top: 14px;
+  transform: translateX(-50%);
+  padding: 9px 12px;
 }

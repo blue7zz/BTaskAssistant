@@ -16,6 +16,9 @@ const transcriptSource = readFileSync(resolve(testDir, "../components/Transcript
 const composerSource = readFileSync(resolve(testDir, "../components/Composer.tsx"), "utf8");
 const controllerSource = readFileSync(resolve(testDir, "../lib/useController.ts"), "utf8");
 const bridgeSource = readFileSync(resolve(testDir, "../lib/bridge.ts"), "utf8");
+const embedHostSource = readFileSync(resolve(testDir, "../lib/embedHost.ts"), "utf8");
+const settingsPanelSource = readFileSync(resolve(testDir, "../components/SettingsPanel.tsx"), "utf8");
+const settingsEmbedSource = readFileSync(resolve(testDir, "../settingsEmbedEntry.tsx"), "utf8");
 const layoutStoreSource = readFileSync(resolve(testDir, "../store/layout.ts"), "utf8");
 const stylesSource = readFileSync(resolve(testDir, "../styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
@@ -66,6 +69,24 @@ function finalDeclaration(selector: string, property: string): string | undefine
 }
 
 console.log("\napp chrome tabs");
+
+ok(
+  embedHostSource.includes('"btask:open-reasonix-settings"') &&
+    embedHostSource.includes("requestHostReasonixSettings"),
+  "embedded Reasonix exposes a host settings navigation event",
+);
+ok(
+  appSource.includes("if (requestHostReasonixSettings())") &&
+    (appSource.match(/\{!isEmbedded\(\) && \(\s*<Tooltip label=\{t\("topbar\.settings"\)\}/g)?.length ?? 0) === 2,
+  "embedded RX delegates settings navigation and hides its duplicate sidebar entries",
+);
+ok(
+  settingsPanelSource.includes("settings-modal--inline") &&
+    settingsEmbedSource.includes("<SettingsPanel") &&
+    settingsEmbedSource.includes("inline") &&
+    !settingsEmbedSource.includes("<App"),
+  "application Reasonix settings mounts the native RX panel without a second workspace",
+);
 
 const tabMeta = (overrides: Partial<TabMeta> = {}): TabMeta => ({
   id: "tab-1",
@@ -496,6 +517,16 @@ ok(
   /const unsubReady = onReady\(\(readyTabId\) => \{[\s\S]*?setWorkspaceControllerEpoch[\s\S]*?\n    \}\);/.test(appSource) &&
     /const unsubRebuilt = onRuntimeRebuilt\(\(rebuiltTabId\) => \{[\s\S]*?setWorkspaceControllerEpoch[\s\S]*?\n    \}\);/.test(appSource),
   "controller ready and rebuilt events invalidate active workspace file scopes",
+);
+
+const hostActivationBlock = appSource.match(
+  /const unsubHostActivated = onHostTabActivated\([\s\S]*?\n    \}\);/,
+)?.[0] ?? "";
+ok(
+  /syncActiveTabRef\.current\(false, false, \{[\s\S]*?activeTab: active,[\s\S]*?backgroundHydration: true,[\s\S]*?preserveCachedHistory: true,[\s\S]*?\}\)/.test(hostActivationBlock) &&
+    /app\.ListTabs\(\)/.test(hostActivationBlock) &&
+    /setTabMetas/.test(hostActivationBlock),
+  "host task activation unlocks a retained session before background hydration finishes",
 );
 
 const navigationBlock = appSource.match(/const runNavigationRequest = useCallback\([\s\S]*?\n  \}, \[[^\]]*singleSurfaceLayout[^\]]*\]\);/)?.[0] ?? "";

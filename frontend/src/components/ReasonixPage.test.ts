@@ -37,7 +37,12 @@ describe("ReasonixPage embed", () => {
     const mod = await import("../../../reasonix-app/desktop/frontend/src/embedEntry");
     mountReasonixEmbed = mod.mountReasonixEmbed as unknown as Mock;
     mountReasonixEmbed.mockClear();
-    mountReasonixEmbed.mockImplementation(() => () => undefined);
+    mountReasonixEmbed.mockImplementation(
+      (_host: HTMLElement, options?: { onMounted?: () => void }) => {
+        options?.onMounted?.();
+        return () => undefined;
+      },
+    );
     (window as unknown as { runtime?: unknown }).runtime = {
       EventsOn: vi.fn().mockReturnValue(() => undefined),
       BrowserOpenURL: vi.fn(),
@@ -60,6 +65,41 @@ describe("ReasonixPage embed", () => {
     });
   };
 
+  it("首次打开时主动提示工作区正在启动", async () => {
+    let resolveActivation!: (value: bridge.ReasonixTabView) => void;
+    const activation = new Promise<bridge.ReasonixTabView>((resolve) => {
+      resolveActivation = resolve;
+    });
+    vi.mocked(bridge.ensureReasonixTab).mockReturnValueOnce(activation);
+
+    act(() => {
+      root.render(
+        createElement(ReasonixPage, { taskId: "task_1", workspaceRoot: "" }),
+      );
+    });
+
+    const status = container.querySelector(
+      "[data-testid='reasonix-workspace-starting']",
+    );
+    expect(status).not.toBeNull();
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.textContent).toContain("Reasonix 工作区正在启动");
+
+    await act(async () => {
+      resolveActivation({
+        id: "task_1",
+        workspaceRoot: "/tmp/task-1",
+        topicId: "topic_1",
+        topicTitle: "task 1",
+        label: "task 1",
+        ready: true,
+        running: false,
+        mode: "normal",
+      });
+      await activation;
+    });
+  });
+
   it("初始化会话后挂载 embed（shadow 容器 + mountReasonixEmbed）", async () => {
     await renderPage();
     const host = container.querySelector(
@@ -77,6 +117,7 @@ describe("ReasonixPage embed", () => {
   it("任务切换只激活不重挂载（单实例保活）", async () => {
     await renderPage();
     expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
+    const firstRequestSeq = vi.mocked(bridge.ensureReasonixTab).mock.calls[0][3]!;
     await act(async () => {
       root.render(
         createElement(ReasonixPage, {
@@ -91,16 +132,108 @@ describe("ReasonixPage embed", () => {
       "task_2",
       "",
       "",
-      2,
+      expect.any(Number),
     );
+    const secondRequestSeq = vi.mocked(bridge.ensureReasonixTab).mock.calls[1][3]!;
+    expect(secondRequestSeq).toBeGreaterThan(firstRequestSeq);
     expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
   });
 
-  it("卸载时释放会话运行时（closeReasonixTab）", async () => {
+  it("任务切换等待激活期间保留已挂载的 embed", async () => {
+    let resolveSecondActivation!: (value: bridge.ReasonixTabView) => void;
+    const secondActivation = new Promise<bridge.ReasonixTabView>((resolve) => {
+      resolveSecondActivation = resolve;
+    });
+    vi.mocked(bridge.ensureReasonixTab)
+      .mockResolvedValueOnce({
+        id: "task_1",
+        workspaceRoot: "/tmp/task-1",
+        topicId: "topic_1",
+        topicTitle: "task 1",
+        label: "task 1",
+        ready: true,
+        running: false,
+        mode: "normal",
+      })
+      .mockReturnValueOnce(secondActivation);
+    const unmountEmbed = vi.fn();
+    mountReasonixEmbed.mockImplementationOnce(() => unmountEmbed);
+
+    await renderPage();
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(
+        createElement(ReasonixPage, {
+          taskId: "task_2",
+          workspaceRoot: "",
+        }),
+      );
+    });
+
+    expect(unmountEmbed).not.toHaveBeenCalled();
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector("[data-testid='reasonix-workspace-starting']")
+        ?.textContent,
+    ).toContain("Reasonix 工作区正在启动");
+
+    await act(async () => {
+      resolveSecondActivation({
+        id: "task_2",
+        workspaceRoot: "/tmp/task-2",
+        topicId: "topic_2",
+        topicTitle: "task 2",
+        label: "task 2",
+        ready: true,
+        running: false,
+        mode: "normal",
+      });
+      await secondActivation;
+    });
+
+    expect(unmountEmbed).not.toHaveBeenCalled();
+    expect(mountReasonixEmbed).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector("[data-testid='reasonix-workspace-starting']"),
+    ).toBeNull();
+  });
+
+  it("组件重新进入后继续使用更大的激活序号", async () => {
+    await renderPage();
+    const firstRequestSeq = vi.mocked(bridge.ensureReasonixTab).mock.calls[0][3]!;
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(ReasonixPage, {
+          taskId: "task_2",
+          workspaceRoot: "",
+        }),
+      );
+    });
+
+    const secondRequestSeq = vi.mocked(bridge.ensureReasonixTab).mock.calls[1][3]!;
+    expect(secondRequestSeq).toBeGreaterThan(firstRequestSeq);
+  });
+
+  it("embed 挂载失败时结束加载并显示错误", async () => {
+    mountReasonixEmbed.mockImplementationOnce(() => {
+      throw new Error("embed mount failed");
+    });
+
+    await renderPage();
+
+    expect(container.textContent).toContain("Reasonix 会话初始化失败");
+    expect(container.textContent).toContain("embed mount failed");
+  });
+
+  it("卸载 RX 界面时保留任务运行时供再次进入继续会话", async () => {
     await renderPage();
     expect(bridge.closeReasonixTab).not.toHaveBeenCalled();
     act(() => root.unmount());
-    expect(bridge.closeReasonixTab).toHaveBeenCalledWith("task_1");
+    expect(bridge.closeReasonixTab).not.toHaveBeenCalled();
   });
 
   it("过期激活请求（stale）不显示错误（已有更新的请求接管）", async () => {

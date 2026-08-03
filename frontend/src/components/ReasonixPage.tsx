@@ -10,7 +10,7 @@
 
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { closeReasonixTab, ensureReasonixTab } from "../lib/bridge";
+import { ensureReasonixTab } from "../lib/bridge";
 
 interface RxBridgeProps {
   taskId: string;
@@ -25,24 +25,49 @@ interface EmbedModule {
   default?: MountReasonixEmbed;
 }
 
+let embedModulePromise: Promise<EmbedModule> | undefined;
+
+// 由 BTask App 启动 effect 主动调用；保留单一 Promise，组件挂载和后续任务
+// 切换都复用同一份 Reasonix 前端模块。
+export function preloadReasonixEmbed(): Promise<EmbedModule> {
+  embedModulePromise ??= import(
+    "../../../reasonix-app/desktop/frontend/src/embedEntry"
+  ) as Promise<EmbedModule>;
+  return embedModulePromise;
+}
+
+let lastActivationRequestSeq = 0;
+
+function nextActivationRequestSeq(): number {
+  lastActivationRequestSeq = Math.max(lastActivationRequestSeq + 1, Date.now());
+  return lastActivationRequestSeq;
+}
+
 export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridgeProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const unmountRef = useRef<(() => void) | null>(null);
-  const requestSeqRef = useRef(0);
   const mountedRef = useRef(false);
   const [ready, setReady] = useState(false);
+  const [workspaceStarting, setWorkspaceStarting] = useState(true);
   const [readyError, setReadyError] = useState("");
 
   // 打开时（或任务切换时）为任务建立 Reasonix 会话（复用已存在的运行时）。
   useEffect(() => {
     let active = true;
-    setReady(false);
+    // embed 已挂载后必须在任务切换期间保持存活；否则 ready=false 会触发
+    // 挂载 effect 的 cleanup，而 mountedRef 又会阻止后续重新挂载。
+    if (!mountedRef.current) setReady(false);
+    setWorkspaceStarting(true);
     setReadyError("");
-    // 激活序号单调递增：后端只让最新请求成为活动任务（防快速切换竞态）
-    const requestSeq = ++requestSeqRef.current;
+    // 序号跨组件重新进入仍保持单调递增，避免后端把新页面的首次请求判旧。
+    const requestSeq = nextActivationRequestSeq();
     ensureReasonixTab(taskId, workspaceRoot, taskTitle, requestSeq)
       .then(() => {
-        if (active) setReady(true);
+        if (!active) return;
+        setReady(true);
+        // 已挂载时属于任务切换，后端激活完成即可继续操作；首次进入还要
+        // 等 embed 首帧挂载完成，再收起启动提示。
+        if (mountedRef.current) setWorkspaceStarting(false);
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -51,6 +76,7 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
         // 失败——忽略它，避免覆盖最新请求的成功状态（stale 意味着已有
         // 更新的请求在途或已完成）。
         if (message.includes("stale")) return;
+        setWorkspaceStarting(false);
         setReadyError(message);
       });
     return () => {
@@ -58,8 +84,8 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
     };
   }, [taskId, workspaceRoot, taskTitle]);
 
-  // 挂载 reasonix App（动态 import：embed 模块在挂载时才加载，且 compat.ts
-  // 只在 ?host=1 / ?browser=1 时删除 window.go——embed 无该参数，直连可用）。
+  // 挂载 reasonix App（模块已在主应用启动时预加载；compat.ts 只在
+  // ?host=1 / ?browser=1 时删除 window.go——embed 无该参数，直连可用）。
   // 单实例：仅首次 ready 时挂载一次，任务切换不再卸载/重挂载。
   useEffect(() => {
     const host = hostRef.current;
@@ -71,7 +97,7 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
     (async () => {
       // 设置 embed 标志：embed 模式下 reasonix 直连 window.go（不被 compat 删除）
       (window as unknown as { __RX_EMBED__?: boolean }).__RX_EMBED__ = true;
-      const mod = (await import("../../../reasonix-app/desktop/frontend/src/embedEntry")) as EmbedModule;
+      const mod = await preloadReasonixEmbed();
       if (disposed) return;
       host.replaceChildren();
       // 动态 import chunk 在多入口共享/生产 minify 下导出不可靠，
@@ -87,12 +113,18 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
       }
       unmount = mount(host, {
         onMounted: () => {
-          if (!disposed) setReady(true);
+          if (!disposed) {
+            setReady(true);
+            setWorkspaceStarting(false);
+          }
         },
       });
       unmountRef.current = unmount;
     })().catch((error: unknown) => {
-      if (!disposed) return;
+      if (disposed) return;
+      mountedRef.current = false;
+      setReady(false);
+      setWorkspaceStarting(false);
       setReadyError(error instanceof Error ? error.message : String(error));
     });
 
@@ -112,17 +144,8 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
   // 后端发 host:tab-activated 事件，reasonix 前端 syncActiveTab 切换会话。
   // （App 首次挂载后常驻；ManualTaskDetail 切换任务只更新 props。）
 
-  // 组件真正卸载（离开任务详情页）时释放会话运行时（会话文件保留）。
-  // 任务切换（taskId 变化）不关闭控制器——切换回来秒开，会话状态保留。
-  const latestTaskIdRef = useRef(taskId);
-  useEffect(() => {
-    latestTaskIdRef.current = taskId;
-  }, [taskId]);
-  useEffect(() => {
-    return () => {
-      void closeReasonixTab(latestTaskIdRef.current);
-    };
-  }, []);
+  // 离开 RX 或切换主界面也不关闭任务控制器。后台运行时由 Manager 的 idle
+  // LRU 限额回收，并在应用退出时统一关闭；再次进入可直接续接原会话。
 
   return (
     <section className="reasonix-page">
@@ -133,21 +156,21 @@ export function ReasonixPage({ taskId, workspaceRoot, taskTitle = "" }: RxBridge
             <p>
               <code>{readyError}</code>
             </p>
-            {readyError.includes("未绑定 Git 工作树") ? (
-              <p>
-                请打开任务详情的<strong>「变更」</strong>标签页，点击
-                <strong>「选择并绑定」</strong>选择仓库并创建工作树，然后回到
-                本页重试。
-              </p>
-            ) : (
-              <p>请确认任务工作区已就绪，或重新打开本页重试。</p>
-            )}
+            <p>请确认任务文件空间已就绪，或重新打开本页重试。</p>
           </div>
         )}
-        {!ready && !readyError && (
-          <div className="reasonix-frame-error">
+        {workspaceStarting && !readyError && (
+          <div
+            className={`reasonix-workspace-starting${ready ? " reasonix-workspace-starting--switching" : ""}`}
+            role="status"
+            aria-live="polite"
+            data-testid="reasonix-workspace-starting"
+          >
             <LoaderCircle className="spin" size={14} />
-            <p>正在初始化任务的 Reasonix 会话……</p>
+            <div>
+              <strong>Reasonix 工作区正在启动……</strong>
+              <span>正在初始化任务会话与文件空间</span>
+            </div>
           </div>
         )}
         <div

@@ -5,6 +5,7 @@ import React, { useRef } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { AnchoredPopover } from "../components/AnchoredPopover";
+import { setEmbedShadowRoot } from "../lib/embedHost";
 
 type RectParts = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
 
@@ -49,7 +50,7 @@ async function nextFrame() {
   });
 }
 
-function Harness() {
+function Harness({ onClose = () => {} }: { onClose?: () => void }) {
   const anchorRef = useRef<HTMLButtonElement>(null);
   return (
     <>
@@ -57,7 +58,7 @@ function Harness() {
       <AnchoredPopover
         open
         anchorRef={anchorRef}
-        onClose={() => {}}
+        onClose={onClose}
         className="test-popover"
         placement="bottom"
       >
@@ -123,6 +124,43 @@ eq(popover.style.top, "78px", "popover follows the anchor after a scroll event")
 await act(async () => {
   root.unmount();
 });
+
+const embedHost = document.createElement("div");
+document.body.appendChild(embedHost);
+const embedShadow = embedHost.attachShadow({ mode: "open" });
+embedShadow.innerHTML = '<div class="rx-app-root"><div class="chat-pane"><div id="embed-root"></div></div></div>';
+setEmbedShadowRoot(embedShadow);
+
+let embeddedCloseCalls = 0;
+const embedRootEl = embedShadow.querySelector<HTMLElement>("#embed-root");
+if (!embedRootEl) throw new Error("missing embedded root");
+const embedRoot = createRoot(embedRootEl);
+
+await act(async () => {
+  embedRoot.render(<Harness onClose={() => { embeddedCloseCalls += 1; }} />);
+});
+await nextFrame();
+
+const embeddedAnchor = embedShadow.querySelector<HTMLElement>("[data-testid='anchor']");
+if (!embeddedAnchor) throw new Error("embedded anchor did not render");
+
+await act(async () => {
+  embeddedAnchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
+});
+
+eq(embeddedCloseCalls, 0, "shadow-dom anchor click is not mistaken for an outside click");
+
+await act(async () => {
+  document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
+});
+
+eq(embeddedCloseCalls, 1, "a real click outside the embedded popover closes it");
+
+await act(async () => {
+  embedRoot.unmount();
+});
+setEmbedShadowRoot(null);
+embedHost.remove();
 dom.window.close();
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -155,14 +155,16 @@ func TestNewSessionTriggersPrune(t *testing.T) {
 }
 
 // TestPruneIdleRuntimesKeepsActive 验证 idle LRU 回收（Activate 自动触发）：
-// 后台 idle 超过 MaxIdleRuntimes 时按最后活跃时间回收最旧；running 绝不回收。
+// 后台 idle 超过 MaxIdleRuntimes 时按最后活跃时间回收最旧；当前活动会话
+// 即使处于 idle 也不计入后台上限。
 func TestPruneIdleRuntimesKeepsActive(t *testing.T) {
 	dataRoot := t.TempDir()
 	manager := bridge.NewManager(dataRoot, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
-	// 激活 MaxIdleRuntimes+2 个 idle 任务：第 5 个起每次激活自动回收最旧
+	// 活动任务不计入后台上限：前 MaxIdleRuntimes+1 个任务应全部保留；
+	// 再增加任务时才回收最旧的后台会话。
 	for i := 0; i < bridge.MaxIdleRuntimes+2; i++ {
 		taskID := "task_idle_" + string(rune('a'+i))
 		ws := t.TempDir()
@@ -172,18 +174,26 @@ func TestPruneIdleRuntimesKeepsActive(t *testing.T) {
 		}
 		// 错开 LastActive（模拟不同活跃时间）
 		tab.LastActive = time.Now().Add(-time.Duration(i) * time.Minute)
+		if i == bridge.MaxIdleRuntimes {
+			for j := 0; j <= i; j++ {
+				taskID := "task_idle_" + string(rune('a'+j))
+				if manager.Tab(taskID) == nil {
+					t.Fatalf("活动会话 + %d 个后台会话不应回收 %s", bridge.MaxIdleRuntimes, taskID)
+				}
+			}
+		}
 	}
-	// 再加一个 running 会话（绝不回收）
-	runningID := "task_running"
-	runningTab, err := manager.Activate(ctx, runningID, t.TempDir(), "运行中", uint64(99))
+	// 再激活一个会话；即使当前空闲，也必须作为活动会话保留。
+	activeID := "task_active"
+	activeTab, err := manager.Activate(ctx, activeID, t.TempDir(), "当前活动", uint64(99))
 	if err != nil {
-		t.Fatalf("激活 running 失败: %v", err)
+		t.Fatalf("激活活动会话失败: %v", err)
 	}
-	_ = runningTab
+	_ = activeTab
 
-	// 自动回收后：idle ≤ 上限，running 保留
-	if manager.Tab(runningID) == nil {
-		t.Fatal("running 会话被回收")
+	// 自动回收后：后台 idle ≤ 上限，当前活动会话保留。
+	if manager.Tab(activeID) == nil {
+		t.Fatal("当前活动会话被回收")
 	}
 	idleCount := 0
 	for i := 0; i < bridge.MaxIdleRuntimes+2; i++ {

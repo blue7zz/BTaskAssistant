@@ -59,6 +59,8 @@ export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversat
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 export type HydrateReason = "switch-tab" | "new-session" | "resume-session" | "open-topic" | "startup";
 type SyncActiveTabOptions = {
+  activeTab?: TabMeta;
+  backgroundHydration?: boolean;
   preserveCachedHistory?: boolean;
 };
 
@@ -2283,7 +2285,7 @@ export function useController() {
 
   const syncActiveTabFromBackend = useCallback(async (reset = false, guard = false, options: SyncActiveTabOptions = {}): Promise<string | undefined> => {
     const snapshotAt = promptEventClock();
-    const active = await activeTabFromBackend();
+    const active = options.activeTab ?? await activeTabFromBackend();
     if (!active) return undefined;
     // When guard is true, skip if the frontend already settled on a
     // different tab while we were fetching — this prevents fire-and-forget
@@ -2300,10 +2302,17 @@ export function useController() {
     dispatchTo(active.id, { type: "optimistic_meta", meta: metaFromTab(active, statesRef.current.get(active.id)?.meta) });
     const preserveCachedHistory = options.preserveCachedHistory ?? !reset;
     if (!reset) dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
-    await loadSessionDataForTab(active.id, reset, "startup", {
+    const hydration = loadSessionDataForTab(active.id, reset, "startup", {
       preserveCachedHistory,
       sessionPath: active.sessionPath,
     });
+    if (options.backgroundHydration) {
+      void hydration.catch((err) => {
+        addBreadcrumb("tab.hydrate", `background host sync failed ${active.id}: ${errorMessage(err)}`);
+      });
+    } else {
+      await hydration;
+    }
     if (reset) dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
     return active.id;
   }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab]);

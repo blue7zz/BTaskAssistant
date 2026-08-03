@@ -136,6 +136,7 @@ func TestListCandidatesLoadsSummariesAndDefersDetails(t *testing.T) {
 		"team",
 		"project",
 		"TEAM",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("list candidates: %v", err)
@@ -198,6 +199,62 @@ func TestListCandidatesLoadsSummariesAndDefersDetails(t *testing.T) {
 	if !strings.Contains(details.SourceMarkdown, "## Plane 评论") ||
 		!strings.Contains(details.SourceMarkdown, "请先覆盖登录失败路径") {
 		t.Fatalf("detailed source did not include comments: %q", details.SourceMarkdown)
+	}
+}
+
+func TestListCandidatesFiltersBySelectedAssignees(t *testing.T) {
+	requestedAssignees := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		assigneeID := request.URL.Query().Get("assignee")
+		requestedAssignees = append(requestedAssignees, assigneeID)
+		if assigneeID != "user-alice" && assigneeID != "user-bob" {
+			t.Fatalf("unexpected assignee filter %q", assigneeID)
+		}
+		items := []map[string]any{{
+			"id":          "shared-item",
+			"name":        "共同任务",
+			"sequence_id": 1,
+			"assignees": []map[string]any{
+				{"id": "user-alice", "display_name": "Alice"},
+				{"id": "user-bob", "display_name": "Bob"},
+			},
+		}}
+		items = append(items, map[string]any{
+			"id":          assigneeID + "-item",
+			"name":        assigneeID + " 的任务",
+			"sequence_id": len(requestedAssignees) + 1,
+			"assignees": []map[string]any{{
+				"id":           assigneeID,
+				"display_name": assigneeID,
+			}},
+		})
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"next_page_results": false,
+			"results":           items,
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "plane_api_test")
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	candidates, err := client.ListCandidates(
+		context.Background(),
+		"team",
+		"project",
+		"TEAM",
+		[]string{" user-alice ", "user-bob", "user-alice", ""},
+	)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if strings.Join(requestedAssignees, ",") != "user-alice,user-bob" {
+		t.Fatalf("unexpected assignee requests: %#v", requestedAssignees)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("expected selected assignee union with deduplication, got %#v", candidates)
 	}
 }
 

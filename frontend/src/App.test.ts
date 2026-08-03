@@ -2,6 +2,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { OPEN_HOST_REASONIX_SETTINGS_EVENT } from "../../reasonix-app/desktop/frontend/src/lib/embedHost";
 import { DEFAULT_PI_SETTINGS } from "./domain/engine";
 import {
   DEFAULT_DAILY_REPORT_SETTINGS,
@@ -142,6 +143,10 @@ describe("App smoke test", () => {
       root.render(createElement(App));
       await Promise.resolve();
     });
+    const taskWorkspace = container.querySelector(".workspace-grid");
+    const reasonixHost = container.querySelector(
+      "[data-testid='reasonix-embed-host']",
+    );
 
     await act(async () => {
       (
@@ -160,9 +165,12 @@ describe("App smoke test", () => {
     ) as HTMLButtonElement;
     expect(settingsPage).not.toBeNull();
     expect(settingsPage.contains(backButton)).toBe(true);
-    expect(container.querySelector(".workspace-grid")).toBeNull();
-    expect(container.querySelector(".task-list-panel")).toBeNull();
-    expect(container.querySelector(".manual-task-detail")).toBeNull();
+    expect(container.querySelector(".workspace-grid")).toBe(taskWorkspace);
+    expect(taskWorkspace?.hasAttribute("hidden")).toBe(true);
+    expect(container.querySelector(".task-list-panel")).not.toBeNull();
+    expect(container.querySelector(".manual-task-detail")).not.toBeNull();
+    expect(container.querySelector("[data-testid='reasonix-embed-host']"))
+      .toBe(reasonixHost);
     expect(
       container.querySelector('button[role="tab"][aria-selected="true"]')
         ?.textContent,
@@ -181,9 +189,36 @@ describe("App smoke test", () => {
     await act(async () => backButton.click());
 
     expect(container.querySelector(".settings-page")).toBeNull();
-    expect(container.querySelector(".workspace-grid")).not.toBeNull();
+    expect(container.querySelector(".workspace-grid")).toBe(taskWorkspace);
+    expect(taskWorkspace?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector("[data-testid='reasonix-embed-host']"))
+      .toBe(reasonixHost);
     expect(useWorkspaceStore.getState().selectedTaskId).toBe(taskID);
     expect(container.textContent).toContain("设置返回目标");
+  });
+
+  it("routes embedded RX settings requests to application Reasonix settings", async () => {
+    await act(async () => {
+      root.render(createElement(App));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event(OPEN_HOST_REASONIX_SETTINGS_EVENT));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector(".main-shell > .settings-page")).not.toBeNull();
+    const selectedSettingsTab = container.querySelector(
+      'button[role="tab"][aria-selected="true"]',
+    );
+    expect(selectedSettingsTab?.id).toBe("settings-tab-reasonix");
+    expect(selectedSettingsTab?.textContent).toContain("Reasonix 设置");
+    expect(container.querySelector("#settings-panel-reasonix")).not.toBeNull();
+    expect(container.textContent).toContain("RX 设置面板");
+    expect(
+      container.querySelector("[data-testid='reasonix-native-settings-host']"),
+    ).not.toBeNull();
   });
 
   it("opens the daily report below task sources and returns from its settings", async () => {

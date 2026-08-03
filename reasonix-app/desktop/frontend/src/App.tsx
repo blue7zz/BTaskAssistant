@@ -1,5 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { rxBody, rxGetElementById, rxRootElement } from "./lib/embedHost";
+import {
+  EMBEDDED_REASONIX_SETTINGS_CHANGED_EVENT,
+  isEmbedded,
+  requestHostReasonixSettings,
+  rxBody,
+  rxGetElementById,
+  rxRootElement,
+} from "./lib/embedHost";
 import type { CSSProperties, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import gsap from "gsap";
@@ -106,6 +113,7 @@ import {
   type ProjectNode,
   type RemoteHostView,
   type SessionMeta,
+  type SettingsTab,
   type SettingsView,
   type TabMeta,
   type TokenMode,
@@ -1107,6 +1115,8 @@ export default function App() {
   // 嵌入模式宿主 tab 切换同步（阶段 3）：订阅只建立一次，取最新引用
   const syncActiveTabRef = useRef(syncActiveTab);
   syncActiveTabRef.current = syncActiveTab;
+  const hostActivationSeqRef = useRef(0);
+  const hostActivationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const { locale, setPref: setLocalePref } = useI18n();
   const t = useT();
   const [composerProfilesByTab, setComposerProfilesByTab] = useState<Record<string, ComposerProfile>>({});
@@ -1246,8 +1256,25 @@ export default function App() {
     });
     // 嵌入模式：宿主切换任务（ActivateReasonixTask）→ 重新同步激活 tab。
     // 单实例保活：reasonix App 不重建，仅切换后端激活的会话。
-    const unsubHostActivated = onHostTabActivated(() => {
-      void syncActiveTabRef.current();
+    const unsubHostActivated = onHostTabActivated((activatedTabId) => {
+      const activationSeq = ++hostActivationSeqRef.current;
+      hostActivationQueueRef.current = hostActivationQueueRef.current
+        .catch(() => {})
+        .then(async () => {
+          if (activationSeq !== hostActivationSeqRef.current) return;
+          const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
+          if (activationSeq !== hostActivationSeqRef.current) return;
+          const active = tabs.find((tab) => tab.active) ?? tabs[0];
+          if (!active) return;
+          if (activatedTabId && active.id !== activatedTabId) return;
+          setTabMetas((current) => sameTabMetaLists(current, tabs) ? current : tabs);
+          const syncedTabId = await syncActiveTabRef.current(false, false, {
+            activeTab: active,
+            backgroundHydration: true,
+            preserveCachedHistory: true,
+          });
+          if (!syncedTabId || syncedTabId !== active.id || activationSeq !== hostActivationSeqRef.current) return;
+        });
     });
     return () => {
       unsub();
@@ -1324,6 +1351,15 @@ export default function App() {
     setTransientOverlayDismissSignal((signal) => signal + 1);
   }, []);
 
+  const openSettingsCenter = useCallback((target: SettingsTab) => {
+    closeTransientOverlays();
+    if (requestHostReasonixSettings()) {
+      setSettingsTarget(null);
+      return;
+    }
+    setSettingsTarget(target);
+  }, [closeTransientOverlays, setSettingsTarget]);
+
   const reloadSidebarImConnections = useCallback(async () => {
     const [settings, runtimeStatus] = await Promise.all([
       app.DesktopStartupSettings(),
@@ -1340,18 +1376,16 @@ export default function App() {
   }, [t]);
 
   const openBotSettings = useCallback(() => {
-    closeTransientOverlays();
     setSidebarImDetailConnectionId("");
     setSettingsFocus(null);
-    setSettingsTarget("bots");
-  }, [closeTransientOverlays]);
+    openSettingsCenter("bots");
+  }, [openSettingsCenter]);
 
   const openBotAllowlistSettings = useCallback((connectionId: string) => {
-    closeTransientOverlays();
     setSidebarImDetailConnectionId("");
     setSettingsFocus({ target: "bot-allowlist", connectionId });
-    setSettingsTarget("bots");
-  }, [closeTransientOverlays]);
+    openSettingsCenter("bots");
+  }, [openSettingsCenter]);
 
   const pulseSidebarToggle = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -1439,6 +1473,23 @@ export default function App() {
   );
 
   useEffect(() => {
+    const refreshEmbeddedSettings = (event: Event) => {
+      const settings = (event as CustomEvent<SettingsView | null>).detail;
+      void refreshMeta();
+      if (settings) applyDesktopPreferences(settings);
+    };
+    window.addEventListener(
+      EMBEDDED_REASONIX_SETTINGS_CHANGED_EVENT,
+      refreshEmbeddedSettings,
+    );
+    return () =>
+      window.removeEventListener(
+        EMBEDDED_REASONIX_SETTINGS_CHANGED_EVENT,
+        refreshEmbeddedSettings,
+      );
+  }, [applyDesktopPreferences, refreshMeta]);
+
+  useEffect(() => {
     let cancelled = false;
     const syncDesktopPreferences = async () => {
       const legacyLanguage = readLegacyLangPref();
@@ -1501,10 +1552,9 @@ export default function App() {
   useEffect(() => {
     if (typeof window === "undefined" || !window.runtime) return;
     return window.runtime.EventsOn("app:open-settings", () => {
-      closeTransientOverlays();
-      setSettingsTarget("general");
+      openSettingsCenter("general");
     });
-  }, [closeTransientOverlays]);
+  }, [openSettingsCenter]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => {
@@ -2154,8 +2204,7 @@ export default function App() {
       }
       if (trimmed === "/memory") {
         if (activeTabIdRef.current !== sourceTabId) return;
-        closeTransientOverlays();
-        setSettingsTarget("memory");
+        openSettingsCenter("memory");
         return;
       }
       if (trimmed === "/clear") {
@@ -2266,7 +2315,7 @@ export default function App() {
       if (!profileApplied) return;
       await commitThenSendRef.current(sourceTabId, trimmed, submitText.trim(), structured);
     },
-    [activeTabId, applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, runShellForTab,
+    [activeTabId, applyGoal, collaborationMode, composerProfile, controllerReady, goal, notice, openSettingsCenter, runShellForTab,
       patchActivatedGoalForTab, setControllerComposerProfileForTab, switchModel, t, toolApprovalMode, showToast, workbenchTarget],
   );
 
@@ -3628,9 +3677,8 @@ export default function App() {
   }, [openPalette]);
   useGlobalShortcut("app.newSession", () => void handleNewTab(), [handleNewTab]);
   useGlobalShortcut("settings.open", () => {
-    closeTransientOverlays();
-    setSettingsTarget("general");
-  }, [closeTransientOverlays]);
+    openSettingsCenter("general");
+  }, [openSettingsCenter]);
   useGlobalShortcut("tab.close", () => {
     if (activeTabId) void handleTabClose(activeTabId);
   }, [activeTabId, handleTabClose], Boolean(activeTabId));
@@ -3667,8 +3715,8 @@ export default function App() {
     const cmds: PaletteItem[] = [
       { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), icon: <SquarePen size={15} />, compact: true, keywords: ["new", "新建"], run: () => void handleNewTab() },
       { id: "cmd-trash", group: t("palette.group.commands"), title: t("palette.cmd.trash"), icon: <Trash2 size={15} />, compact: true, keywords: ["trash", "回收站"], run: () => void openTrash() },
-      { id: "cmd-settings", group: t("palette.group.commands"), title: t("palette.cmd.settings"), icon: <SettingsIcon size={15} />, compact: true, keywords: ["settings", "设置"], run: () => setSettingsTarget("general") },
-      { id: "cmd-appearance", group: t("palette.group.commands"), title: t("palette.cmd.appearance"), icon: <Palette size={15} />, compact: true, keywords: ["theme", "appearance", "外观", "主题"], run: () => setSettingsTarget("appearance") },
+      { id: "cmd-settings", group: t("palette.group.commands"), title: t("palette.cmd.settings"), icon: <SettingsIcon size={15} />, compact: true, keywords: ["settings", "设置"], run: () => openSettingsCenter("general") },
+      { id: "cmd-appearance", group: t("palette.group.commands"), title: t("palette.cmd.appearance"), icon: <Palette size={15} />, compact: true, keywords: ["theme", "appearance", "外观", "主题"], run: () => openSettingsCenter("appearance") },
       {
         id: "cmd-theme-reset",
         group: t("palette.group.commands"),
@@ -3685,8 +3733,8 @@ export default function App() {
             .catch((err) => showToast(err instanceof Error ? err.message : String(err), "error"));
         },
       },
-      { id: "cmd-memory", group: t("palette.group.commands"), title: t("palette.cmd.memory"), icon: <Brain size={15} />, compact: true, keywords: ["memory", "记忆"], run: () => setSettingsTarget("memory") },
-      { id: "cmd-models", group: t("palette.group.commands"), title: t("palette.cmd.models"), icon: <Cpu size={15} />, compact: true, keywords: ["model", "模型"], run: () => setSettingsTarget("models") },
+      { id: "cmd-memory", group: t("palette.group.commands"), title: t("palette.cmd.memory"), icon: <Brain size={15} />, compact: true, keywords: ["memory", "记忆"], run: () => openSettingsCenter("memory") },
+      { id: "cmd-models", group: t("palette.group.commands"), title: t("palette.cmd.models"), icon: <Cpu size={15} />, compact: true, keywords: ["model", "模型"], run: () => openSettingsCenter("models") },
       { id: "cmd-terminal", group: t("palette.group.commands"), title: t("rightDock.terminal"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "shell", "终端"], run: () => toggleTerminalPanel() },
     ];
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
@@ -3726,7 +3774,7 @@ export default function App() {
       };
     });
     return [...cmds, ...remoteItems, ...sessionItems];
-  }, [t, paletteSessions, remoteHosts, remoteStatuses, handleNewTab, openTrash, onResumeSession, openRemoteWorkspaceFromStatus, connectAndOpenRemoteWorkspace, openRightDockMode]);
+  }, [t, paletteSessions, remoteHosts, remoteStatuses, handleNewTab, openTrash, onResumeSession, openRemoteWorkspaceFromStatus, connectAndOpenRemoteWorkspace, openRightDockMode, openSettingsCenter]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -4054,8 +4102,7 @@ export default function App() {
                   className="sidebar-feature-zone__item"
                   type="button"
                   onClick={() => {
-                    closeTransientOverlays();
-                    setSettingsTarget("skills");
+                    openSettingsCenter("skills");
                   }}
                 >
                   <Command size={14} aria-hidden="true" />
@@ -4065,8 +4112,7 @@ export default function App() {
                   className="sidebar-feature-zone__item"
                   type="button"
                   onClick={() => {
-                    closeTransientOverlays();
-                    setSettingsTarget("memory");
+                    openSettingsCenter("memory");
                   }}
                 >
                   <Brain size={14} aria-hidden="true" />
@@ -4076,8 +4122,7 @@ export default function App() {
                   className="sidebar-feature-zone__item"
                   type="button"
                   onClick={() => {
-                    closeTransientOverlays();
-                    setSettingsTarget("bots");
+                    openSettingsCenter("bots");
                   }}
                 >
                   <MessageSquare size={14} aria-hidden="true" />
@@ -4145,19 +4190,20 @@ export default function App() {
                     <span className="sr-only">{t("sidebar.automation")}</span>
                   </button>
                 </Tooltip>
-                <Tooltip label={t("topbar.settings")} fill side="top">
-                  <button
-                    className="sidebar__utility-button"
-                    type="button"
-                    onClick={() => {
-                      closeTransientOverlays();
-                      setSettingsTarget("general");
-                    }}
-                  >
-                    <SettingsIcon size={16} aria-hidden="true" />
-                    <span className="sr-only">{t("topbar.settings")}</span>
-                  </button>
-                </Tooltip>
+                {!isEmbedded() && (
+                  <Tooltip label={t("topbar.settings")} fill side="top">
+                    <button
+                      className="sidebar__utility-button"
+                      type="button"
+                      onClick={() => {
+                        openSettingsCenter("general");
+                      }}
+                    >
+                      <SettingsIcon size={16} aria-hidden="true" />
+                      <span className="sr-only">{t("topbar.settings")}</span>
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </nav>
           ) : (
@@ -4199,18 +4245,19 @@ export default function App() {
                   </button>
                 </Tooltip>
               )}
-              <Tooltip label={t("topbar.settings")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-                <button
-                  className="sidebar__navitem"
-                  onClick={() => {
-                    closeTransientOverlays();
-                    setSettingsTarget("general");
-                  }}
-                >
-                  <SettingsIcon size={15} />
-                  <span>{t("topbar.settings")}</span>
-                </button>
-              </Tooltip>
+              {!isEmbedded() && (
+                <Tooltip label={t("topbar.settings")} fill side="right" disabled={sidebarNavTooltipDisabled}>
+                  <button
+                    className="sidebar__navitem"
+                    onClick={() => {
+                      openSettingsCenter("general");
+                    }}
+                  >
+                    <SettingsIcon size={15} />
+                    <span>{t("topbar.settings")}</span>
+                  </button>
+                </Tooltip>
+              )}
             </nav>
           )}
 
@@ -4429,9 +4476,8 @@ export default function App() {
                   type="button"
                   aria-label={t("shortcuts.cheatsheetTitle")}
                   onClick={() => {
-                    closeTransientOverlays();
                     setSettingsFocus(null);
-                    setSettingsTarget("shortcuts");
+                    openSettingsCenter("shortcuts");
                   }}
                 >
                   <CircleHelp size={14} />
@@ -4485,7 +4531,7 @@ export default function App() {
               <span className="banner__spacer" />
               <button type="button" className="btn btn--small" onClick={() => {
                 setSettingsFocus({ target: "model-access" });
-                setSettingsTarget("models");
+                openSettingsCenter("models");
               }}>
                 {t("onboarding.configureProvider")}
               </button>
@@ -4888,7 +4934,7 @@ export default function App() {
             gitBranch={state.meta?.gitBranch}
             onConnectRemote={connectAndOpenRemoteWorkspace}
             onDisconnectRemote={(hostId) => void app.DisconnectRemoteHost(hostId).catch(() => {})}
-            onManageRemote={() => setSettingsTarget("remote")}
+            onManageRemote={() => openSettingsCenter("remote")}
             onOpenRemote={requestRemoteExplorer}
             onOpenRemoteWorkspace={openRemoteWorkspaceFromStatus}
             remoteHosts={remoteHosts}
@@ -4984,7 +5030,7 @@ export default function App() {
           onChooseProvider={() => {
             setNeedsOnboarding(false);
             setSettingsFocus({ target: "model-access" });
-            setSettingsTarget("models");
+            openSettingsCenter("models");
           }}
           onSkip={() => {
             dismissOnboarding();

@@ -390,6 +390,7 @@ func (c *Client) requestPage(
 	workspaceSlug string,
 	projectID string,
 	cursor string,
+	assigneeID string,
 ) (listResponse, error) {
 	endpoint, err := c.workItemsURL(workspaceSlug, projectID)
 	if err != nil {
@@ -403,6 +404,9 @@ func (c *Client) requestPage(
 		"id,name,priority,sequence_id,state,assignees,labels,created_at,updated_at",
 	)
 	query.Set("expand", "state,assignees,labels")
+	if assigneeID = strings.TrimSpace(assigneeID); assigneeID != "" {
+		query.Set("assignee", assigneeID)
+	}
 	if cursor != "" {
 		query.Set("cursor", cursor)
 	}
@@ -538,7 +542,7 @@ func (c *Client) Test(
 	workspaceSlug string,
 	projectID string,
 ) (ConnectionStatus, error) {
-	page, err := c.requestPage(ctx, workspaceSlug, projectID, "")
+	page, err := c.requestPage(ctx, workspaceSlug, projectID, "", "")
 	if err != nil {
 		return ConnectionStatus{}, err
 	}
@@ -558,39 +562,71 @@ func (c *Client) ListCandidates(
 	workspaceSlug string,
 	projectID string,
 	projectIdentifier string,
+	assigneeIDs []string,
 ) ([]Candidate, error) {
 	var items []workItem
 	seen := make(map[string]struct{})
-	cursor := ""
-	for pageNumber := 0; pageNumber < maxPages; pageNumber++ {
-		page, err := c.requestPage(ctx, workspaceSlug, projectID, cursor)
-		if err != nil {
-			return nil, err
+	filters := make([]string, 0, len(assigneeIDs))
+	seenFilters := make(map[string]struct{}, len(assigneeIDs))
+	for _, assigneeID := range assigneeIDs {
+		assigneeID = strings.TrimSpace(assigneeID)
+		if assigneeID == "" {
+			continue
 		}
-		for _, item := range page.Results {
-			if item.ID == "" {
-				continue
-			}
-			if _, exists := seen[item.ID]; exists {
-				continue
-			}
-			seen[item.ID] = struct{}{}
-			items = append(items, item)
+		if _, exists := seenFilters[assigneeID]; exists {
+			continue
 		}
-		if !page.NextPageResults || page.NextCursor == "" {
-			candidates := make([]Candidate, len(items))
-			for index, item := range items {
-				candidates[index] = normalizeWorkItem(
-					item,
-					projectIdentifier,
-					false,
-				)
-			}
-			return candidates, nil
-		}
-		cursor = page.NextCursor
+		seenFilters[assigneeID] = struct{}{}
+		filters = append(filters, assigneeID)
 	}
-	return nil, errors.New("Plane 工作项超过 5000 条，请缩小项目范围后重试")
+	if len(filters) == 0 {
+		filters = append(filters, "")
+	}
+
+	for _, assigneeID := range filters {
+		cursor := ""
+		finished := false
+		for pageNumber := 0; pageNumber < maxPages; pageNumber++ {
+			page, err := c.requestPage(
+				ctx,
+				workspaceSlug,
+				projectID,
+				cursor,
+				assigneeID,
+			)
+			if err != nil {
+				return nil, err
+			}
+			for _, item := range page.Results {
+				if item.ID == "" {
+					continue
+				}
+				if _, exists := seen[item.ID]; exists {
+					continue
+				}
+				seen[item.ID] = struct{}{}
+				items = append(items, item)
+			}
+			if !page.NextPageResults || page.NextCursor == "" {
+				finished = true
+				break
+			}
+			cursor = page.NextCursor
+		}
+		if !finished {
+			return nil, errors.New("Plane 工作项超过 5000 条，请缩小项目范围后重试")
+		}
+	}
+
+	candidates := make([]Candidate, len(items))
+	for index, item := range items {
+		candidates[index] = normalizeWorkItem(
+			item,
+			projectIdentifier,
+			false,
+		)
+	}
+	return candidates, nil
 }
 
 func (c *Client) LoadCandidateDetails(

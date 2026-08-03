@@ -63,20 +63,21 @@ type TaskTab struct {
 // ErrStaleActivate 表示激活请求序号已过期（更晚的请求已接管该任务）。
 var ErrStaleActivate = errors.New("stale reasonix activate request")
 
-// WorkspaceIdentity 是任务工作区的稳定身份：绑定 ID + 真实路径 + 代次。
-// 重新绑定/工作树失效时身份变化，宿主据此原子重建控制器（阶段 2）。
+// WorkspaceIdentity 是任务工作区的稳定身份。BTask 宿主使用任务独立文件
+// 空间时 BindingID 为空，Generation 保存稳定的 WorkspaceID。
 type WorkspaceIdentity struct {
 	TaskID     string
-	BindingID  string
+	BindingID  string // 兼容 Git 工作区宿主；任务文件空间模式为空
 	RootPath   string // 真实路径（符号链接解析后）
-	Generation string // baseline commit / 绑定代次
+	Generation string // WorkspaceID / 宿主工作区代次
 }
 
 // MaxSessionsPerTask 每任务保留的会话文件上限（超出时按最后使用时间清理最旧）。
 const MaxSessionsPerTask = 10
 
 // MaxIdleRuntimes 后台保留的 idle 运行时上限（阶段 3：idle LRU 回收）。
-// 运行中 / 等待审批提问 / 有后台任务的会话绝不回收。
+// 当前活动会话不计入该上限；运行中 / 等待审批提问 / 有后台任务的会话
+// 也绝不回收。
 const MaxIdleRuntimes = 4
 
 // BridgeMaxSessionsPerTask / BridgeMaxIdleRuntimes 供宿主设置面板展示。
@@ -88,11 +89,13 @@ const lastSessionMarker = "last-session.txt"
 
 // Manager 管理全部任务的 Reasonix 会话。
 type Manager struct {
-	mu         sync.Mutex
-	roots      map[string]*TaskTab // taskID → tab
-	dataRoot   string              // 会话根目录（BTask 数据目录）
-	emit       EventSink
-	snapshotWG sync.WaitGroup // 跟踪 in-flight 回合快照（关闭时等待落盘）
+	mu               sync.Mutex
+	roots            map[string]*TaskTab // taskID → tab
+	dataRoot         string              // 会话根目录（BTask 数据目录）
+	emit             EventSink
+	activeTaskID     string
+	activeRequestSeq uint64
+	snapshotWG       sync.WaitGroup // 跟踪 in-flight 回合快照（关闭时等待落盘）
 }
 
 // saveLastSession 持久化任务最后活跃会话（阶段 2：相对文件名 + 原子替换）。
@@ -195,6 +198,10 @@ func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot str
 		if requestSeq > tab.RequestSeq {
 			tab.RequestSeq = requestSeq
 		}
+		if requestSeq != 0 && requestSeq >= m.activeRequestSeq {
+			m.activeTaskID = taskID
+			m.activeRequestSeq = requestSeq
+		}
 		tab.LastActive = time.Now()
 		if title != "" {
 			tab.Title = title
@@ -220,6 +227,10 @@ func (m *Manager) Activate(ctx context.Context, taskID string, workspaceRoot str
 	}
 	// 占位注册：构建期间并发 Activate 复用它而不是重复构建
 	m.roots[taskID] = tab
+	if requestSeq != 0 && requestSeq >= m.activeRequestSeq {
+		m.activeTaskID = taskID
+		m.activeRequestSeq = requestSeq
+	}
 	m.mu.Unlock()
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -418,6 +429,9 @@ func (m *Manager) PruneIdleRuntimes() int {
 		if tab == nil || tab.Ctrl == nil {
 			continue
 		}
+		if taskID == m.activeTaskID {
+			continue
+		}
 		status := tab.Ctrl.RuntimeStatus()
 		if status.Running || status.PendingPrompt || status.BackgroundJobs > 0 {
 			continue
@@ -439,7 +453,7 @@ func (m *Manager) PruneIdleRuntimes() int {
 		removed++
 	}
 	if removed > 0 {
-		fmt.Fprintf(os.Stderr, "reasonix-bridge: 回收 idle 运行时 %d 个（上限 %d）\n", removed, MaxIdleRuntimes)
+		fmt.Fprintf(os.Stderr, "reasonix-bridge: 回收后台 idle 运行时 %d 个（上限 %d，活动会话不计）\n", removed, MaxIdleRuntimes)
 	}
 	return removed
 }
@@ -529,6 +543,9 @@ func (m *Manager) Close(taskID string) {
 	m.mu.Lock()
 	tab := m.roots[taskID]
 	delete(m.roots, taskID)
+	if m.activeTaskID == taskID {
+		m.activeTaskID = ""
+	}
 	m.mu.Unlock()
 	if tab != nil && tab.Ctrl != nil {
 		// 记录最后活跃会话（离开详情页后重建时恢复续写）。
@@ -548,6 +565,7 @@ func (m *Manager) Shutdown() {
 		tabs = append(tabs, tab)
 	}
 	m.roots = map[string]*TaskTab{}
+	m.activeTaskID = ""
 	m.mu.Unlock()
 	for _, tab := range tabs {
 		if tab.Ctrl != nil {

@@ -267,36 +267,54 @@ func TestRxValidateSessionPathSymlinkEscape(t *testing.T) {
 	}
 }
 
-// TestRxWorkspaceForTask 验证工作区解析：Git Binding 工作树优先；
-// 无绑定/未 ready 时返回明确错误（禁止可写启动）。
+// TestRxWorkspaceForTask 验证 RX 始终使用任务自己的文件空间，Git Binding
+// 是否存在及其状态都不改变 Reasonix 的工作目录。
 func TestRxWorkspaceForTask(t *testing.T) {
+	store := storage.NewSQLiteStoreAt(filepath.Join(t.TempDir(), "btask.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Save(`{"state":{"tasks":[
+		{"id":"task_nobind","title":"无 Git 绑定","revision":1},
+		{"id":"task_wt","title":"已有 Git 绑定","revision":1},
+		{"id":"task_pending","title":"绑定创建中","revision":1}
+	]}}`); err != nil {
+		t.Fatalf("准备任务文件空间失败: %v", err)
+	}
 	app := &App{
-		store:     storage.NewSQLiteStore(t.TempDir()),
+		store:     store,
 		rxManager: bridge.NewManager(t.TempDir(), nil),
 		rxTabs:    map[string]rxTabEntry{},
 		rxMu:      &sync.Mutex{},
 	}
 
-	t.Run("no binding rejected", func(t *testing.T) {
-		_, err := app.rxWorkspaceForTask("task_nobind")
-		if err == nil {
-			t.Fatal("无绑定应返回错误")
+	assertTaskWorkspace := func(t *testing.T, taskID string) {
+		t.Helper()
+		workspace, err := store.TaskWorkspace(taskID)
+		if err != nil {
+			t.Fatalf("读取任务文件空间失败: %v", err)
 		}
-		if !strings.Contains(err.Error(), "未绑定 Git 工作树") {
-			t.Fatalf("错误信息应提示绑定: %v", err)
+		identity, err := app.rxWorkspaceForTask(taskID)
+		if err != nil {
+			t.Fatalf("解析 RX 工作区失败: %v", err)
 		}
+		real, err := filepath.EvalSymlinks(workspace.RootPath)
+		if err != nil {
+			t.Fatalf("解析任务文件空间真实路径失败: %v", err)
+		}
+		if identity.RootPath != real {
+			t.Fatalf("RX 未使用任务文件空间: %s != %s", identity.RootPath, real)
+		}
+		if identity.BindingID != "" || identity.Generation != workspace.WorkspaceID {
+			t.Fatalf("RX 工作区身份不应来自 Git Binding: %+v", identity)
+		}
+	}
+
+	t.Run("no binding uses task workspace", func(t *testing.T) {
+		assertTaskWorkspace(t, "task_nobind")
 	})
 
-	t.Run("ready binding uses worktree", func(t *testing.T) {
+	t.Run("ready binding still uses task workspace", func(t *testing.T) {
 		source := t.TempDir()
 		worktree := t.TempDir()
-		if err := app.store.UpsertTaskWorkspace(storage.TaskWorkspaceRecord{
-			TaskID: "task_wt", WorkspaceID: "ws-wt", RootPath: "/tasks/task_wt",
-			SchemaVersion: 1, ManifestRevision: 1, State: "ready",
-			CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
-		}); err != nil {
-			t.Fatalf("seed workspace 失败: %v", err)
-		}
 		binding := storage.GitBindingRecord{
 			ID:             "bind_1",
 			TaskID:         "task_wt",
@@ -313,29 +331,12 @@ func TestRxWorkspaceForTask(t *testing.T) {
 		if err := app.store.UpsertGitBinding(binding); err != nil {
 			t.Fatalf("UpsertGitBinding 失败: %v", err)
 		}
-		identity, err := app.rxWorkspaceForTask("task_wt")
-		if err != nil {
-			t.Fatalf("解析工作区失败: %v", err)
-		}
-		if identity.BindingID != "bind_1" || identity.Generation != "abc123" {
-			t.Fatalf("工作区身份不完整: %+v", identity)
-		}
-		real, _ := filepath.EvalSymlinks(worktree)
-		if identity.RootPath != real {
-			t.Fatalf("工作树路径错误: %s != %s", identity.RootPath, real)
-		}
+		assertTaskWorkspace(t, "task_wt")
 	})
 
-	t.Run("non-ready binding rejected", func(t *testing.T) {
+	t.Run("non-ready binding does not block task workspace", func(t *testing.T) {
 		source := t.TempDir()
 		worktree := t.TempDir()
-		if err := app.store.UpsertTaskWorkspace(storage.TaskWorkspaceRecord{
-			TaskID: "task_pending", WorkspaceID: "ws-pending", RootPath: "/tasks/task_pending",
-			SchemaVersion: 1, ManifestRevision: 1, State: "ready",
-			CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
-		}); err != nil {
-			t.Fatalf("seed workspace 失败: %v", err)
-		}
 		binding := storage.GitBindingRecord{
 			ID:             "bind_2",
 			TaskID:         "task_pending",
@@ -351,10 +352,7 @@ func TestRxWorkspaceForTask(t *testing.T) {
 		if err := app.store.UpsertGitBinding(binding); err != nil {
 			t.Fatal(err)
 		}
-		_, err := app.rxWorkspaceForTask("task_pending")
-		if err == nil || !strings.Contains(err.Error(), "未就绪") {
-			t.Fatalf("未 ready 绑定应拒绝: %v", err)
-		}
+		assertTaskWorkspace(t, "task_pending")
 	})
 }
 

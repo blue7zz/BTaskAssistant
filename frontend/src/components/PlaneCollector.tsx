@@ -80,11 +80,30 @@ function assigneeKey(person: PlanePerson): string {
     : `name:${person.name.trim().toLocaleLowerCase()}`;
 }
 
-function candidateAssignees(candidate: CollectionCandidate): PlanePerson[] {
+function candidateAssignees(candidate: {
+  assignees: string[];
+  assigneeDetails?: PlanePerson[];
+}): PlanePerson[] {
   if ((candidate.assigneeDetails ?? []).length > 0) {
     return candidate.assigneeDetails ?? [];
   }
   return candidate.assignees.map((name) => ({ id: "", name }));
+}
+
+function matchesAssigneeFilters(
+  candidate: {
+    assignees: string[];
+    assigneeDetails?: PlanePerson[];
+  },
+  assigneeFilters: string[],
+): boolean {
+  if (assigneeFilters.length === 0) return true;
+  const assignees = candidateAssignees(candidate);
+  return assigneeFilters.some(
+    (value) =>
+      (value === UNASSIGNED && assignees.length === 0) ||
+      assignees.some((person) => assigneeKey(person) === value),
+  );
 }
 
 function candidateStateKey(candidate: CollectionCandidate): string {
@@ -253,13 +272,7 @@ export function PlaneCollector({
         ) {
           return false;
         }
-        if (assigneeFilters.length === 0) return true;
-        const assignees = candidateAssignees(candidate);
-        return assigneeFilters.some(
-          (value) =>
-            (value === UNASSIGNED && assignees.length === 0) ||
-            assignees.some((person) => assigneeKey(person) === value),
-        );
+        return matchesAssigneeFilters(candidate, assigneeFilters);
       }),
     [assigneeFilters, candidates, stateFilter],
   );
@@ -338,12 +351,24 @@ export function PlaneCollector({
 
   const collect = () =>
     run("collect", async () => {
-      const payloads = await collectPlaneWorkItems(settings);
-      const pendingCount = ingestCandidates(payloads);
+      const activeAssigneeFilters = [...assigneeFilters];
+      const selectedAssigneeIDs = activeAssigneeFilters.every((value) =>
+        value.startsWith("id:"),
+      )
+        ? activeAssigneeFilters.map((value) => value.slice(3))
+        : [];
+      const payloads = await collectPlaneWorkItems(
+        settings,
+        selectedAssigneeIDs,
+      );
+      const scopedPayloads = payloads.filter((candidate) =>
+        matchesAssigneeFilters(candidate, activeAssigneeFilters),
+      );
+      const pendingCount = ingestCandidates(scopedPayloads);
       setFilter("pending");
       setSelectedID(undefined);
       setSyncMessage(
-        `已读取 ${payloads.length} 条工作项摘要，${pendingCount} 条待确认；详情和评论将在点击任务后读取。`,
+        `已读取 ${scopedPayloads.length} 条工作项摘要，${pendingCount} 条待确认；详情和评论将在点击任务后读取。`,
       );
       onSuccess("Plane 摘要收集完成；没有自动创建正式任务");
     });

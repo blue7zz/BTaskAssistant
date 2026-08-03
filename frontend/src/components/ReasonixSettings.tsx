@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { KeyRound, LoaderCircle, Server, Trash2 } from "lucide-react";
 import { rxSettingsApp, type ReasonixSettingsView } from "../lib/bridge";
+import { ReasonixNativeSettings } from "./ReasonixNativeSettings";
 
 const rxApp = (method: string): ((...args: unknown[]) => Promise<unknown>) => {
   const fn = rxSettingsApp()[method];
@@ -21,7 +22,47 @@ interface ReasonixSettingsProps {
  * Reasonix 设置（阶段 4）：Reasonix 全局配置的唯一入口。
  * 凭据只显示"已配置/未配置"状态，明文只在本页输入时出现。
  */
-export function ReasonixSettings({ onSuccess, onError }: ReasonixSettingsProps) {
+export function ReasonixSettings(props: ReasonixSettingsProps) {
+  const [surface, setSurface] = useState<"rx" | "host">("rx");
+
+  return (
+    <section className="reasonix-settings-page">
+      <div
+        className="reasonix-settings-view-tabs"
+        role="tablist"
+        aria-label="Reasonix 设置面板"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === "rx"}
+          className={surface === "rx" ? "active" : ""}
+          onClick={() => setSurface("rx")}
+        >
+          RX 设置面板
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === "host"}
+          className={surface === "host" ? "active" : ""}
+          onClick={() => setSurface("host")}
+        >
+          BTask 全局配置
+        </button>
+      </div>
+      <div className="reasonix-settings-view">
+        {surface === "rx" ? (
+          <ReasonixNativeSettings />
+        ) : (
+          <ReasonixHostSettings {...props} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReasonixHostSettings({ onSuccess, onError }: ReasonixSettingsProps) {
   const [view, setView] = useState<ReasonixSettingsView | null>(null);
   const [loading, setLoading] = useState(true);
   const [homeIsolated, setHomeIsolated] = useState(false);
